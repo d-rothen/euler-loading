@@ -1,0 +1,22 @@
+[project]
+name = "euler-loading"
+version = "0.1.0"
+description = "Multi-modal PyTorch dataloader using ds-crawler indices"
+requires-python = ">=3.10"
+dependencies = [
+    "torch",
+    "ds-crawler @ git+https://github.com/d-rothen/ds-crawler",
+]
+
+[project.optional-dependencies]
+dev = ["pytest"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[tool.hatch.build.targets.wheel]
+packages = ["euler_loading"]
