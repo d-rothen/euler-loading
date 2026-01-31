@@ -8,7 +8,12 @@ from torch.utils.data import Dataset
 
 from ds_crawler import index_dataset_from_path
 
-from .indexing import FileRecord, collect_files_with_calibration
+from .indexing import (
+    FileRecord,
+    collect_files_with_calibration,
+    collect_hierarchical_files,
+    match_hierarchical_files,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +44,14 @@ class MultiModalDataset(Dataset):
     Args:
         modalities: Mapping of modality name to :class:`Modality` spec.
                     Example: ``{"rgb": Modality("/data/rgb", load_rgb)}``.
+        hierarchical_modalities: Optional mapping of modality name to
+                    :class:`Modality` spec for modalities whose files live at
+                    intermediate hierarchy levels (e.g. per-scene intrinsics
+                    files).  These do **not** participate in ID intersection.
+                    Each sample will contain a dict ``{file_id: loaded_result}``
+                    with all hierarchical-modality files at or above the
+                    sample's hierarchy level.  Loaded results are cached so
+                    shared files are parsed only once.
         read_intrinsics: Optional callable that takes an intrinsics file path
                          and returns parsed calibration data.
         read_extrinsics: Optional callable that takes an extrinsics file path
@@ -59,17 +72,21 @@ class MultiModalDataset(Dataset):
                 "rgb":   Modality("/data/vkitti2/rgb",   load_rgb),
                 "depth": Modality("/data/vkitti2/depth", load_depth),
             },
+            hierarchical_modalities={
+                "intrinsics_file": Modality("/data/vkitti2/intrinsics", load_txt),
+            },
             read_intrinsics=parse_intrinsics,
             transforms=[mask_sky_in_depth],
         )
 
         sample = dataset[0]
-        # sample["rgb"], sample["depth"], sample["intrinsics"], ...
+        # sample["rgb"], sample["depth"], sample["intrinsics_file"]["intrinsic"], ...
     """
 
     def __init__(
         self,
         modalities: dict[str, Modality],
+        hierarchical_modalities: dict[str, Modality] | None = None,
         read_intrinsics: Callable[[str], Any] | None = None,
         read_extrinsics: Callable[[str], Any] | None = None,
         transforms: list[Callable[[dict[str, Any]], dict[str, Any]]] | None = None,
@@ -80,6 +97,7 @@ class MultiModalDataset(Dataset):
             raise ValueError("At least one modality must be provided.")
 
         self._modalities = modalities
+        self._hierarchical_modalities = hierarchical_modalities or {}
         self._read_intrinsics = read_intrinsics
         self._read_extrinsics = read_extrinsics
         self._transforms = transforms or []
@@ -99,7 +117,26 @@ class MultiModalDataset(Dataset):
                 modality.path,
             )
 
-        # -- Compute common IDs (intersection across all modalities) ---------
+        # -- Index hierarchical modalities -----------------------------------
+        self._hierarchical_lookups: dict[
+            str, dict[tuple[str, ...], list[dict[str, Any]]]
+        ] = {}
+
+        for name, modality in self._hierarchical_modalities.items():
+            index = index_dataset_from_path(modality.path)
+            files_by_level = collect_hierarchical_files(index["dataset"])
+            self._hierarchical_lookups[name] = files_by_level
+            total_files = sum(len(f) for f in files_by_level.values())
+            logger.info(
+                "Hierarchical modality '%s': indexed %d files across %d "
+                "hierarchy levels from %s",
+                name,
+                total_files,
+                len(files_by_level),
+                modality.path,
+            )
+
+        # -- Compute common IDs (intersection across regular modalities) -----
         all_id_sets = [set(lookup.keys()) for lookup in self._lookups.values()]
         self._common_ids: list[str] = sorted(set.intersection(*all_id_sets))
 
@@ -125,8 +162,9 @@ class MultiModalDataset(Dataset):
                     total - matched,
                 )
 
-        # -- Calibration cache -----------------------------------------------
+        # -- Caches ----------------------------------------------------------
         self._calibration_cache: dict[str, Any] = {}
+        self._hierarchical_cache: dict[str, Any] = {}
 
     # -- Dataset interface ---------------------------------------------------
 
@@ -140,6 +178,7 @@ class MultiModalDataset(Dataset):
         meta: dict[str, dict[str, Any]] = {}
         intrinsics_path: str | None = None
         extrinsics_path: str | None = None
+        hierarchy_path: tuple[str, ...] = ()
 
         for name, modality in self._modalities.items():
             record = self._lookups[name][sample_id]
@@ -152,6 +191,23 @@ class MultiModalDataset(Dataset):
                 intrinsics_path = record.intrinsics_path
             if extrinsics_path is None and record.extrinsics_path is not None:
                 extrinsics_path = record.extrinsics_path
+            # Hierarchy path from the first modality that has one.
+            if not hierarchy_path:
+                hierarchy_path = record.hierarchy_path
+
+        # -- Load hierarchical modalities ------------------------------------
+        for name, modality in self._hierarchical_modalities.items():
+            files_by_level = self._hierarchical_lookups[name]
+            matched = match_hierarchical_files(hierarchy_path, files_by_level)
+            loaded: dict[str, Any] = {}
+            for entry in matched:
+                file_path = f"{modality.path}/{entry['path']}"
+                if file_path not in self._hierarchical_cache:
+                    self._hierarchical_cache[file_path] = modality.loader(
+                        file_path
+                    )
+                loaded[entry["id"]] = self._hierarchical_cache[file_path]
+            sample[name] = loaded
 
         sample["intrinsics"] = self._resolve_calibration(
             intrinsics_path, self._read_intrinsics

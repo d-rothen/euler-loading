@@ -168,6 +168,113 @@ def override_calibration_index() -> dict[str, Any]:
     }
 
 
+@pytest.fixture()
+def hierarchical_modality_index() -> dict[str, Any]:
+    """Index for a hierarchical modality (e.g. intrinsics) with files at the
+    variation level, one level above where regular-modality files sit.
+
+    Structure::
+
+        dataset
+        └── Scene01
+            └── sunset
+                └── file: intrinsic   (intrinsic.txt)
+    """
+    return {
+        "dataset": {
+            "children": {
+                "Scene01": {
+                    "children": {
+                        "sunset": {
+                            "files": [
+                                _make_file(
+                                    "intrinsic",
+                                    "Scene01/sunset/intrinsic.txt",
+                                )
+                            ]
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+
+@pytest.fixture()
+def deep_regular_index() -> dict[str, Any]:
+    """Regular-modality index with files one level deeper than the
+    hierarchical modality fixture (camera level under variation).
+
+    Structure::
+
+        dataset
+        └── Scene01
+            └── sunset
+                └── Camera_0
+                    ├── file: frame-001
+                    └── file: frame-002
+    """
+    return {
+        "dataset": {
+            "children": {
+                "Scene01": {
+                    "children": {
+                        "sunset": {
+                            "children": {
+                                "Camera_0": {
+                                    "files": [
+                                        _make_file(
+                                            "frame-001",
+                                            "Scene01/sunset/Camera_0/001.png",
+                                        ),
+                                        _make_file(
+                                            "frame-002",
+                                            "Scene01/sunset/Camera_0/002.png",
+                                        ),
+                                    ]
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+
+@pytest.fixture()
+def multi_level_hierarchical_index() -> dict[str, Any]:
+    """Hierarchical index with files at two levels — scene and variation.
+
+    Structure::
+
+        dataset
+        └── Scene01           (file: scene_meta)
+            └── sunset        (file: intrinsic)
+    """
+    return {
+        "dataset": {
+            "children": {
+                "Scene01": {
+                    "files": [
+                        _make_file("scene_meta", "Scene01/meta.json"),
+                    ],
+                    "children": {
+                        "sunset": {
+                            "files": [
+                                _make_file(
+                                    "intrinsic",
+                                    "Scene01/sunset/intrinsic.txt",
+                                )
+                            ]
+                        }
+                    },
+                }
+            }
+        }
+    }
+
+
 def dummy_loader(path: str) -> str:
     """Trivial loader that returns the path — avoids needing real files."""
     return f"loaded:{path}"

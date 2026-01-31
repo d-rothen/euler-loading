@@ -24,6 +24,7 @@ dataset = MultiModalDataset(
     modalities={
         "rgb":   Modality("/data/vkitti2/rgb",   loader=load_rgb),
         "depth": Modality("/data/vkitti2/depth", loader=load_depth),
+        "classSegmentation": Modality("/data/vkitti2/depth", loader=load_classSegmentation), 
     },
     read_intrinsics=parse_intrinsics,   # optional
     read_extrinsics=parse_extrinsics,   # optional
@@ -31,12 +32,13 @@ dataset = MultiModalDataset(
 )
 
 sample = dataset[0]
-# sample["rgb"]         – whatever load_rgb returned
-# sample["depth"]       – whatever load_depth returned
-# sample["intrinsics"]  – parsed intrinsics (or None)
-# sample["extrinsics"]  – parsed extrinsics (or None)
-# sample["id"]          – the file ID shared across modalities
-# sample["meta"]        – per-modality ds-crawler file entries
+# sample["rgb"]                 – whatever load_rgb returned
+# sample["depth"]               – whatever load_depth returned
+# sample["classSegmentation"]   – whatever classSegmentation returned
+# sample["intrinsics"]          – parsed intrinsics (or None)
+# sample["extrinsics"]          – parsed extrinsics (or None)
+# sample["id"]                  – the file ID shared across modalities
+# sample["meta"]                – per-modality ds-crawler file entries
 ```
 
 Works with `torch.utils.data.DataLoader` out of the box.

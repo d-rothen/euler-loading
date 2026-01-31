@@ -9,7 +9,7 @@ import pytest
 
 from euler_loading import Modality, MultiModalDataset
 
-from .conftest import dummy_loader
+from .conftest import _make_file, dummy_loader
 
 
 # ---------------------------------------------------------------------------
@@ -375,3 +375,248 @@ class TestTransforms:
         assert "extrinsics" in received_keys
         assert "id" in received_keys
         assert "meta" in received_keys
+
+
+# ---------------------------------------------------------------------------
+# Hierarchical modality helpers
+# ---------------------------------------------------------------------------
+
+def _deep_regular_index(file_ids: list[str]) -> dict[str, Any]:
+    """Regular-modality index: Scene01 → sunset → Camera_0 → files."""
+    return {
+        "dataset": {
+            "children": {
+                "Scene01": {
+                    "children": {
+                        "sunset": {
+                            "children": {
+                                "Camera_0": {
+                                    "files": [
+                                        _make_file(
+                                            fid,
+                                            f"Scene01/sunset/Camera_0/{fid}.png",
+                                        )
+                                        for fid in file_ids
+                                    ]
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+
+def _hierarchical_intrinsics_index() -> dict[str, Any]:
+    """Hierarchical modality index: Scene01 → sunset → file(intrinsic)."""
+    return {
+        "dataset": {
+            "children": {
+                "Scene01": {
+                    "children": {
+                        "sunset": {
+                            "files": [
+                                _make_file(
+                                    "intrinsic",
+                                    "Scene01/sunset/intrinsic.txt",
+                                )
+                            ]
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+
+# ---------------------------------------------------------------------------
+# Hierarchical modality tests
+# ---------------------------------------------------------------------------
+
+class TestHierarchicalModalities:
+    """Hierarchical modalities matched by hierarchy path prefix."""
+
+    def _make(self, **kwargs):
+        rgb_index = _deep_regular_index(["f001", "f002"])
+        hier_index = _hierarchical_intrinsics_index()
+
+        def mock_index(path, **kw):
+            if "rgb" in path:
+                return rgb_index
+            return hier_index
+
+        with patch(
+            "euler_loading.dataset.index_dataset_from_path",
+            side_effect=mock_index,
+        ):
+            return MultiModalDataset(
+                modalities={
+                    "rgb": Modality("/data/rgb", loader=dummy_loader),
+                },
+                hierarchical_modalities={
+                    "cam_intrinsics": Modality(
+                        "/data/intrinsics", loader=dummy_loader
+                    ),
+                },
+                **kwargs,
+            )
+
+    def test_sample_contains_hierarchical_key(self):
+        ds = self._make()
+        sample = ds[0]
+        assert "cam_intrinsics" in sample
+
+    def test_hierarchical_value_is_dict(self):
+        ds = self._make()
+        sample = ds[0]
+        assert isinstance(sample["cam_intrinsics"], dict)
+
+    def test_hierarchical_dict_has_correct_id(self):
+        ds = self._make()
+        sample = ds[0]
+        assert "intrinsic" in sample["cam_intrinsics"]
+
+    def test_hierarchical_loader_called_with_correct_path(self):
+        ds = self._make()
+        sample = ds[0]
+        assert sample["cam_intrinsics"]["intrinsic"] == (
+            "loaded:/data/intrinsics/Scene01/sunset/intrinsic.txt"
+        )
+
+    def test_hierarchical_does_not_affect_id_intersection(self):
+        """Hierarchical modalities must not participate in ID intersection."""
+        ds = self._make()
+        assert len(ds) == 2
+        ids = {ds[i]["id"] for i in range(len(ds))}
+        assert ids == {"f001", "f002"}
+
+    def test_hierarchical_shared_across_samples(self):
+        """All samples under the same hierarchy get the same files."""
+        ds = self._make()
+        s0 = ds[0]["cam_intrinsics"]
+        s1 = ds[1]["cam_intrinsics"]
+        assert s0 == s1
+
+    def test_hierarchical_cached(self):
+        """Shared hierarchical files are loaded only once."""
+        loader = MagicMock(return_value="parsed")
+        rgb_index = _deep_regular_index(["f001", "f002", "f003"])
+        hier_index = _hierarchical_intrinsics_index()
+
+        def mock_index(path, **kw):
+            return rgb_index if "rgb" in path else hier_index
+
+        with patch(
+            "euler_loading.dataset.index_dataset_from_path",
+            side_effect=mock_index,
+        ):
+            ds = MultiModalDataset(
+                modalities={
+                    "rgb": Modality("/data/rgb", loader=dummy_loader),
+                },
+                hierarchical_modalities={
+                    "cam_intrinsics": Modality("/data/intrinsics", loader=loader),
+                },
+            )
+
+        # Access all three samples.
+        for i in range(3):
+            _ = ds[i]
+
+        # The intrinsics file should have been loaded exactly once.
+        loader.assert_called_once()
+
+    def test_no_hierarchy_overlap_returns_empty_dict(self):
+        """When hierarchical modality has no matching ancestors, result is {}."""
+        rgb_index = _deep_regular_index(["f001"])
+        # Hierarchical modality under a completely different scene.
+        hier_index: dict[str, Any] = {
+            "dataset": {
+                "children": {
+                    "OtherScene": {
+                        "files": [
+                            _make_file("intrinsic", "OtherScene/intrinsic.txt")
+                        ]
+                    }
+                }
+            }
+        }
+
+        def mock_index(path, **kw):
+            return rgb_index if "rgb" in path else hier_index
+
+        with patch(
+            "euler_loading.dataset.index_dataset_from_path",
+            side_effect=mock_index,
+        ):
+            ds = MultiModalDataset(
+                modalities={
+                    "rgb": Modality("/data/rgb", loader=dummy_loader),
+                },
+                hierarchical_modalities={
+                    "cam_intrinsics": Modality(
+                        "/data/intrinsics", loader=dummy_loader
+                    ),
+                },
+            )
+
+        assert ds[0]["cam_intrinsics"] == {}
+
+    def test_multiple_files_at_different_levels(self):
+        """Files from multiple ancestor levels are merged into one dict."""
+        rgb_index = _deep_regular_index(["f001"])
+        hier_index: dict[str, Any] = {
+            "dataset": {
+                "children": {
+                    "Scene01": {
+                        "files": [
+                            _make_file("scene_meta", "Scene01/meta.json"),
+                        ],
+                        "children": {
+                            "sunset": {
+                                "files": [
+                                    _make_file(
+                                        "intrinsic",
+                                        "Scene01/sunset/intrinsic.txt",
+                                    )
+                                ]
+                            }
+                        },
+                    }
+                }
+            }
+        }
+
+        def mock_index(path, **kw):
+            return rgb_index if "rgb" in path else hier_index
+
+        with patch(
+            "euler_loading.dataset.index_dataset_from_path",
+            side_effect=mock_index,
+        ):
+            ds = MultiModalDataset(
+                modalities={
+                    "rgb": Modality("/data/rgb", loader=dummy_loader),
+                },
+                hierarchical_modalities={
+                    "extras": Modality("/data/extras", loader=dummy_loader),
+                },
+            )
+
+        result = ds[0]["extras"]
+        assert "intrinsic" in result
+        assert "scene_meta" in result
+
+    def test_transform_sees_hierarchical_data(self):
+        """Transforms receive hierarchical modality data in the sample dict."""
+        received: dict[str, Any] = {}
+
+        def capture(sample):
+            received.update(sample)
+            return sample
+
+        ds = self._make(transforms=[capture])
+        _ = ds[0]
+        assert "cam_intrinsics" in received
+        assert isinstance(received["cam_intrinsics"], dict)
