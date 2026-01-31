@@ -1,15 +1,9 @@
 {
-  "rgb": "<PIL.Image mode=RGB size=(1242, 375)>",
+  "rgb": "<numpy.ndarray shape=(375, 1242, 3) dtype=float32>",
   "depth": "<numpy.ndarray shape=(375, 1242) dtype=float32>",
-  "classSegmentation": "<PIL.Image mode=RGB size=(1242, 375)>",
+  "classSegmentation": "<numpy.ndarray shape=(375, 1242, 3) dtype=int64>",
   "textgt_intrinsics": {
-    "intrinsic": {
-      "fx": 725.0087,
-      "fy": 725.0087,
-      "cx": 620.5,
-      "cy": 187.0,
-      "s": 0.0
-    }
+    "intrinsic": "<numpy.ndarray shape=(3, 3) dtype=float32>"
   },
   "id": "00000",
   "full_id": "/Scene02/30-deg-right/Camera_0/00000",
