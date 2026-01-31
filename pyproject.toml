@@ -2,7 +2,7 @@
 name = "euler-loading"
 version = "0.3.0"
 description = "Multi-modal PyTorch dataloader using ds-crawler indices"
-requires-python = ">=3.10"
+requires-python = ">=3.9"
 dependencies = [
     "torch",
     "ds-crawler @ git+https://github.com/d-rothen/ds-crawler",

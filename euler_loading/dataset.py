@@ -17,8 +17,8 @@ from .indexing import (
 
 logger = logging.getLogger(__name__)
 
-
-@dataclass(frozen=True, slots=True)
+#TODO: might want to add slots=True in a 3.10+ only codebase
+@dataclass(frozen=True)
 class Modality:
     """Specification of a single data modality.
 

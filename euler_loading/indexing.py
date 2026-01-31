@@ -3,8 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-
-@dataclass(frozen=True, slots=True)
+#TODO: might want to add slots=True in a 3.10+ only codebase
+@dataclass(frozen=True)
 class FileRecord:
     """A file entry with its position in the dataset hierarchy.
 
