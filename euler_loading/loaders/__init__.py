@@ -13,8 +13,6 @@ Usage::
             "rgb":   Modality("/data/vkitti2/rgb",   loader=vkitti2.rgb),
             "depth": Modality("/data/vkitti2/depth", loader=vkitti2.depth),
         },
-        read_intrinsics=vkitti2.read_intrinsics,
-        read_extrinsics=vkitti2.read_extrinsics,
     )
 
 Available submodules:

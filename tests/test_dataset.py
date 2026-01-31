@@ -33,35 +33,6 @@ def _flat_index(modality: str, file_ids: list[str]) -> dict[str, Any]:
     }
 
 
-def _hierarchical_index_with_calibration(
-    file_ids: list[str],
-    ext: str = "png",
-    intrinsics_rel: str | None = None,
-    extrinsics_rel: str | None = None,
-) -> dict[str, Any]:
-    """Build an index where files sit under a camera node with calibration."""
-    camera_node: dict[str, Any] = {
-        "children": {
-            f"frame:{fid}": {
-                "files": [
-                    {
-                        "id": fid,
-                        "path": f"cam/{fid}.{ext}",
-                        "path_properties": {},
-                        "basename_properties": {},
-                    }
-                ]
-            }
-            for fid in file_ids
-        }
-    }
-    if intrinsics_rel:
-        camera_node["camera_intrinsics"] = intrinsics_rel
-    if extrinsics_rel:
-        camera_node["camera_extrinsics"] = extrinsics_rel
-    return {"dataset": {"children": {"camera:cam0": camera_node}}}
-
-
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
@@ -99,8 +70,6 @@ class TestBasicDataset:
         assert "depth" in sample
         assert "id" in sample
         assert "meta" in sample
-        assert "intrinsics" in sample
-        assert "extrinsics" in sample
 
     def test_loader_receives_correct_path(self):
         ds = self._make()
@@ -188,86 +157,6 @@ class TestSingleModality:
         assert len(ds) == 2
 
 
-class TestCalibration:
-    """Calibration loading, caching, and first-modality-wins semantics."""
-
-    def _make_with_calibration(self):
-        rgb_index = _hierarchical_index_with_calibration(
-            ["f001", "f002"],
-            ext="png",
-            intrinsics_rel="cam/intr.txt",
-            extrinsics_rel="cam/extr.txt",
-        )
-        depth_index = _hierarchical_index_with_calibration(
-            ["f001", "f002"],
-            ext="exr",
-        )
-
-        def mock_index(path, **kw):
-            return rgb_index if "rgb" in path else depth_index
-
-        reader_intr = MagicMock(return_value={"fx": 500})
-        reader_extr = MagicMock(return_value={"R": "identity"})
-
-        with patch(
-            "euler_loading.dataset.index_dataset_from_path",
-            side_effect=mock_index,
-        ):
-            ds = MultiModalDataset(
-                modalities={
-                    "rgb": Modality("/data/rgb", loader=dummy_loader),
-                    "depth": Modality("/data/depth", loader=dummy_loader),
-                },
-                read_intrinsics=reader_intr,
-                read_extrinsics=reader_extr,
-            )
-        return ds, reader_intr, reader_extr
-
-    def test_calibration_present(self):
-        ds, _, _ = self._make_with_calibration()
-        sample = ds[0]
-        assert sample["intrinsics"] == {"fx": 500}
-        assert sample["extrinsics"] == {"R": "identity"}
-
-    def test_calibration_cached(self):
-        ds, reader_intr, reader_extr = self._make_with_calibration()
-        _ = ds[0]
-        _ = ds[1]
-        # Both samples share the same calibration file → called only once each.
-        reader_intr.assert_called_once()
-        reader_extr.assert_called_once()
-
-    def test_no_calibration_returns_none(self):
-        index = _flat_index("rgb", ["f001"])
-
-        with patch(
-            "euler_loading.dataset.index_dataset_from_path",
-            return_value=index,
-        ):
-            ds = MultiModalDataset(
-                modalities={"rgb": Modality("/data/rgb", loader=dummy_loader)},
-            )
-        sample = ds[0]
-        assert sample["intrinsics"] is None
-        assert sample["extrinsics"] is None
-
-    def test_no_reader_returns_none(self):
-        """Calibration path exists but no reader was provided."""
-        index = _hierarchical_index_with_calibration(
-            ["f001"], intrinsics_rel="intr.txt"
-        )
-
-        with patch(
-            "euler_loading.dataset.index_dataset_from_path",
-            return_value=index,
-        ):
-            ds = MultiModalDataset(
-                modalities={"rgb": Modality("/data/rgb", loader=dummy_loader)},
-                # read_intrinsics not set
-            )
-        sample = ds[0]
-        assert sample["intrinsics"] is None
-
 
 class TestTransforms:
     """Transform application and ordering."""
@@ -347,32 +236,17 @@ class TestTransforms:
         assert sample["depth"] == "masked"
 
     def test_transform_receives_full_context(self):
-        """Ensure transform can access intrinsics, extrinsics, id, meta."""
-        index = _hierarchical_index_with_calibration(
-            ["f001"], intrinsics_rel="intr.txt", extrinsics_rel="extr.txt"
-        )
-
+        """Ensure transform can access id and meta."""
         received_keys: set[str] = set()
 
         def capture_keys(sample):
             received_keys.update(sample.keys())
             return sample
 
-        with patch(
-            "euler_loading.dataset.index_dataset_from_path",
-            return_value=index,
-        ):
-            ds = MultiModalDataset(
-                modalities={"rgb": Modality("/data/rgb", loader=dummy_loader)},
-                read_intrinsics=lambda p: "K",
-                read_extrinsics=lambda p: "E",
-                transforms=[capture_keys],
-            )
+        ds = self._make([capture_keys])
         _ = ds[0]
 
         assert "rgb" in received_keys
-        assert "intrinsics" in received_keys
-        assert "extrinsics" in received_keys
         assert "id" in received_keys
         assert "meta" in received_keys
 

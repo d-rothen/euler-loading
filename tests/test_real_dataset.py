@@ -12,7 +12,7 @@ unconfigured stubs never cause failures.
 from __future__ import annotations
 
 import os
-from typing import Any, Callable
+from typing import Any
 
 import pytest
 
@@ -26,10 +26,9 @@ from euler_loading.loaders import vkitti2
 #
 # Each value is a dict with the keys accepted by ``MultiModalDataset``:
 #
-#   modalities      : dict[str, Modality]                       — REQUIRED
-#   read_intrinsics : Callable[[str], Any] | None               — optional
-#   read_extrinsics : Callable[[str], Any] | None               — optional
-#   transforms      : list[Callable[[dict], dict]] | None       — optional
+#   modalities                : dict[str, Modality]                       — REQUIRED
+#   hierarchical_modalities   : dict[str, Modality] | None               — optional
+#   transforms                : list[Callable[[dict], dict]] | None       — optional
 #
 # Leave ``modalities`` empty (``{}``) for databases that are not yet wired up;
 # those entries are silently skipped by the test suite.
@@ -41,8 +40,7 @@ REAL_DATASETS: dict[str, dict[str, Any]] = {
             "depth": Modality("/Volumes/Volume/Datasets/vkitti2/vkitti_2.0.3_depth", loader=vkitti2.depth),
             "classSegmentation": Modality("/Volumes/Volume/Datasets/vkitti2/vkitti_2.0.3_classSegmentation", loader=vkitti2.class_segmentation),
         },
-        "read_intrinsics": None,
-        "read_extrinsics": None,
+        "hierarchical_modalities": None,
         "transforms": None,
     },
 }
@@ -88,8 +86,7 @@ def real_dataset(real_config):
     """Construct a :class:`MultiModalDataset` from a real on-disk config."""
     return MultiModalDataset(
         modalities=real_config["modalities"],
-        read_intrinsics=real_config["read_intrinsics"],
-        read_extrinsics=real_config["read_extrinsics"],
+        hierarchical_modalities=real_config.get("hierarchical_modalities"),
         transforms=real_config["transforms"],
     )
 
@@ -126,7 +123,7 @@ class TestRealSampleStructure:
 
     def test_sample_has_metadata_keys(self, real_dataset):
         sample = real_dataset[0]
-        for key in ("id", "meta", "intrinsics", "extrinsics"):
+        for key in ("id", "meta"):
             assert key in sample, f"Missing metadata key: {key}"
 
     def test_modality_data_is_not_none(self, real_dataset, real_config):
@@ -161,53 +158,6 @@ class TestRealOrdering:
         sample_a = real_dataset[0]
         sample_b = real_dataset[0]
         assert sample_a["id"] == sample_b["id"]
-
-
-# ---------------------------------------------------------------------------
-# Calibration
-# ---------------------------------------------------------------------------
-
-
-@real
-class TestRealCalibration:
-    """Calibration data respects whether readers are configured."""
-
-    def test_intrinsics_present_when_reader_set(self, real_dataset, real_config):
-        if real_config["read_intrinsics"] is None:
-            pytest.skip("No intrinsics reader configured")
-        sample = real_dataset[0]
-        assert sample["intrinsics"] is not None
-
-    def test_extrinsics_present_when_reader_set(self, real_dataset, real_config):
-        if real_config["read_extrinsics"] is None:
-            pytest.skip("No extrinsics reader configured")
-        sample = real_dataset[0]
-        assert sample["extrinsics"] is not None
-
-    def test_intrinsics_none_when_no_reader(self, real_dataset, real_config):
-        if real_config["read_intrinsics"] is not None:
-            pytest.skip("Intrinsics reader is configured")
-        sample = real_dataset[0]
-        assert sample["intrinsics"] is None
-
-    def test_extrinsics_none_when_no_reader(self, real_dataset, real_config):
-        if real_config["read_extrinsics"] is not None:
-            pytest.skip("Extrinsics reader is configured")
-        sample = real_dataset[0]
-        assert sample["extrinsics"] is None
-
-    def test_calibration_cached_across_samples(self, real_dataset, real_config):
-        """Accessing two samples that share calibration reuses the cache."""
-        if len(real_dataset) < 2:
-            pytest.skip("Need at least two samples to verify caching")
-        s0 = real_dataset[0]
-        s1 = real_dataset[1]
-        # When both samples come from the same calibration file the objects
-        # should be identical (same id), not merely equal.
-        if s0["intrinsics"] is not None and s1["intrinsics"] is not None:
-            assert s0["intrinsics"] is s1["intrinsics"]
-        if s0["extrinsics"] is not None and s1["extrinsics"] is not None:
-            assert s0["extrinsics"] is s1["extrinsics"]
 
 
 # ---------------------------------------------------------------------------

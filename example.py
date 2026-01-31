@@ -57,4 +57,8 @@ def _make_serializable(obj: object) -> object:
 
 
 sample = dataset[0]
-print(json.dumps(_make_serializable(sample), indent=2))
+first_item = json.dumps(_make_serializable(sample), indent=2)
+print(first_item)
+
+with open("example_output.json", "w") as f:
+    f.write(first_item)

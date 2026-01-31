@@ -10,7 +10,7 @@ from ds_crawler import index_dataset_from_path
 
 from .indexing import (
     FileRecord,
-    collect_files_with_calibration,
+    collect_files,
     collect_hierarchical_files,
     match_hierarchical_files,
 )
@@ -38,8 +38,7 @@ class MultiModalDataset(Dataset):
     """PyTorch Dataset that loads synchronized multi-modal samples.
 
     Indexes each modality using *ds-crawler*, intersects file IDs across all
-    modalities, and returns dicts containing every loaded modality together with
-    calibration data.
+    modalities, and returns dicts containing every loaded modality.
 
     Args:
         modalities: Mapping of modality name to :class:`Modality` spec.
@@ -52,14 +51,10 @@ class MultiModalDataset(Dataset):
                     with all hierarchical-modality files at or above the
                     sample's hierarchy level.  Loaded results are cached so
                     shared files are parsed only once.
-        read_intrinsics: Optional callable that takes an intrinsics file path
-                         and returns parsed calibration data.
-        read_extrinsics: Optional callable that takes an extrinsics file path
-                         and returns parsed calibration data.
         transforms: Optional list of callables.  Each receives the full sample
                     dict and must return a (possibly modified) sample dict.  The
                     sample dict acts as a context object giving transforms
-                    access to all modalities, calibration, and metadata.
+                    access to all modalities and metadata.
 
     Raises:
         ValueError: If *modalities* is empty or no common file IDs exist across
@@ -75,7 +70,6 @@ class MultiModalDataset(Dataset):
             hierarchical_modalities={
                 "intrinsics_file": Modality("/data/vkitti2/intrinsics", load_txt),
             },
-            read_intrinsics=parse_intrinsics,
             transforms=[mask_sky_in_depth],
         )
 
@@ -87,8 +81,6 @@ class MultiModalDataset(Dataset):
         self,
         modalities: dict[str, Modality],
         hierarchical_modalities: dict[str, Modality] | None = None,
-        read_intrinsics: Callable[[str], Any] | None = None,
-        read_extrinsics: Callable[[str], Any] | None = None,
         transforms: list[Callable[[dict[str, Any]], dict[str, Any]]] | None = None,
     ) -> None:
         super().__init__()
@@ -98,8 +90,6 @@ class MultiModalDataset(Dataset):
 
         self._modalities = modalities
         self._hierarchical_modalities = hierarchical_modalities or {}
-        self._read_intrinsics = read_intrinsics
-        self._read_extrinsics = read_extrinsics
         self._transforms = transforms or []
 
         # -- Index each modality and build ID → FileRecord lookups -----------
@@ -107,7 +97,7 @@ class MultiModalDataset(Dataset):
 
         for name, modality in modalities.items():
             index = index_dataset_from_path(modality.path)
-            records = collect_files_with_calibration(index["dataset"], modality.path)
+            records = collect_files(index["dataset"])
             lookup = {rec.file_entry["id"]: rec for rec in records}
             self._lookups[name] = lookup
             logger.info(
@@ -163,7 +153,6 @@ class MultiModalDataset(Dataset):
                 )
 
         # -- Caches ----------------------------------------------------------
-        self._calibration_cache: dict[str, Any] = {}
         self._hierarchical_cache: dict[str, Any] = {}
 
     # -- Dataset interface ---------------------------------------------------
@@ -176,8 +165,6 @@ class MultiModalDataset(Dataset):
         sample: dict[str, Any] = {}
 
         meta: dict[str, dict[str, Any]] = {}
-        intrinsics_path: str | None = None
-        extrinsics_path: str | None = None
         hierarchy_path: tuple[str, ...] = ()
 
         for name, modality in self._modalities.items():
@@ -186,11 +173,6 @@ class MultiModalDataset(Dataset):
             sample[name] = modality.loader(file_path)
             meta[name] = record.file_entry
 
-            # Use calibration from whichever modality provides it (first wins).
-            if intrinsics_path is None and record.intrinsics_path is not None:
-                intrinsics_path = record.intrinsics_path
-            if extrinsics_path is None and record.extrinsics_path is not None:
-                extrinsics_path = record.extrinsics_path
             # Hierarchy path from the first modality that has one.
             if not hierarchy_path:
                 hierarchy_path = record.hierarchy_path
@@ -209,12 +191,6 @@ class MultiModalDataset(Dataset):
                 loaded[entry["id"]] = self._hierarchical_cache[file_path]
             sample[name] = loaded
 
-        sample["intrinsics"] = self._resolve_calibration(
-            intrinsics_path, self._read_intrinsics
-        )
-        sample["extrinsics"] = self._resolve_calibration(
-            extrinsics_path, self._read_extrinsics
-        )
         sample["id"] = sample_id
         sample["meta"] = meta
 
@@ -223,21 +199,3 @@ class MultiModalDataset(Dataset):
 
         return sample
 
-    # -- Internals -----------------------------------------------------------
-
-    def _resolve_calibration(
-        self,
-        path: str | None,
-        reader: Callable[[str], Any] | None,
-    ) -> Any:
-        """Read and cache calibration data.
-
-        Returns ``None`` if *path* is ``None`` or *reader* is ``None``.
-        """
-        if path is None or reader is None:
-            return None
-
-        if path not in self._calibration_cache:
-            self._calibration_cache[path] = reader(path)
-
-        return self._calibration_cache[path]
