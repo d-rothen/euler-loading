@@ -63,9 +63,13 @@ class TestVKITTI2Loaders:
 
     @pytest.fixture()
     def text_path(self, tmp_path):
-        """Write a small whitespace-delimited text file."""
+        """Write a small VKITTI2-style intrinsics text file with header."""
         p = tmp_path / "intrinsic.txt"
-        p.write_text("1.0 0.0 320.0\n0.0 1.0 240.0\n0.0 0.0 1.0\n")
+        p.write_text(
+            "frame cameraID K[0,0] K[1,1] K[0,2] K[1,2]\n"
+            "0 0 725.0087 725.0087 620.5 187\n"
+            "0 1 725.0087 725.0087 620.5 187\n"
+        )
         return str(p)
 
     def test_rgb_returns_pil_image(self, rgb_path):
@@ -108,15 +112,26 @@ class TestVKITTI2Loaders:
         result = vkitti2.scene_flow(rgb_path)
         assert isinstance(result, Image.Image)
 
-    def test_read_intrinsics_returns_array(self, text_path):
-        import numpy as np
-
+    def test_read_intrinsics_returns_dict(self, text_path):
         result = vkitti2.read_intrinsics(text_path)
-        assert isinstance(result, np.ndarray)
-        assert result.shape == (3, 3)
+        assert isinstance(result, dict)
+        assert result == {
+            "fx": 725.0087,
+            "fy": 725.0087,
+            "cx": 620.5,
+            "cy": 187.0,
+            "s": 0.0,
+        }
 
-    def test_read_extrinsics_returns_array(self, text_path):
+    @pytest.fixture()
+    def extrinsic_text_path(self, tmp_path):
+        """Write a small whitespace-delimited numeric text file."""
+        p = tmp_path / "extrinsic.txt"
+        p.write_text("1.0 0.0 0.0\n0.0 1.0 0.0\n0.0 0.0 1.0\n")
+        return str(p)
+
+    def test_read_extrinsics_returns_array(self, extrinsic_text_path):
         import numpy as np
 
-        result = vkitti2.read_extrinsics(text_path)
+        result = vkitti2.read_extrinsics(extrinsic_text_path)
         assert isinstance(result, np.ndarray)

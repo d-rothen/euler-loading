@@ -69,15 +69,27 @@ def scene_flow(path: str) -> Any:
 # ---------------------------------------------------------------------------
 
 
-def read_intrinsics(path: str) -> Any:
-    """Parse a VKITTI2 intrinsics text file into a numpy array.
+def read_intrinsics(path: str) -> dict[str, float]:
+    """Parse a VKITTI2 intrinsics text file.
 
-    The file is whitespace-delimited; the first row is treated as a
-    header and skipped when every field in it is non-numeric.
+    The file has the header ``frame cameraID K[0,0] K[1,1] K[0,2] K[1,2]``.
+    Intrinsics are constant across frames in VKITTI2, so only the first row
+    is used.  Returns a dict with keys ``fx``, ``fy``, ``cx``, ``cy``, and
+    ``s`` (skew, always 0 in VKITTI2).
     """
     import numpy as np
 
-    return np.loadtxt(path)
+    data = np.loadtxt(path, skiprows=1)
+    if data.ndim == 1:
+        data = data.reshape(1, -1)
+    #In VKITTI2, intrinsics are constant across frames, so just read the first row
+    return {
+        "fx": float(data[0][2]),
+        "fy": float(data[0][3]),
+        "cx": float(data[0][4]),
+        "cy": float(data[0][5]),
+        "s": 0.0,
+    }
 
 
 def read_extrinsics(path: str) -> Any:
