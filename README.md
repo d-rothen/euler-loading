@@ -151,3 +151,15 @@ pytest -m real
 ```
 
 See `tests/test_real_dataset.py` for a full example of wiring up a real multi-modality dataset (VKITTI2).
+
+
+## Use with pytorch DataLoaders
+```python
+from torch.utils.data import DataLoader
+
+loader = DataLoader(dataset, batch_size=16, num_workers=4, pin_memory=True)
+
+for batch in loader:
+    # batch["rgb"] is already (16, 3, H, W) — auto-collated by DataLoader
+    ...
+```
