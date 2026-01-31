@@ -17,6 +17,7 @@ from typing import Any, Callable
 import pytest
 
 from euler_loading import Modality, MultiModalDataset
+from euler_loading.loaders import vkitti2
 
 
 # ---------------------------------------------------------------------------
@@ -33,32 +34,12 @@ from euler_loading import Modality, MultiModalDataset
 # Leave ``modalities`` empty (``{}``) for databases that are not yet wired up;
 # those entries are silently skipped by the test suite.
 
-def load_rgb(path: str) -> Any:
-    """Load an RGB image from disk given its file path."""
-    from PIL import Image
-
-    return Image.open(path).convert("RGB")
-
-def load_depth(path: str) -> Any:
-    """Load a depth map from disk given its file path."""
-    from PIL import Image
-
-    return Image.open(path).convert("RGB") 
-
-def load_class_segmentation(path: str) -> Any:
-    """Load a class segmentation map from disk given its file path."""
-    from PIL import Image
-
-    return Image.open(path).convert("RGB")  # Example loader; replace with actual implementation
-
-
 REAL_DATASETS: dict[str, dict[str, Any]] = {
     "VKITTI2": {
         "modalities": {
-            "rgb":   Modality("/Volumes/Volume/Datasets/vkitti2/vkitti_2.0.3_rgb",   loader=load_rgb),
-            "depth": Modality("/Volumes/Volume/Datasets/vkitti2/vkitti_2.0.3_depth", loader=load_depth),
-            "classSegmentation": Modality("/Volumes/Volume/Datasets/vkitti2/vkitti_2.0.3_classSegmentation", loader=load_class_segmentation),
-            "hazyRgb": Modality("/Volumes/Volume/Datasets/vkitti2/vkitti_2.0.3_hazyRgb", loader=load_rgb),
+            "rgb":   Modality("/Volumes/Volume/Datasets/vkitti2/vkitti_2.0.3_rgb",   loader=vkitti2.rgb),
+            "depth": Modality("/Volumes/Volume/Datasets/vkitti2/vkitti_2.0.3_depth", loader=vkitti2.depth),
+            "classSegmentation": Modality("/Volumes/Volume/Datasets/vkitti2/vkitti_2.0.3_classSegmentation", loader=vkitti2.class_segmentation),
         },
         "read_intrinsics": None,
         "read_extrinsics": None,
