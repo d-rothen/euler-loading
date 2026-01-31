@@ -192,6 +192,7 @@ class MultiModalDataset(Dataset):
             sample[name] = loaded
 
         sample["id"] = sample_id
+        sample["full_id"] = "/" + "/".join(hierarchy_path + (sample_id,))
         sample["meta"] = meta
 
         for transform in self._transforms:
