@@ -10,6 +10,8 @@ Return types
 - **depth** – ``np.ndarray`` of shape ``(H, W)`` float32 in metres.
 - **class_segmentation** – ``np.ndarray`` of shape ``(H, W)`` int64
   (single-channel class IDs).
+- **sky_mask** – ``np.ndarray`` of shape ``(H, W)`` bool
+  (``True`` where class ID == 29).
 
 Usage::
 
@@ -51,3 +53,15 @@ def class_segmentation(path: str) -> np.ndarray:
     RGBA PNG.  Only the red channel is returned.
     """
     return np.array(Image.open(path), dtype=np.int64)[:, :, 0]
+
+
+_SKY_CLASS_ID = 29
+
+
+def sky_mask(path: str) -> np.ndarray:
+    """Load a sky mask as an ``(H, W)`` bool array.
+
+    Reads the red channel of the segmentation PNG and returns ``True``
+    where the class ID equals ``29`` (sky).
+    """
+    return np.array(Image.open(path), dtype=np.uint8)[:, :, 0] == _SKY_CLASS_ID

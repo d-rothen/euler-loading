@@ -10,6 +10,8 @@ Return types
 - **depth** – ``torch.FloatTensor`` of shape ``(1, H, W)`` in metres.
 - **class_segmentation** – ``torch.LongTensor`` of shape ``(1, H, W)``
   (single-channel class IDs).
+- **sky_mask** – ``torch.BoolTensor`` of shape ``(1, H, W)``
+  (``True`` where class ID == 29).
 
 Usage::
 
@@ -54,4 +56,17 @@ def class_segmentation(path: str) -> torch.Tensor:
     RGBA PNG.  Only the red channel is returned.
     """
     arr = np.array(Image.open(path), dtype=np.int64)[:, :, 0]
+    return torch.from_numpy(arr).unsqueeze(0).contiguous()
+
+
+_SKY_CLASS_ID = 29
+
+
+def sky_mask(path: str) -> torch.Tensor:
+    """Load a sky mask as a ``(1, H, W)`` bool tensor.
+
+    Reads the red channel of the segmentation PNG and returns ``True``
+    where the class ID equals ``29`` (sky).
+    """
+    arr = np.array(Image.open(path), dtype=np.uint8)[:, :, 0] == _SKY_CLASS_ID
     return torch.from_numpy(arr).unsqueeze(0).contiguous()
