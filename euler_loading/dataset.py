@@ -98,7 +98,10 @@ class MultiModalDataset(Dataset):
         for name, modality in modalities.items():
             index = index_dataset_from_path(modality.path)
             records = collect_files(index["dataset"])
-            lookup = {rec.file_entry["id"]: rec for rec in records}
+            lookup = {
+                "/".join(rec.hierarchy_path + (rec.file_entry["id"],)): rec
+                for rec in records
+            }
             self._lookups[name] = lookup
             logger.info(
                 "Modality '%s': indexed %d files from %s",
@@ -165,6 +168,7 @@ class MultiModalDataset(Dataset):
         sample: dict[str, Any] = {}
 
         meta: dict[str, dict[str, Any]] = {}
+        file_id: str = ""
         hierarchy_path: tuple[str, ...] = ()
 
         for name, modality in self._modalities.items():
@@ -176,6 +180,7 @@ class MultiModalDataset(Dataset):
             # Hierarchy path from the first modality that has one.
             if not hierarchy_path:
                 hierarchy_path = record.hierarchy_path
+                file_id = record.file_entry["id"]
 
         # -- Load hierarchical modalities ------------------------------------
         for name, modality in self._hierarchical_modalities.items():
@@ -191,8 +196,8 @@ class MultiModalDataset(Dataset):
                 loaded[entry["id"]] = self._hierarchical_cache[file_path]
             sample[name] = loaded
 
-        sample["id"] = sample_id
-        sample["full_id"] = "/" + "/".join(hierarchy_path + (sample_id,))
+        sample["id"] = file_id
+        sample["full_id"] = "/" + "/".join(hierarchy_path + (file_id,))
         sample["meta"] = meta
 
         for transform in self._transforms:

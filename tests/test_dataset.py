@@ -494,3 +494,90 @@ class TestHierarchicalModalities:
         _ = ds[0]
         assert "cam_intrinsics" in received
         assert isinstance(received["cam_intrinsics"], dict)
+
+
+# ---------------------------------------------------------------------------
+# Multi-scene with duplicate bare IDs
+# ---------------------------------------------------------------------------
+
+def _multi_scene_index(modality: str) -> dict[str, Any]:
+    """Two scenes whose files share the same bare IDs (e.g. ``f001``)."""
+    return {
+        "dataset": {
+            "children": {
+                "SceneA": {
+                    "files": [
+                        _make_file("f001", f"SceneA/f001.{modality}"),
+                        _make_file("f002", f"SceneA/f002.{modality}"),
+                    ]
+                },
+                "SceneB": {
+                    "files": [
+                        _make_file("f001", f"SceneB/f001.{modality}"),
+                        _make_file("f002", f"SceneB/f002.{modality}"),
+                    ]
+                },
+            }
+        }
+    }
+
+
+class TestMultiSceneDuplicateIDs:
+    """Scenes with overlapping bare file IDs must not collide."""
+
+    def _make(self):
+        rgb_index = _multi_scene_index("rgb")
+        depth_index = _multi_scene_index("depth")
+
+        def mock_index(path, **kw):
+            return rgb_index if "rgb" in path else depth_index
+
+        with patch(
+            "euler_loading.dataset.index_dataset_from_path",
+            side_effect=mock_index,
+        ):
+            return MultiModalDataset(
+                modalities={
+                    "rgb": Modality("/data/rgb", loader=dummy_loader),
+                    "depth": Modality("/data/depth", loader=dummy_loader),
+                },
+            )
+
+    def test_all_files_preserved(self):
+        """Four files (2 scenes × 2 frames) must not collapse to two."""
+        ds = self._make()
+        assert len(ds) == 4
+
+    def test_bare_ids_appear_twice(self):
+        """Each bare ID appears once per scene."""
+        ds = self._make()
+        bare_ids = [ds[i]["id"] for i in range(len(ds))]
+        assert bare_ids.count("f001") == 2
+        assert bare_ids.count("f002") == 2
+
+    def test_full_ids_are_unique(self):
+        ds = self._make()
+        full_ids = {ds[i]["full_id"] for i in range(len(ds))}
+        assert len(full_ids) == 4
+
+    def test_full_id_encodes_scene(self):
+        ds = self._make()
+        full_ids = {ds[i]["full_id"] for i in range(len(ds))}
+        assert "/SceneA/f001" in full_ids
+        assert "/SceneA/f002" in full_ids
+        assert "/SceneB/f001" in full_ids
+        assert "/SceneB/f002" in full_ids
+
+    def test_loader_receives_correct_scene_path(self):
+        """Each sample must load from its own scene directory."""
+        ds = self._make()
+        paths = set()
+        for i in range(len(ds)):
+            sample = ds[i]
+            paths.add(sample["rgb"])
+        assert paths == {
+            "loaded:/data/rgb/SceneA/f001.rgb",
+            "loaded:/data/rgb/SceneA/f002.rgb",
+            "loaded:/data/rgb/SceneB/f001.rgb",
+            "loaded:/data/rgb/SceneB/f002.rgb",
+        }
