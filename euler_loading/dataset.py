@@ -77,6 +77,14 @@ class MultiModalDataset(Dataset):
         # sample["rgb"], sample["depth"], sample["intrinsics_file"]["intrinsic"], ...
     """
 
+    def modality_paths(self) -> dict[str, str]:
+        """Return a list of the names of all modalities in this dataset."""
+        return {name: mod.path for name, mod in self._modalities.items()}
+
+    def hierarchical_modality_paths(self) -> dict[str, str]:
+        """Return a dict of hierarchical modality names to their root paths."""
+        return {name: mod.path for name, mod in self._hierarchical_modalities.items()}
+
     def __init__(
         self,
         modalities: dict[str, Modality],
