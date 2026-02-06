@@ -46,7 +46,7 @@ Works with `torch.utils.data.DataLoader` out of the box.
 
 ## API
 
-### `Modality(path, loader)`
+### `Modality(path, loader, ..., metadata=None)`
 
 Frozen dataclass describing one data modality.
 
@@ -54,9 +54,43 @@ Frozen dataclass describing one data modality.
 |-----------|------|-------------|
 | `path` | `str` | Absolute path to the modality root. Must contain a `ds-crawler.config` or cached `output.json`. |
 | `loader` | `Callable[[str], Any]` | Receives the absolute file path, returns loaded data. |
+| `used_as` | `str \| None` | Optional experiment role (e.g. `input`, `target`, `condition`). |
+| `slot` | `str \| None` | Optional fully-qualified logging slot (e.g. `dehaze.input.rgb`). |
+| `modality_type` | `str \| None` | Optional modality type override (e.g. `rgb`, `depth`). |
+| `hierarchy_scope` | `str \| None` | Optional scope label for hierarchical modalities (e.g. `scene_camera`). |
+| `applies_to` | `list[str] \| None` | Optional list of regular modality names a hierarchical modality applies to. |
+| `metadata` | `dict[str, Any]` | Optional arbitrary metadata. Keys under `metadata["euler_loading"]` are treated as euler-loading defaults. |
 
 The loader is the **only** place where domain-specific I/O happens.
 euler-loading never interprets file contents — it only resolves *which* file to load and passes the path to your function.
+
+### `MultiModalDataset.describe_for_runlog()`
+
+Returns a structured descriptor for run metadata:
+
+```python
+{
+  "modalities": {
+    "hazy_rgb": {
+      "path": "...",
+      "used_as": "input",
+      "slot": "dehaze.input.rgb",
+      "modality_type": "rgb",
+    },
+  },
+  "hierarchical_modalities": {
+    "camera_intrinsics": {
+      "path": "...",
+      "used_as": "condition",
+      "slot": "dehaze.condition.camera_intrinsics",
+      "hierarchy_scope": "scene_camera",
+      "applies_to": ["hazy_rgb"],
+    },
+  },
+}
+```
+
+Resolution order is: explicit `Modality` fields -> `Modality.metadata["euler_loading"]` -> ds-crawler config `properties["euler_loading"]` -> heuristics.
 
 ### `MultiModalDataset(modalities, hierarchical_modalities=None, transforms=None)`
 

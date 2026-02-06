@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+import re
+from collections.abc import Mapping
+from dataclasses import dataclass, field
 from typing import Any, Callable
 
 from torch.utils.data import Dataset
 
-from ds_crawler import index_dataset_from_path
+from ds_crawler import index_dataset_from_path, load_dataset_config
 
 from .indexing import (
     FileRecord,
@@ -16,6 +18,20 @@ from .indexing import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+_DS_CRAWLER_STRUCTURAL_KEYS = frozenset({
+    "name",
+    "type",
+    "id_regex",
+    "id_regex_join_char",
+    "euler_train",
+    "dataset",
+    "hierarchy_regex",
+    "named_capture_group_value_separator",
+    "sampled",
+})
+
 
 #TODO: might want to add slots=True in a 3.10+ only codebase
 @dataclass(frozen=True)
@@ -28,10 +44,29 @@ class Modality:
               ``output.json`` from a prior indexing run).
         loader: Callable that takes an absolute file path and returns the loaded
                 data (e.g. a numpy array, a PIL Image, a tensor).
+        used_as: Optional semantic role for experiment logging
+                 (e.g. ``"input"``, ``"target"``, ``"condition"``).
+        slot: Optional fully-qualified slot name for experiment logging
+              (e.g. ``"dehaze.input.rgb"``).
+        modality_type: Optional modality type override
+                       (e.g. ``"rgb"``, ``"depth"``, ``"segmentation"``).
+        hierarchy_scope: Optional scope label for hierarchical modalities
+                         (e.g. ``"scene_camera"``).
+        applies_to: Optional list of regular-modality names a hierarchical
+                    modality applies to.
+        metadata: Optional arbitrary metadata. Keys under
+                  ``metadata["euler_loading"]`` are treated as
+                  euler-loading-specific defaults.
     """
 
     path: str
     loader: Callable[[str], Any]
+    used_as: str | None = None
+    slot: str | None = None
+    modality_type: str | None = None
+    hierarchy_scope: str | None = None
+    applies_to: list[str] | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 class MultiModalDataset(Dataset):
@@ -85,6 +120,79 @@ class MultiModalDataset(Dataset):
         """Return a dict of hierarchical modality names to their root paths."""
         return {name: mod.path for name, mod in self._hierarchical_modalities.items()}
 
+    def describe_for_runlog(self) -> dict[str, dict[str, dict[str, Any]]]:
+        """Return structured dataset metadata for runlog ``meta.json``.
+
+        The returned dict is shaped as::
+
+            {
+              "modalities": {
+                "<name>": {
+                  "path": "...",
+                  "used_as": "...",
+                  "slot": "...",
+                  "modality_type": "...",
+                },
+              },
+              "hierarchical_modalities": {
+                "<name>": {
+                  "path": "...",
+                  "used_as": "...",
+                  "slot": "...",
+                  "modality_type": "...",
+                  "hierarchy_scope": "...",
+                  "applies_to": [...],
+                },
+              },
+            }
+
+        Resolution order for each field is:
+        1) explicit values on :class:`Modality`
+        2) modality ``metadata["euler_loading"]``
+        3) ds-crawler config properties ``properties["euler_loading"]``
+        4) naming / hierarchy heuristics
+        """
+        regular_names = list(self._modalities.keys())
+        descriptor_cache: dict[str, dict[str, Any]] = {}
+
+        modalities: dict[str, dict[str, Any]] = {}
+        for name, modality in self._modalities.items():
+            descriptor = _get_ds_crawler_descriptor(
+                path=modality.path,
+                index_output=self._index_outputs.get(name),
+                cache=descriptor_cache,
+            )
+            modalities[name] = _build_runlog_entry(
+                name=name,
+                modality=modality,
+                descriptor=descriptor,
+                is_hierarchical=False,
+                regular_modality_names=regular_names,
+                hierarchy_levels=None,
+            )
+
+        hierarchical_modalities: dict[str, dict[str, Any]] = {}
+        for name, modality in self._hierarchical_modalities.items():
+            descriptor = _get_ds_crawler_descriptor(
+                path=modality.path,
+                index_output=self._hierarchical_index_outputs.get(name),
+                cache=descriptor_cache,
+            )
+            hierarchy_levels = list(self._hierarchical_lookups.get(name, {}).keys())
+            hierarchical_modalities[name] = _build_runlog_entry(
+                name=name,
+                modality=modality,
+                descriptor=descriptor,
+                is_hierarchical=True,
+                regular_modality_names=regular_names,
+                hierarchy_levels=hierarchy_levels,
+            )
+
+        return {
+            "modalities": modalities,
+            "hierarchical_modalities": hierarchical_modalities,
+        }
+
     def __init__(
         self,
         modalities: dict[str, Modality],
@@ -99,12 +207,15 @@ class MultiModalDataset(Dataset):
         self._modalities = modalities
         self._hierarchical_modalities = hierarchical_modalities or {}
         self._transforms = transforms or []
+        self._index_outputs: dict[str, dict[str, Any]] = {}
+        self._hierarchical_index_outputs: dict[str, dict[str, Any]] = {}
 
         # -- Index each modality and build ID → FileRecord lookups -----------
         self._lookups: dict[str, dict[str, FileRecord]] = {}
 
         for name, modality in modalities.items():
             index = index_dataset_from_path(modality.path)
+            self._index_outputs[name] = index
             records = collect_files(index["dataset"])
             lookup = {
                 "/".join(rec.hierarchy_path + (rec.file_entry["id"],)): rec
@@ -125,6 +236,7 @@ class MultiModalDataset(Dataset):
 
         for name, modality in self._hierarchical_modalities.items():
             index = index_dataset_from_path(modality.path)
+            self._hierarchical_index_outputs[name] = index
             files_by_level = collect_hierarchical_files(index["dataset"])
             self._hierarchical_lookups[name] = files_by_level
             total_files = sum(len(f) for f in files_by_level.values())
@@ -213,3 +325,291 @@ class MultiModalDataset(Dataset):
 
         return sample
 
+
+def _build_runlog_entry(
+    name: str,
+    modality: Modality,
+    descriptor: Mapping[str, Any],
+    *,
+    is_hierarchical: bool,
+    regular_modality_names: list[str],
+    hierarchy_levels: list[tuple[str, ...]] | None,
+) -> dict[str, Any]:
+    euler_loading_properties = _build_euler_loading_layers(
+        modality.metadata,
+        descriptor.get("properties"),
+    )
+    used_as = _first_non_empty(
+        modality.used_as,
+        _as_non_empty_str(
+            _resolve_euler_loading_property(euler_loading_properties, "used_as")
+        ),
+        _infer_used_as(name=name, is_hierarchical=is_hierarchical),
+    )
+    modality_type = _first_non_empty(
+        modality.modality_type,
+        _as_non_empty_str(
+            _resolve_euler_loading_property(euler_loading_properties, "modality_type")
+        ),
+        _as_non_empty_str(descriptor.get("modality_type")),
+        _infer_modality_type(name=name, path=modality.path),
+    )
+    slot = _first_non_empty(
+        modality.slot,
+        _as_non_empty_str(_resolve_euler_loading_property(euler_loading_properties, "slot")),
+        _infer_slot(
+            name=name,
+            used_as=used_as,
+            modality_type=modality_type,
+            euler_loading_properties=euler_loading_properties,
+        ),
+    )
+
+    entry: dict[str, Any] = {"path": modality.path}
+    if used_as is not None:
+        entry["used_as"] = used_as
+    if slot is not None:
+        entry["slot"] = slot
+    if modality_type is not None:
+        entry["modality_type"] = modality_type
+
+    if is_hierarchical:
+        hierarchy_scope = _first_non_empty(
+            modality.hierarchy_scope,
+            _as_non_empty_str(
+                _resolve_euler_loading_property(
+                    euler_loading_properties, "hierarchy_scope"
+                )
+            ),
+            _infer_hierarchy_scope_from_regex(descriptor.get("hierarchy_regex")),
+            _infer_hierarchy_scope_from_levels(hierarchy_levels),
+        )
+        if hierarchy_scope is not None:
+            entry["hierarchy_scope"] = hierarchy_scope
+
+        applies_to = _first_non_empty_list(
+            _as_string_list(modality.applies_to),
+            _as_string_list(
+                _resolve_euler_loading_property(euler_loading_properties, "applies_to")
+            ),
+            list(regular_modality_names),
+        )
+        entry["applies_to"] = applies_to
+
+    return entry
+
+
+def _build_euler_loading_layers(*candidates: Any) -> list[Mapping[str, Any]]:
+    layers: list[Mapping[str, Any]] = []
+    for candidate in candidates:
+        if not isinstance(candidate, Mapping):
+            continue
+        namespaced = candidate.get("euler_loading")
+        if isinstance(namespaced, Mapping):
+            layers.append(namespaced)
+    return layers
+
+
+def _resolve_euler_loading_property(
+    euler_loading_properties: list[Mapping[str, Any]],
+    key: str,
+) -> Any:
+    for layer in euler_loading_properties:
+        value = layer.get(key)
+        if value is not None:
+            return value
+    return None
+
+
+def _get_ds_crawler_descriptor(
+    *,
+    path: str,
+    index_output: Mapping[str, Any] | None,
+    cache: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    if path not in cache:
+        cache[path] = _read_ds_crawler_descriptor(path=path, index_output=index_output)
+    return cache[path]
+
+
+def _read_ds_crawler_descriptor(
+    *,
+    path: str,
+    index_output: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    properties: dict[str, Any] = {}
+    descriptor: dict[str, Any] = {"properties": properties}
+
+    if isinstance(index_output, Mapping):
+        properties.update(_extract_ds_crawler_properties(index_output))
+        index_type = _as_non_empty_str(index_output.get("type"))
+        if index_type is not None:
+            descriptor["modality_type"] = index_type
+        hierarchy_regex = _as_non_empty_str(index_output.get("hierarchy_regex"))
+        if hierarchy_regex is not None:
+            descriptor["hierarchy_regex"] = hierarchy_regex
+
+    try:
+        cfg = load_dataset_config({"path": path})
+    except Exception:
+        return descriptor
+
+    cfg_properties = getattr(cfg, "properties", None)
+    if isinstance(cfg_properties, Mapping):
+        properties.update(dict(cfg_properties))
+
+    cfg_type = _as_non_empty_str(getattr(cfg, "type", None))
+    if cfg_type is not None:
+        descriptor["modality_type"] = cfg_type
+
+    cfg_hierarchy_regex = _as_non_empty_str(getattr(cfg, "hierarchy_regex", None))
+    if cfg_hierarchy_regex is not None:
+        descriptor["hierarchy_regex"] = cfg_hierarchy_regex
+
+    return descriptor
+
+
+def _extract_ds_crawler_properties(index_output: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        str(key): value
+        for key, value in index_output.items()
+        if key not in _DS_CRAWLER_STRUCTURAL_KEYS
+    }
+
+
+def _infer_used_as(*, name: str, is_hierarchical: bool) -> str | None:
+    lowered = name.lower()
+    if any(
+        token in lowered
+        for token in ("condition", "cond", "camera", "intrinsics", "extrinsics", "pose")
+    ):
+        return "condition"
+    if any(token in lowered for token in ("target", "gt", "label", "clear", "clean")):
+        return "target"
+    if any(token in lowered for token in ("input", "source", "src", "hazy", "noisy", "raw")):
+        return "input"
+    if is_hierarchical:
+        return "condition"
+    return None
+
+
+def _infer_modality_type(*, name: str, path: str) -> str | None:
+    lowered = f"{name} {path}".lower()
+    if any(token in lowered for token in ("rgb", "image", "img", "color", "colour")):
+        return "rgb"
+    if any(token in lowered for token in ("depth", "disparity")):
+        return "depth"
+    if any(token in lowered for token in ("segmentation", "segment", "mask", "semantic")):
+        return "segmentation"
+    return None
+
+
+def _infer_slot(
+    *,
+    name: str,
+    used_as: str | None,
+    modality_type: str | None,
+    euler_loading_properties: list[Mapping[str, Any]],
+) -> str | None:
+    if used_as is None:
+        return None
+    task = _as_non_empty_str(
+        _resolve_euler_loading_property(euler_loading_properties, "task")
+    )
+    leaf = modality_type or name
+    if task is not None:
+        return f"{task}.{used_as}.{leaf}"
+    return f"{used_as}.{leaf}"
+
+
+def _infer_hierarchy_scope_from_regex(value: Any) -> str | None:
+    regex = _as_non_empty_str(value)
+    if regex is None:
+        return None
+    try:
+        pattern = re.compile(regex)
+    except re.error:
+        return None
+
+    if not pattern.groupindex:
+        return None
+
+    ordered_names = [
+        name for name, _ in sorted(pattern.groupindex.items(), key=lambda item: item[1])
+    ]
+    if not ordered_names:
+        return None
+    return "_".join(ordered_names)
+
+
+def _infer_hierarchy_scope_from_levels(
+    levels: list[tuple[str, ...]] | None,
+) -> str | None:
+    if not levels:
+        return None
+
+    non_root_levels = [level for level in levels if level]
+    if not non_root_levels:
+        return "root"
+
+    max_depth = max(len(level) for level in non_root_levels)
+    deepest_levels = [level for level in non_root_levels if len(level) == max_depth]
+
+    tokens: list[str] = []
+    for idx in range(max_depth):
+        candidates = {
+            token
+            for token in (_extract_hierarchy_token(level[idx]) for level in deepest_levels)
+            if token is not None
+        }
+        if len(candidates) != 1:
+            return f"level_{max_depth}"
+        tokens.append(next(iter(candidates)))
+
+    if not tokens:
+        return f"level_{max_depth}"
+    return "_".join(tokens)
+
+
+def _extract_hierarchy_token(value: str) -> str | None:
+    for separator in (":", "=", "__", "_", "-"):
+        if separator not in value:
+            continue
+        prefix = value.split(separator, 1)[0].strip().lower()
+        if prefix and any(ch.isalpha() for ch in prefix):
+            return prefix
+    return None
+
+
+def _as_non_empty_str(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _as_string_list(value: Any) -> list[str] | None:
+    if value is None:
+        return None
+    if isinstance(value, (list, tuple, set)):
+        parsed = [_as_non_empty_str(item) for item in value]
+        return [item for item in parsed if item is not None]
+
+    single = _as_non_empty_str(value)
+    if single is None:
+        return []
+    return [single]
+
+
+def _first_non_empty(*candidates: str | None) -> str | None:
+    for candidate in candidates:
+        if candidate is not None:
+            return candidate
+    return None
+
+
+def _first_non_empty_list(*candidates: list[str] | None) -> list[str]:
+    for candidate in candidates:
+        if candidate is not None:
+            return candidate
+    return []

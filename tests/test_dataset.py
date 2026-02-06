@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -580,4 +581,252 @@ class TestMultiSceneDuplicateIDs:
             "loaded:/data/rgb/SceneA/f002.rgb",
             "loaded:/data/rgb/SceneB/f001.rgb",
             "loaded:/data/rgb/SceneB/f002.rgb",
+        }
+
+
+class TestRunlogDescription:
+    def test_describe_for_runlog_prefers_explicit_modality_metadata(self):
+        rgb_index = _flat_index("rgb", ["f001"])
+        depth_index = _flat_index("depth", ["f001"])
+        intrinsics_index: dict[str, Any] = {
+            "dataset": {
+                "children": {
+                    "scene:Scene01": {
+                        "children": {
+                            "camera:Camera_0": {
+                                "files": [
+                                    _make_file("intrinsic", "Scene01/Camera_0/intrinsic.txt"),
+                                ]
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        def mock_index(path, **kw):
+            if "intrinsics" in path:
+                return intrinsics_index
+            if "depth" in path:
+                return depth_index
+            return rgb_index
+
+        with patch(
+            "euler_loading.dataset.index_dataset_from_path",
+            side_effect=mock_index,
+        ), patch(
+            "euler_loading.dataset.load_dataset_config",
+            side_effect=FileNotFoundError,
+        ):
+            ds = MultiModalDataset(
+                modalities={
+                    "hazy_rgb": Modality(
+                        "/data/rgb",
+                        loader=dummy_loader,
+                        used_as="input",
+                        slot="dehaze.input.rgb",
+                        modality_type="rgb",
+                    ),
+                    "depth": Modality(
+                        "/data/depth",
+                        loader=dummy_loader,
+                        used_as="target",
+                        slot="dehaze.target.depth",
+                        modality_type="depth",
+                    ),
+                },
+                hierarchical_modalities={
+                    "camera_intrinsics": Modality(
+                        "/data/intrinsics",
+                        loader=dummy_loader,
+                        used_as="condition",
+                        slot="dehaze.condition.camera_intrinsics",
+                        hierarchy_scope="scene_camera",
+                        applies_to=["hazy_rgb", "depth"],
+                    ),
+                },
+            )
+            description = ds.describe_for_runlog()
+
+        assert description == {
+            "modalities": {
+                "hazy_rgb": {
+                    "path": "/data/rgb",
+                    "used_as": "input",
+                    "slot": "dehaze.input.rgb",
+                    "modality_type": "rgb",
+                },
+                "depth": {
+                    "path": "/data/depth",
+                    "used_as": "target",
+                    "slot": "dehaze.target.depth",
+                    "modality_type": "depth",
+                },
+            },
+            "hierarchical_modalities": {
+                "camera_intrinsics": {
+                    "path": "/data/intrinsics",
+                    "used_as": "condition",
+                    "slot": "dehaze.condition.camera_intrinsics",
+                    "hierarchy_scope": "scene_camera",
+                    "applies_to": ["hazy_rgb", "depth"],
+                },
+            },
+        }
+
+    def test_describe_for_runlog_resolves_ds_crawler_properties(self):
+        rgb_index = _flat_index("rgb", ["f001"])
+        depth_index = _flat_index("depth", ["f001"])
+        intrinsics_index: dict[str, Any] = {
+            "dataset": {
+                "children": {
+                    "scene:Scene01": {
+                        "children": {
+                            "camera:Camera_0": {
+                                "files": [
+                                    _make_file("intrinsic", "Scene01/Camera_0/intrinsic.txt"),
+                                ]
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        def mock_index(path, **kw):
+            if "intrinsics" in path:
+                return intrinsics_index
+            if "depth" in path:
+                return depth_index
+            return rgb_index
+
+        def mock_load_dataset_config(data):
+            path = data["path"]
+            by_path: dict[str, Any] = {
+                "/data/rgb": SimpleNamespace(
+                    type="rgb",
+                    hierarchy_regex=None,
+                    properties={
+                        "euler_loading": {
+                            "used_as": "input",
+                            "slot": "dehaze.input.rgb",
+                        }
+                    },
+                ),
+                "/data/depth": SimpleNamespace(
+                    type="depth",
+                    hierarchy_regex=None,
+                    properties={
+                        "euler_loading": {
+                            "used_as": "target",
+                            "slot": "dehaze.target.depth",
+                        }
+                    },
+                ),
+                "/data/intrinsics": SimpleNamespace(
+                    type="metadata",
+                    hierarchy_regex=r"(?P<scene>[^/]+)/(?P<camera>[^/]+)",
+                    properties={
+                        "euler_loading": {
+                            "used_as": "condition",
+                            "slot": "dehaze.condition.camera_intrinsics",
+                            "applies_to": ["hazy_rgb", "depth"],
+                        }
+                    },
+                ),
+            }
+            return by_path[path]
+
+        with patch(
+            "euler_loading.dataset.index_dataset_from_path",
+            side_effect=mock_index,
+        ), patch(
+            "euler_loading.dataset.load_dataset_config",
+            side_effect=mock_load_dataset_config,
+        ):
+            ds = MultiModalDataset(
+                modalities={
+                    "hazy_rgb": Modality("/data/rgb", loader=dummy_loader),
+                    "depth": Modality("/data/depth", loader=dummy_loader),
+                },
+                hierarchical_modalities={
+                    "camera_intrinsics": Modality(
+                        "/data/intrinsics", loader=dummy_loader
+                    ),
+                },
+            )
+            description = ds.describe_for_runlog()
+
+        assert description == {
+            "modalities": {
+                "hazy_rgb": {
+                    "path": "/data/rgb",
+                    "used_as": "input",
+                    "slot": "dehaze.input.rgb",
+                    "modality_type": "rgb",
+                },
+                "depth": {
+                    "path": "/data/depth",
+                    "used_as": "target",
+                    "slot": "dehaze.target.depth",
+                    "modality_type": "depth",
+                },
+            },
+            "hierarchical_modalities": {
+                "camera_intrinsics": {
+                    "path": "/data/intrinsics",
+                    "used_as": "condition",
+                    "slot": "dehaze.condition.camera_intrinsics",
+                    "modality_type": "metadata",
+                    "hierarchy_scope": "scene_camera",
+                    "applies_to": ["hazy_rgb", "depth"],
+                },
+            },
+        }
+
+    def test_describe_for_runlog_uses_euler_loading_namespace_only(self):
+        rgb_index = _flat_index("rgb", ["f001"])
+
+        with patch(
+            "euler_loading.dataset.index_dataset_from_path",
+            return_value=rgb_index,
+        ), patch(
+            "euler_loading.dataset.load_dataset_config",
+            side_effect=FileNotFoundError,
+        ):
+            ds = MultiModalDataset(
+                modalities={
+                    "hazy_rgb": Modality(
+                        "/data/rgb",
+                        loader=dummy_loader,
+                        metadata={
+                            "runlog": {
+                                "used_as": "target",
+                                "slot": "legacy.target.rgb",
+                            },
+                            "euler_train": {
+                                "used_as": "target",
+                                "slot": "legacy2.target.rgb",
+                            },
+                            "euler_loading": {
+                                "used_as": "input",
+                                "slot": "dehaze.input.rgb",
+                                "modality_type": "rgb",
+                            },
+                        },
+                    )
+                }
+            )
+            description = ds.describe_for_runlog()
+
+        assert description == {
+            "modalities": {
+                "hazy_rgb": {
+                    "path": "/data/rgb",
+                    "used_as": "input",
+                    "slot": "dehaze.input.rgb",
+                    "modality_type": "rgb",
+                }
+            },
+            "hierarchical_modalities": {},
         }
