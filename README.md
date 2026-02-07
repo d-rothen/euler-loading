@@ -226,5 +226,28 @@ The top-level imports (`euler_loading.loaders.vkitti2`, `euler_loading.loaders.r
 | `depth` | Depth from `.npz` files (metres) |
 | `class_segmentation` | Single-channel class IDs extracted from the red channel of an RGBA PNG |
 | `sky_mask` | Binary mask where class ID == 29 (sky) |
+| `calibration` | Per-sensor calibration from JSON: returns `dict[sensor_name, {"K": (3,3), "T": (4,4), "distortion": (8,)}]` (use with `hierarchical_modalities`) |
 
 CPU variants live under `euler_loading.loaders.cpu.{vkitti2,real_drive_sim}`.
+
+### Flattening hierarchical modalities
+
+Hierarchical modalities always return `{file_id: loader_result}` because multiple files can match at different hierarchy levels. When a modality has exactly one file per hierarchy level (common for calibration), you can flatten this with a transform:
+
+```python
+dataset = MultiModalDataset(
+    modalities={...},
+    hierarchical_modalities={
+        "calibration": Modality("/data/rds/calibration", loader=real_drive_sim.calibration),
+    },
+    transforms=[
+        lambda sample: {
+            **sample,
+            "calibration": next(iter(sample["calibration"].values())),
+        },
+    ],
+)
+
+# Without the transform:  sample["calibration"]["<file_id>"]["CS_FRONT"]["K"]
+# With the transform:     sample["calibration"]["CS_FRONT"]["K"]
+```

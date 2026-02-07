@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
 import pytest
 import torch
 
 from euler_loading.loaders import vkitti2
 from euler_loading.loaders.gpu import vkitti2 as gpu_vkitti2
+from euler_loading.loaders.gpu import real_drive_sim as gpu_rds
 from euler_loading.loaders.cpu import vkitti2 as cpu_vkitti2
 
 # ---------------------------------------------------------------------------
@@ -304,3 +307,73 @@ class TestBackwardCompat:
         top = vkitti2.depth(depth_path)
         gpu = gpu_vkitti2.depth(depth_path)
         assert torch.equal(top, gpu)
+
+
+# ---------------------------------------------------------------------------
+# Real Drive Sim calibration loader
+# ---------------------------------------------------------------------------
+
+_RDS_CALIB_PATH = str(Path(__file__).parent / "example_rds_calib.json")
+
+
+class TestRDSCalibration:
+    """GPU calibration loader parses the Real Drive Sim JSON format."""
+
+    @pytest.fixture(autouse=True)
+    def _load(self):
+        self.result = gpu_rds.calibration(_RDS_CALIB_PATH)
+
+    def test_returns_dict_keyed_by_sensor_name(self):
+        assert set(self.result.keys()) == {"CS_FRONT", "HDL_32E", "HDL_64E"}
+
+    def test_each_sensor_has_expected_keys(self):
+        for sensor in self.result.values():
+            assert set(sensor.keys()) == {"K", "T", "distortion"}
+
+    # -- intrinsics ---------------------------------------------------------
+
+    def test_intrinsics_shape(self):
+        assert self.result["CS_FRONT"]["K"].shape == (3, 3)
+
+    def test_intrinsics_dtype(self):
+        assert self.result["CS_FRONT"]["K"].dtype == torch.float32
+
+    def test_intrinsics_values(self):
+        K = self.result["CS_FRONT"]["K"]
+        assert torch.isclose(K[0, 0], torch.tensor(2262.52001953125))  # fx
+        assert torch.isclose(K[1, 1], torch.tensor(2265.3017578125))   # fy
+        assert torch.isclose(K[0, 2], torch.tensor(1096.97998046875))  # cx
+        assert torch.isclose(K[1, 2], torch.tensor(513.1370239257812)) # cy
+        assert K[2, 2] == 1.0
+
+    # -- extrinsics ---------------------------------------------------------
+
+    def test_extrinsics_shape(self):
+        assert self.result["CS_FRONT"]["T"].shape == (4, 4)
+
+    def test_extrinsics_dtype(self):
+        assert self.result["CS_FRONT"]["T"].dtype == torch.float32
+
+    def test_extrinsics_last_row(self):
+        T = self.result["CS_FRONT"]["T"]
+        assert torch.equal(T[3], torch.tensor([0.0, 0.0, 0.0, 1.0]))
+
+    def test_extrinsics_translation(self):
+        T = self.result["CS_FRONT"]["T"]
+        assert torch.isclose(T[0, 3], torch.tensor(1.100000023841858))
+        assert torch.isclose(T[1, 3], torch.tensor(0.20000000298023224))
+        assert torch.isclose(T[2, 3], torch.tensor(1.25))
+
+    def test_rotation_is_orthonormal(self):
+        R = self.result["CS_FRONT"]["T"][:3, :3]
+        eye = R @ R.T
+        assert torch.allclose(eye, torch.eye(3), atol=1e-6)
+        assert torch.isclose(torch.det(R), torch.tensor(1.0), atol=1e-6)
+
+    # -- distortion ---------------------------------------------------------
+
+    def test_distortion_shape(self):
+        assert self.result["CS_FRONT"]["distortion"].shape == (8,)
+
+    def test_distortion_dtype(self):
+        assert self.result["CS_FRONT"]["distortion"].dtype == torch.float32
