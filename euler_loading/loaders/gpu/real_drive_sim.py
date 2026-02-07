@@ -136,5 +136,27 @@ def calibration(path: str) -> dict[str, dict[str, torch.Tensor]]:
         )
 
         result[name] = {"K": K, "T": T, "distortion": distortion}
+    return result
+
+def all_intrinsics(path: str) -> dict[str, torch.Tensor]:
+    """Load only the intrinsics from a Real Drive Sim calibration JSON."""
+    with open(path) as f:
+        data = json.load(f)
+    result: dict[str, torch.Tensor] = {}
+    
+    for name, intr in zip(data["names"], data["intrinsics"]):
+        fx, fy = intr["fx"], intr["fy"]
+        cx, cy = intr["cx"], intr["cy"]
+        s = intr["skew"]
+        K = torch.tensor(
+            [[fx, s, cx], [0.0, fy, cy], [0.0, 0.0, 1.0]],
+            dtype=torch.float32,
+        )
+        result[name] = K
 
     return result
+
+def read_intrinsics(path: str) -> torch.Tensor:
+    """Load the intrinsics for a specific sensor from a Real Drive Sim calibration JSON."""
+    all_intrinsics_data = all_intrinsics(path)
+    return all_intrinsics_data["CS_FRONT"]
