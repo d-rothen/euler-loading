@@ -2,5 +2,6 @@
 
 from .dataset import Modality, MultiModalDataset
 from .indexing import FileRecord
+from .loaders.contracts import DenseDepthLoader
 
-__all__ = ["FileRecord", "Modality", "MultiModalDataset"]
+__all__ = ["DenseDepthLoader", "FileRecord", "Modality", "MultiModalDataset"]

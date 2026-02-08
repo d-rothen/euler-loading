@@ -12,6 +12,8 @@ Return types
   (RGB-encoded class labels).
 - **instance_segmentation** – ``np.ndarray`` of shape ``(H, W, 3)`` int64
   (RGB-encoded instance labels).
+- **sky_mask** – ``np.ndarray`` of shape ``(H, W)`` bool
+  (``True`` where the pixel is sky, i.e. RGB ``(90, 200, 255)``).
 - **scene_flow** – ``np.ndarray`` of shape ``(H, W, 3)`` float32 in ``[0, 1]``.
 - **read_intrinsics** – ``np.ndarray`` of shape ``(3, 3)`` float32
   (the camera intrinsic matrix *K*).
@@ -59,6 +61,23 @@ def class_segmentation(path: str) -> np.ndarray:
 def instance_segmentation(path: str) -> np.ndarray:
     """Load an RGB-encoded instance-segmentation mask as an ``(H, W, 3)`` int64 array."""
     return np.array(Image.open(path).convert("RGB"), dtype=np.int64)
+
+
+_SKY_COLOR = (90, 200, 255)
+
+
+def sky_mask(path: str) -> np.ndarray:
+    """Load a sky mask as an ``(H, W)`` bool array.
+
+    Reads the RGB class-segmentation PNG and returns ``True`` where the
+    pixel colour equals ``(90, 200, 255)`` (sky class in VKITTI2).
+    """
+    arr = np.array(Image.open(path).convert("RGB"), dtype=np.uint8)
+    return (
+        (arr[:, :, 0] == _SKY_COLOR[0])
+        & (arr[:, :, 1] == _SKY_COLOR[1])
+        & (arr[:, :, 2] == _SKY_COLOR[2])
+    )
 
 
 def scene_flow(path: str) -> np.ndarray:

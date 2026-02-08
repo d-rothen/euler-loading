@@ -12,6 +12,8 @@ Return types
   (RGB-encoded class labels).
 - **instance_segmentation** – ``torch.LongTensor`` of shape ``(3, H, W)``
   (RGB-encoded instance labels).
+- **sky_mask** – ``torch.BoolTensor`` of shape ``(1, H, W)``
+  (``True`` where the pixel is sky, i.e. RGB ``(90, 200, 255)``).
 - **scene_flow** – ``torch.FloatTensor`` of shape ``(3, H, W)`` in ``[0, 1]``.
 - **read_intrinsics** – ``torch.FloatTensor`` of shape ``(3, 3)``
   (the camera intrinsic matrix *K*).
@@ -65,6 +67,24 @@ def instance_segmentation(path: str) -> torch.Tensor:
     """Load an RGB-encoded instance-segmentation mask as a ``(3, H, W)`` long tensor."""
     arr = np.array(Image.open(path).convert("RGB"), dtype=np.int64)
     return torch.from_numpy(arr).permute(2, 0, 1).contiguous()
+
+
+_SKY_COLOR = (90, 200, 255)
+
+
+def sky_mask(path: str) -> torch.Tensor:
+    """Load a sky mask as a ``(1, H, W)`` bool tensor.
+
+    Reads the RGB class-segmentation PNG and returns ``True`` where the
+    pixel colour equals ``(90, 200, 255)`` (sky class in VKITTI2).
+    """
+    arr = np.array(Image.open(path).convert("RGB"), dtype=np.uint8)
+    mask = (
+        (arr[:, :, 0] == _SKY_COLOR[0])
+        & (arr[:, :, 1] == _SKY_COLOR[1])
+        & (arr[:, :, 2] == _SKY_COLOR[2])
+    )
+    return torch.from_numpy(mask).unsqueeze(0).contiguous()
 
 
 def scene_flow(path: str) -> torch.Tensor:

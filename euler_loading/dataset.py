@@ -278,6 +278,10 @@ class MultiModalDataset(Dataset):
         # -- Caches ----------------------------------------------------------
         self._hierarchical_cache: dict[str, Any] = {}
 
+    def get_modality_metadata(self, modality_name: str) -> dict[str, Any]:
+        """Return the metadata dict for a given modality name."""
+        return self._index_outputs.get(modality_name, {}).get("meta", {})
+
     # -- Dataset interface ---------------------------------------------------
 
     def __len__(self) -> int:
