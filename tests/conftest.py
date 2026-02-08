@@ -275,6 +275,6 @@ def multi_level_hierarchical_index() -> dict[str, Any]:
     }
 
 
-def dummy_loader(path: str) -> str:
+def dummy_loader(path: str, meta: dict[str, Any] | None = None) -> str:
     """Trivial loader that returns the path — avoids needing real files."""
     return f"loaded:{path}"

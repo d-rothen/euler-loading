@@ -12,7 +12,7 @@ verify conformance at runtime::
 
 from __future__ import annotations
 
-from typing import Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 import torch
 
@@ -22,7 +22,8 @@ class DenseDepthLoader(Protocol):
     """Contract for dense-depth dataset loaders.
 
     A conforming module must expose the following callables, each accepting
-    a file path and returning a ``torch.Tensor``:
+    a file path and an optional ``meta`` dict, and returning a
+    ``torch.Tensor``:
 
     - **rgb** – ``(3, H, W)`` float32 in ``[0, 1]``
     - **depth** – ``(1, H, W)`` float32 in metres
@@ -30,7 +31,7 @@ class DenseDepthLoader(Protocol):
     - **read_intrinsics** – ``(3, 3)`` float32 camera matrix *K*
     """
 
-    def rgb(self, path: str) -> torch.Tensor: ...
-    def depth(self, path: str) -> torch.Tensor: ...
-    def sky_mask(self, path: str) -> torch.Tensor: ...
-    def read_intrinsics(self, path: str) -> torch.Tensor: ...
+    def rgb(self, path: str, meta: dict[str, Any] | None = None) -> torch.Tensor: ...
+    def depth(self, path: str, meta: dict[str, Any] | None = None) -> torch.Tensor: ...
+    def sky_mask(self, path: str, meta: dict[str, Any] | None = None) -> torch.Tensor: ...
+    def read_intrinsics(self, path: str, meta: dict[str, Any] | None = None) -> torch.Tensor: ...

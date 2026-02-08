@@ -30,6 +30,8 @@ Usage::
 
 from __future__ import annotations
 
+from typing import Any
+
 import numpy as np
 from PIL import Image
 
@@ -38,12 +40,12 @@ from PIL import Image
 # ---------------------------------------------------------------------------
 
 
-def rgb(path: str) -> np.ndarray:
+def rgb(path: str, meta: dict[str, Any] | None = None) -> np.ndarray:
     """Load an RGB image as an ``(H, W, 3)`` float32 array in ``[0, 1]``."""
     return np.array(Image.open(path).convert("RGB"), dtype=np.float32) / 255.0
 
 
-def depth(path: str) -> np.ndarray:
+def depth(path: str, meta: dict[str, Any] | None = None) -> np.ndarray:
     """Load a VKITTI2 depth map as an ``(H, W)`` float32 array in **metres**.
 
     VKITTI2 stores depth as 16-bit PNG where each pixel value represents
@@ -53,12 +55,12 @@ def depth(path: str) -> np.ndarray:
     return np.array(Image.open(path), dtype=np.float32) / 100.0
 
 
-def class_segmentation(path: str) -> np.ndarray:
+def class_segmentation(path: str, meta: dict[str, Any] | None = None) -> np.ndarray:
     """Load an RGB-encoded class-segmentation mask as an ``(H, W, 3)`` int64 array."""
     return np.array(Image.open(path).convert("RGB"), dtype=np.int64)
 
 
-def instance_segmentation(path: str) -> np.ndarray:
+def instance_segmentation(path: str, meta: dict[str, Any] | None = None) -> np.ndarray:
     """Load an RGB-encoded instance-segmentation mask as an ``(H, W, 3)`` int64 array."""
     return np.array(Image.open(path).convert("RGB"), dtype=np.int64)
 
@@ -66,7 +68,7 @@ def instance_segmentation(path: str) -> np.ndarray:
 _SKY_COLOR = (90, 200, 255)
 
 
-def sky_mask(path: str) -> np.ndarray:
+def sky_mask(path: str, meta: dict[str, Any] | None = None) -> np.ndarray:
     """Load a sky mask as an ``(H, W)`` bool array.
 
     Reads the RGB class-segmentation PNG and returns ``True`` where the
@@ -80,7 +82,7 @@ def sky_mask(path: str) -> np.ndarray:
     )
 
 
-def scene_flow(path: str) -> np.ndarray:
+def scene_flow(path: str, meta: dict[str, Any] | None = None) -> np.ndarray:
     """Load an optical / scene-flow map as an ``(H, W, 3)`` float32 array in ``[0, 1]``."""
     return np.array(Image.open(path).convert("RGB"), dtype=np.float32) / 255.0
 
@@ -90,7 +92,7 @@ def scene_flow(path: str) -> np.ndarray:
 # ---------------------------------------------------------------------------
 
 
-def read_intrinsics(path: str) -> np.ndarray:
+def read_intrinsics(path: str, meta: dict[str, Any] | None = None) -> np.ndarray:
     """Parse a VKITTI2 intrinsics text file into a ``(3, 3)`` float32 *K* matrix.
 
     The file has the header ``frame cameraID K[0,0] K[1,1] K[0,2] K[1,2]``.
@@ -116,6 +118,6 @@ def read_intrinsics(path: str) -> np.ndarray:
     )
 
 
-def read_extrinsics(path: str) -> np.ndarray:
+def read_extrinsics(path: str, meta: dict[str, Any] | None = None) -> np.ndarray:
     """Parse a VKITTI2 extrinsics text file into a float32 array."""
     return np.loadtxt(path).astype(np.float32)

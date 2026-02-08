@@ -1,0 +1,137 @@
+"""Generic GPU-oriented loader for dense-depth datasets.
+
+Unlike the dataset-specific loaders (vkitti2, real_drive_sim), this module
+infers the loading strategy from the **file extension** and relies on the
+``meta`` dict for dataset-specific details (sky colour, intrinsics).
+
+Supported file extensions:
+
+- **Images** (``.png``, ``.jpg``, ``.jpeg``, ``.bmp``, ``.tif``, ``.tiff``)
+  – loaded via PIL.
+- **NumPy** (``.npy``) – loaded via :func:`numpy.load`.
+- **NumPy archive** (``.npz``) – first array in the archive is used.
+
+Return types
+------------
+- **rgb** – ``torch.FloatTensor`` of shape ``(3, H, W)`` in ``[0, 1]``.
+- **depth** – ``torch.FloatTensor`` of shape ``(1, H, W)``.
+- **sky_mask** – ``torch.BoolTensor`` of shape ``(1, H, W)``.
+  Requires ``meta["sky_mask"]`` → ``[R, G, B]`` identifying the sky class.
+- **read_intrinsics** – ``torch.FloatTensor`` of shape ``(3, 3)``.
+  Ignores *path*; returns ``meta["intrinsics"]`` directly.
+
+Usage::
+
+    from euler_loading.loaders.gpu import generic_dense_depth
+    from euler_loading import Modality
+
+    Modality("/data/my_dataset/rgb",   loader=generic_dense_depth.rgb)
+    Modality("/data/my_dataset/depth", loader=generic_dense_depth.depth)
+"""
+
+from __future__ import annotations
+
+import os
+from typing import Any
+
+import numpy as np
+import torch
+from PIL import Image
+
+_IMAGE_EXTENSIONS = frozenset({".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff"})
+_NPY_EXTENSION = ".npy"
+_NPZ_EXTENSION = ".npz"
+
+
+# ---------------------------------------------------------------------------
+# Internal helpers
+# ---------------------------------------------------------------------------
+
+
+def _load_image_rgb(path: str) -> np.ndarray:
+    """Load an image file as ``(H, W, 3)`` float32 in ``[0, 1]``."""
+    return np.array(Image.open(path).convert("RGB"), dtype=np.float32) / 255.0
+
+
+def _load_numpy(path: str) -> np.ndarray:
+    """Load a ``.npy`` or ``.npz`` file and return the array as float32."""
+    ext = os.path.splitext(path)[1].lower()
+    if ext == _NPZ_EXTENSION:
+        npz = np.load(path)
+        arr = next(iter(npz.values()))
+    else:
+        arr = np.load(path)
+    return arr.astype(np.float32)
+
+
+# ---------------------------------------------------------------------------
+# Public loaders
+# ---------------------------------------------------------------------------
+
+
+def rgb(path: str, meta: dict[str, Any] | None = None) -> torch.Tensor:
+    """Load an RGB sample as a ``(3, H, W)`` float32 tensor in ``[0, 1]``.
+
+    - **Image files** are loaded via PIL and normalised to ``[0, 1]``.
+    - **NumPy files** are loaded directly and assumed to already be in the
+      correct range / layout ``(H, W, 3)``.
+    """
+    ext = os.path.splitext(path)[1].lower()
+    if ext in _IMAGE_EXTENSIONS:
+        arr = _load_image_rgb(path)
+    else:
+        arr = _load_numpy(path)
+    return torch.from_numpy(arr).permute(2, 0, 1).contiguous()
+
+
+def depth(path: str, meta: dict[str, Any] | None = None) -> torch.Tensor:
+    """Load a depth map as a ``(1, H, W)`` float32 tensor.
+
+    - **Image files** are loaded as single-channel greyscale.
+    - **NumPy files** are loaded directly.
+
+    No unit conversion is applied; values are returned as-is.
+    """
+    ext = os.path.splitext(path)[1].lower()
+    if ext in _IMAGE_EXTENSIONS:
+        arr = np.array(Image.open(path), dtype=np.float32)
+    else:
+        arr = _load_numpy(path)
+    return torch.from_numpy(arr).unsqueeze(0).contiguous()
+
+
+def sky_mask(path: str, meta: dict[str, Any] | None = None) -> torch.Tensor:
+    """Load a sky mask as a ``(1, H, W)`` bool tensor.
+
+    Reads the file as an RGB image and compares each pixel against the sky
+    colour provided in ``meta["sky_mask"]`` (an ``[R, G, B]`` list/array).
+    """
+    if meta is None or "sky_mask" not in meta:
+        raise ValueError(
+            "sky_mask requires meta['sky_mask'] to be set to an [R, G, B] array"
+        )
+    sky_color = meta["sky_mask"]
+    arr = np.array(Image.open(path).convert("RGB"), dtype=np.uint8)
+    mask = (
+        (arr[:, :, 0] == sky_color[0])
+        & (arr[:, :, 1] == sky_color[1])
+        & (arr[:, :, 2] == sky_color[2])
+    )
+    return torch.from_numpy(mask).unsqueeze(0).contiguous()
+
+
+def read_intrinsics(path: str, meta: dict[str, Any] | None = None) -> torch.Tensor:
+    """Return the ``(3, 3)`` camera intrinsics matrix from *meta*.
+
+    The *path* argument is ignored.  The intrinsics are expected under
+    ``meta["intrinsics"]`` as anything convertible to a tensor (list, array,
+    or tensor).
+    """
+    if meta is None or "intrinsics" not in meta:
+        raise ValueError(
+            "read_intrinsics requires meta['intrinsics'] to be set"
+        )
+    K = meta["intrinsics"]
+    if isinstance(K, torch.Tensor):
+        return K.to(dtype=torch.float32)
+    return torch.tensor(K, dtype=torch.float32)

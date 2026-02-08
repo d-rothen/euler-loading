@@ -214,10 +214,10 @@ class TestTransforms:
                 sample["depth"] = "masked"
             return sample
 
-        def loader_rgb(path):
+        def loader_rgb(path, meta=None):
             return "mask_signal"
 
-        def loader_depth(path):
+        def loader_depth(path, meta=None):
             return "raw_depth"
 
         with patch(

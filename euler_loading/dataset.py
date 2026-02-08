@@ -60,7 +60,7 @@ class Modality:
     """
 
     path: str
-    loader: Callable[[str], Any]
+    loader: Callable[..., Any]
     used_as: str | None = None
     slot: str | None = None
     modality_type: str | None = None
@@ -298,7 +298,8 @@ class MultiModalDataset(Dataset):
         for name, modality in self._modalities.items():
             record = self._lookups[name][sample_id]
             file_path = f"{modality.path}/{record.file_entry['path']}"
-            sample[name] = modality.loader(file_path)
+            modality_meta = self._index_outputs[name].get("meta")
+            sample[name] = modality.loader(file_path, modality_meta)
             meta[name] = record.file_entry
 
             # Hierarchy path from the first modality that has one.
@@ -310,12 +311,13 @@ class MultiModalDataset(Dataset):
         for name, modality in self._hierarchical_modalities.items():
             files_by_level = self._hierarchical_lookups[name]
             matched = match_hierarchical_files(hierarchy_path, files_by_level)
+            modality_meta = self._hierarchical_index_outputs[name].get("meta")
             loaded: dict[str, Any] = {}
             for entry in matched:
                 file_path = f"{modality.path}/{entry['path']}"
                 if file_path not in self._hierarchical_cache:
                     self._hierarchical_cache[file_path] = modality.loader(
-                        file_path
+                        file_path, modality_meta
                     )
                 loaded[entry["id"]] = self._hierarchical_cache[file_path]
             sample[name] = loaded

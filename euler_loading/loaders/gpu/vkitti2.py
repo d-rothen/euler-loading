@@ -41,13 +41,13 @@ from PIL import Image
 # ---------------------------------------------------------------------------
 
 
-def rgb(path: str) -> torch.Tensor:
+def rgb(path: str, meta: dict[str, Any] | None = None) -> torch.Tensor:
     """Load an RGB image as a ``(3, H, W)`` float32 tensor in ``[0, 1]``."""
     arr = np.array(Image.open(path).convert("RGB"), dtype=np.float32) / 255.0
     return torch.from_numpy(arr).permute(2, 0, 1).contiguous()
 
 
-def depth(path: str) -> torch.Tensor:
+def depth(path: str, meta: dict[str, Any] | None = None) -> torch.Tensor:
     """Load a VKITTI2 depth map as a ``(1, H, W)`` float32 tensor in **metres**.
     VKITTI2 stores depth as 16-bit PNG where each pixel value represents
     depth in centimetres.  This loader converts to metres
@@ -57,13 +57,13 @@ def depth(path: str) -> torch.Tensor:
     return torch.from_numpy(arr).unsqueeze(0).contiguous()
 
 
-def class_segmentation(path: str) -> torch.Tensor:
+def class_segmentation(path: str, meta: dict[str, Any] | None = None) -> torch.Tensor:
     """Load an RGB-encoded class-segmentation mask as a ``(3, H, W)`` long tensor."""
     arr = np.array(Image.open(path).convert("RGB"), dtype=np.int64)
     return torch.from_numpy(arr).permute(2, 0, 1).contiguous()
 
 
-def instance_segmentation(path: str) -> torch.Tensor:
+def instance_segmentation(path: str, meta: dict[str, Any] | None = None) -> torch.Tensor:
     """Load an RGB-encoded instance-segmentation mask as a ``(3, H, W)`` long tensor."""
     arr = np.array(Image.open(path).convert("RGB"), dtype=np.int64)
     return torch.from_numpy(arr).permute(2, 0, 1).contiguous()
@@ -72,7 +72,7 @@ def instance_segmentation(path: str) -> torch.Tensor:
 _SKY_COLOR = (90, 200, 255)
 
 
-def sky_mask(path: str) -> torch.Tensor:
+def sky_mask(path: str, meta: dict[str, Any] | None = None) -> torch.Tensor:
     """Load a sky mask as a ``(1, H, W)`` bool tensor.
 
     Reads the RGB class-segmentation PNG and returns ``True`` where the
@@ -87,7 +87,7 @@ def sky_mask(path: str) -> torch.Tensor:
     return torch.from_numpy(mask).unsqueeze(0).contiguous()
 
 
-def scene_flow(path: str) -> torch.Tensor:
+def scene_flow(path: str, meta: dict[str, Any] | None = None) -> torch.Tensor:
     """Load an optical / scene-flow map as a ``(3, H, W)`` float32 tensor in ``[0, 1]``."""
     arr = np.array(Image.open(path).convert("RGB"), dtype=np.float32) / 255.0
     return torch.from_numpy(arr).permute(2, 0, 1).contiguous()
@@ -98,7 +98,7 @@ def scene_flow(path: str) -> torch.Tensor:
 # ---------------------------------------------------------------------------
 
 
-def read_intrinsics(path: str) -> torch.Tensor:
+def read_intrinsics(path: str, meta: dict[str, Any] | None = None) -> torch.Tensor:
     """Parse a VKITTI2 intrinsics text file into a ``(3, 3)`` float32 *K* matrix.
 
     The file has the header ``frame cameraID K[0,0] K[1,1] K[0,2] K[1,2]``.
@@ -124,6 +124,6 @@ def read_intrinsics(path: str) -> torch.Tensor:
     )
 
 
-def read_extrinsics(path: str) -> torch.Tensor:
+def read_extrinsics(path: str, meta: dict[str, Any] | None = None) -> torch.Tensor:
     """Parse a VKITTI2 extrinsics text file into a float32 tensor."""
     return torch.from_numpy(np.loadtxt(path).astype(np.float32))

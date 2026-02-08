@@ -24,6 +24,8 @@ Usage::
 
 from __future__ import annotations
 
+from typing import Any
+
 import numpy as np
 from PIL import Image
 
@@ -32,12 +34,12 @@ from PIL import Image
 # ---------------------------------------------------------------------------
 
 
-def rgb(path: str) -> np.ndarray:
+def rgb(path: str, meta: dict[str, Any] | None = None) -> np.ndarray:
     """Load an RGB image as an ``(H, W, 3)`` float32 array in ``[0, 1]``."""
     return np.array(Image.open(path).convert("RGB"), dtype=np.float32) / 255.0
 
 
-def depth(path: str) -> np.ndarray:
+def depth(path: str, meta: dict[str, Any] | None = None) -> np.ndarray:
     """Load a Real Drive Sim depth map as an ``(H, W)`` float32 array in **metres**.
 
     Real Drive Sim stores depth as float32 values in ``.npz`` files under
@@ -46,7 +48,7 @@ def depth(path: str) -> np.ndarray:
     return np.load(path)["data"].astype(np.float32)
 
 
-def class_segmentation(path: str) -> np.ndarray:
+def class_segmentation(path: str, meta: dict[str, Any] | None = None) -> np.ndarray:
     """Load a class-segmentation mask as an ``(H, W)`` int64 array.
 
     Real Drive Sim encodes class IDs in the first (red) channel of an
@@ -58,7 +60,7 @@ def class_segmentation(path: str) -> np.ndarray:
 _SKY_CLASS_ID = 29
 
 
-def sky_mask(path: str) -> np.ndarray:
+def sky_mask(path: str, meta: dict[str, Any] | None = None) -> np.ndarray:
     """Load a sky mask as an ``(H, W)`` bool array.
 
     Reads the red channel of the segmentation PNG and returns ``True``
