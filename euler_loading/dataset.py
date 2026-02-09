@@ -194,13 +194,25 @@ class MultiModalDataset(Dataset):
         # sample["rgb"], sample["depth"], sample["intrinsics_file"]["intrinsic"], ...
     """
 
-    def modality_paths(self) -> dict[str, str]:
+    def modality_paths(self) -> dict[str, dict[str, str]]:
         """Return a list of the names of all modalities in this dataset."""
-        return {name: mod.path for name, mod in self._modalities.items()}
+        #return {name: mod.path for name, mod in self._modalities.items()}
+        #get mod.path and mod.origin_path if it exists, otherwise fallback to mod.path
+        res = {}
+        for name, mod in self._modalities.items():
+            path = mod.path
+            origin = mod.origin_path
+            res[name] = {"path": path, "origin_path": origin}
+        return res
 
-    def hierarchical_modality_paths(self) -> dict[str, str]:
+    def hierarchical_modality_paths(self) -> dict[str, dict[str, str]]:
         """Return a dict of hierarchical modality names to their root paths."""
-        return {name: mod.path for name, mod in self._hierarchical_modalities.items()}
+        res = {}
+        for name, mod in self._hierarchical_modalities.items():
+            path = mod.path
+            origin = mod.origin_path
+            res[name] = {"path": path, "origin_path": origin}
+        return res
 
     def describe_for_runlog(self) -> dict[str, dict[str, dict[str, Any]]]:
         """Return structured dataset metadata for runlog ``meta.json``.
@@ -211,6 +223,7 @@ class MultiModalDataset(Dataset):
               "modalities": {
                 "<name>": {
                   "path": "...",
+                  "origin_path": "...",
                   "used_as": "...",
                   "slot": "...",
                   "modality_type": "...",
@@ -219,6 +232,7 @@ class MultiModalDataset(Dataset):
               "hierarchical_modalities": {
                 "<name>": {
                   "path": "...",
+                  "origin_path": "...",
                   "used_as": "...",
                   "slot": "...",
                   "modality_type": "...",
