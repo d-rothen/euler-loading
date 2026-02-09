@@ -37,6 +37,8 @@ from typing import Any
 import numpy as np
 from PIL import Image
 
+from euler_loading.loaders._annotations import modality_meta
+
 _IMAGE_EXTENSIONS = frozenset({".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff"})
 _NPY_EXTENSION = ".npy"
 _NPZ_EXTENSION = ".npz"
@@ -68,6 +70,13 @@ def _load_numpy(path: str) -> np.ndarray:
 # ---------------------------------------------------------------------------
 
 
+@modality_meta(
+    modality_type="rgb",
+    dtype="float32",
+    shape="HWC",
+    file_formats=[".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff", ".npy", ".npz"],
+    output_range=[0.0, 1.0],
+)
 def rgb(path: str, meta: dict[str, Any] | None = None) -> np.ndarray:
     """Load an RGB sample as an ``(H, W, 3)`` float32 array in ``[0, 1]``.
 
@@ -81,6 +90,12 @@ def rgb(path: str, meta: dict[str, Any] | None = None) -> np.ndarray:
     return _load_numpy(path)
 
 
+@modality_meta(
+    modality_type="dense_depth",
+    dtype="float32",
+    shape="HW",
+    file_formats=[".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff", ".npy", ".npz"],
+)
 def depth(path: str, meta: dict[str, Any] | None = None) -> np.ndarray:
     """Load a depth map as an ``(H, W)`` float32 array.
 
@@ -95,6 +110,13 @@ def depth(path: str, meta: dict[str, Any] | None = None) -> np.ndarray:
     return _load_numpy(path)
 
 
+@modality_meta(
+    modality_type="sky_mask",
+    dtype="bool",
+    shape="HW",
+    file_formats=[".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff"],
+    requires_meta=["sky_mask"],
+)
 def sky_mask(path: str, meta: dict[str, Any] | None = None) -> np.ndarray:
     """Load a sky mask as an ``(H, W)`` bool array.
 
@@ -114,6 +136,13 @@ def sky_mask(path: str, meta: dict[str, Any] | None = None) -> np.ndarray:
     )
 
 
+@modality_meta(
+    modality_type="intrinsics",
+    dtype="float32",
+    hierarchical=True,
+    shape="3x3",
+    requires_meta=["intrinsics"],
+)
 def read_intrinsics(path: str, meta: dict[str, Any] | None = None) -> np.ndarray:
     """Return the ``(3, 3)`` camera intrinsics matrix from *meta*.
 

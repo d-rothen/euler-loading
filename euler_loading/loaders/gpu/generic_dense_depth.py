@@ -38,6 +38,8 @@ import numpy as np
 import torch
 from PIL import Image
 
+from euler_loading.loaders._annotations import modality_meta
+
 _IMAGE_EXTENSIONS = frozenset({".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff"})
 _NPY_EXTENSION = ".npy"
 _NPZ_EXTENSION = ".npz"
@@ -69,6 +71,13 @@ def _load_numpy(path: str) -> np.ndarray:
 # ---------------------------------------------------------------------------
 
 
+@modality_meta(
+    modality_type="rgb",
+    dtype="float32",
+    shape="CHW",
+    file_formats=[".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff", ".npy", ".npz"],
+    output_range=[0.0, 1.0],
+)
 def rgb(path: str, meta: dict[str, Any] | None = None) -> torch.Tensor:
     """Load an RGB sample as a ``(3, H, W)`` float32 tensor in ``[0, 1]``.
 
@@ -84,6 +93,12 @@ def rgb(path: str, meta: dict[str, Any] | None = None) -> torch.Tensor:
     return torch.from_numpy(arr).permute(2, 0, 1).contiguous()
 
 
+@modality_meta(
+    modality_type="dense_depth",
+    dtype="float32",
+    shape="1HW",
+    file_formats=[".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff", ".npy", ".npz"],
+)
 def depth(path: str, meta: dict[str, Any] | None = None) -> torch.Tensor:
     """Load a depth map as a ``(1, H, W)`` float32 tensor.
 
@@ -100,6 +115,13 @@ def depth(path: str, meta: dict[str, Any] | None = None) -> torch.Tensor:
     return torch.from_numpy(arr).unsqueeze(0).contiguous()
 
 
+@modality_meta(
+    modality_type="sky_mask",
+    dtype="bool",
+    shape="1HW",
+    file_formats=[".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff"],
+    requires_meta=["sky_mask"],
+)
 def sky_mask(path: str, meta: dict[str, Any] | None = None) -> torch.Tensor:
     """Load a sky mask as a ``(1, H, W)`` bool tensor.
 
@@ -120,6 +142,13 @@ def sky_mask(path: str, meta: dict[str, Any] | None = None) -> torch.Tensor:
     return torch.from_numpy(mask).unsqueeze(0).contiguous()
 
 
+@modality_meta(
+    modality_type="intrinsics",
+    dtype="float32",
+    hierarchical=True,
+    shape="3x3",
+    requires_meta=["intrinsics"],
+)
 def read_intrinsics(path: str, meta: dict[str, Any] | None = None) -> torch.Tensor:
     """Return the ``(3, 3)`` camera intrinsics matrix from *meta*.
 

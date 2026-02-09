@@ -34,17 +34,34 @@ import torch
 import numpy as np
 from PIL import Image
 
+from euler_loading.loaders._annotations import modality_meta
+
 # ---------------------------------------------------------------------------
 # Image modality loaders
 # ---------------------------------------------------------------------------
 
 
+@modality_meta(
+    modality_type="rgb",
+    dtype="float32",
+    shape="CHW",
+    file_formats=[".png"],
+    output_range=[0.0, 1.0],
+)
 def rgb(path: str, meta: dict[str, Any] | None = None) -> torch.Tensor:
     """Load an RGB image as a ``(3, H, W)`` float32 tensor in ``[0, 1]``."""
     arr = np.array(Image.open(path).convert("RGB"), dtype=np.float32) / 255.0
     return torch.from_numpy(arr).permute(2, 0, 1).contiguous()
 
 
+@modality_meta(
+    modality_type="dense_depth",
+    dtype="float32",
+    shape="1HW",
+    file_formats=[".npz"],
+    output_unit="meters",
+    meta={"radial_depth": False},
+)
 def depth(path: str, meta: dict[str, Any] | None = None) -> torch.Tensor:
     """Load a Real Drive Sim depth map as a ``(1, H, W)`` float32 tensor in **metres**.
 
@@ -55,6 +72,13 @@ def depth(path: str, meta: dict[str, Any] | None = None) -> torch.Tensor:
     return torch.from_numpy(arr).unsqueeze(0).contiguous()
 
 
+@modality_meta(
+    modality_type="semantic_segmentation",
+    dtype="int64",
+    shape="1HW",
+    file_formats=[".png"],
+    meta={"encoding": "single_channel", "sky_class_id": 29},
+)
 def class_segmentation(path: str, meta: dict[str, Any] | None = None) -> torch.Tensor:
     """Load a class-segmentation mask as a ``(1, H, W)`` long tensor.
 
@@ -68,6 +92,13 @@ def class_segmentation(path: str, meta: dict[str, Any] | None = None) -> torch.T
 _SKY_CLASS_ID = 29
 
 
+@modality_meta(
+    modality_type="sky_mask",
+    dtype="bool",
+    shape="1HW",
+    file_formats=[".png"],
+    meta={"sky_class_id": 29},
+)
 def sky_mask(path: str, meta: dict[str, Any] | None = None) -> torch.Tensor:
     """Load a sky mask as a ``(1, H, W)`` bool tensor.
 
@@ -95,6 +126,14 @@ def _quat_to_rotation_matrix(qw: float, qx: float, qy: float, qz: float) -> torc
     )
 
 
+@modality_meta(
+    modality_type="calibration",
+    dtype="dict",
+    hierarchical=True,
+    shape="dict",
+    file_formats=[".json"],
+    meta={"sensors": ["CS_FRONT", "HDL_32E", "HDL_64E"], "keys": ["K", "T", "distortion"]},
+)
 def calibration(path: str, meta: dict[str, Any] | None = None) -> dict[str, dict[str, torch.Tensor]]:
     """Load a Real Drive Sim calibration JSON.
 
@@ -139,6 +178,13 @@ def calibration(path: str, meta: dict[str, Any] | None = None) -> dict[str, dict
         result[name] = {"K": K, "T": T, "distortion": distortion}
     return result
 
+@modality_meta(
+    modality_type="all_intrinsics",
+    dtype="dict",
+    hierarchical=True,
+    shape="dict",
+    file_formats=[".json"],
+)
 def all_intrinsics(path: str, meta: dict[str, Any] | None = None) -> dict[str, torch.Tensor]:
     """Load only the intrinsics from a Real Drive Sim calibration JSON."""
     with open(path) as f:
@@ -157,6 +203,14 @@ def all_intrinsics(path: str, meta: dict[str, Any] | None = None) -> dict[str, t
 
     return result
 
+@modality_meta(
+    modality_type="intrinsics",
+    dtype="float32",
+    hierarchical=True,
+    shape="3x3",
+    file_formats=[".json"],
+    meta={"sensor": "CS_FRONT"},
+)
 def read_intrinsics(path: str, meta: dict[str, Any] | None = None) -> torch.Tensor:
     """Load the intrinsics for a specific sensor from a Real Drive Sim calibration JSON."""
     all_intrinsics_data = all_intrinsics(path)

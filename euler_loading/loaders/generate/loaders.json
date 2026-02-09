@@ -1,0 +1,400 @@
+{
+    "supportedLoaders": [
+        {
+            "name": "generic_dense_depth",
+            "modalities": [
+                {
+                    "type": "dense_depth",
+                    "function": "depth",
+                    "hierarchical": false,
+                    "dtype": "float32",
+                    "access": "key",
+                    "file_formats": [
+                        ".png",
+                        ".jpg",
+                        ".jpeg",
+                        ".bmp",
+                        ".tif",
+                        ".tiff",
+                        ".npy",
+                        ".npz"
+                    ],
+                    "cpu": {
+                        "shape": "HW"
+                    },
+                    "gpu": {
+                        "shape": "1HW"
+                    }
+                },
+                {
+                    "type": "intrinsics",
+                    "function": "read_intrinsics",
+                    "hierarchical": true,
+                    "dtype": "float32",
+                    "access": "key",
+                    "requires_meta": [
+                        "intrinsics"
+                    ],
+                    "cpu": {
+                        "shape": "3x3"
+                    },
+                    "gpu": {
+                        "shape": "3x3"
+                    }
+                },
+                {
+                    "type": "rgb",
+                    "function": "rgb",
+                    "hierarchical": false,
+                    "dtype": "float32",
+                    "access": "key",
+                    "output_range": [
+                        0.0,
+                        1.0
+                    ],
+                    "file_formats": [
+                        ".png",
+                        ".jpg",
+                        ".jpeg",
+                        ".bmp",
+                        ".tif",
+                        ".tiff",
+                        ".npy",
+                        ".npz"
+                    ],
+                    "cpu": {
+                        "shape": "HWC"
+                    },
+                    "gpu": {
+                        "shape": "CHW"
+                    }
+                },
+                {
+                    "type": "sky_mask",
+                    "function": "sky_mask",
+                    "hierarchical": false,
+                    "dtype": "bool",
+                    "access": "key",
+                    "file_formats": [
+                        ".png",
+                        ".jpg",
+                        ".jpeg",
+                        ".bmp",
+                        ".tif",
+                        ".tiff"
+                    ],
+                    "requires_meta": [
+                        "sky_mask"
+                    ],
+                    "cpu": {
+                        "shape": "HW"
+                    },
+                    "gpu": {
+                        "shape": "1HW"
+                    }
+                }
+            ]
+        },
+        {
+            "name": "real_drive_sim",
+            "modalities": [
+                {
+                    "type": "all_intrinsics",
+                    "function": "all_intrinsics",
+                    "hierarchical": true,
+                    "dtype": "dict",
+                    "access": "key",
+                    "file_formats": [
+                        ".json"
+                    ],
+                    "gpu": {
+                        "shape": "dict"
+                    }
+                },
+                {
+                    "type": "calibration",
+                    "function": "calibration",
+                    "hierarchical": true,
+                    "dtype": "dict",
+                    "access": "key",
+                    "file_formats": [
+                        ".json"
+                    ],
+                    "meta": {
+                        "sensors": [
+                            "CS_FRONT",
+                            "HDL_32E",
+                            "HDL_64E"
+                        ],
+                        "keys": [
+                            "K",
+                            "T",
+                            "distortion"
+                        ]
+                    },
+                    "gpu": {
+                        "shape": "dict"
+                    }
+                },
+                {
+                    "type": "semantic_segmentation",
+                    "function": "class_segmentation",
+                    "hierarchical": false,
+                    "dtype": "int64",
+                    "access": "key",
+                    "file_formats": [
+                        ".png"
+                    ],
+                    "meta": {
+                        "encoding": "single_channel",
+                        "sky_class_id": 29
+                    },
+                    "cpu": {
+                        "shape": "HW"
+                    },
+                    "gpu": {
+                        "shape": "1HW"
+                    }
+                },
+                {
+                    "type": "dense_depth",
+                    "function": "depth",
+                    "hierarchical": false,
+                    "dtype": "float32",
+                    "access": "key",
+                    "output_unit": "meters",
+                    "file_formats": [
+                        ".npz"
+                    ],
+                    "meta": {
+                        "radial_depth": false
+                    },
+                    "cpu": {
+                        "shape": "HW"
+                    },
+                    "gpu": {
+                        "shape": "1HW"
+                    }
+                },
+                {
+                    "type": "intrinsics",
+                    "function": "read_intrinsics",
+                    "hierarchical": true,
+                    "dtype": "float32",
+                    "access": "key",
+                    "file_formats": [
+                        ".json"
+                    ],
+                    "meta": {
+                        "sensor": "CS_FRONT"
+                    },
+                    "gpu": {
+                        "shape": "3x3"
+                    }
+                },
+                {
+                    "type": "rgb",
+                    "function": "rgb",
+                    "hierarchical": false,
+                    "dtype": "float32",
+                    "access": "key",
+                    "output_range": [
+                        0.0,
+                        1.0
+                    ],
+                    "file_formats": [
+                        ".png"
+                    ],
+                    "cpu": {
+                        "shape": "HWC"
+                    },
+                    "gpu": {
+                        "shape": "CHW"
+                    }
+                },
+                {
+                    "type": "sky_mask",
+                    "function": "sky_mask",
+                    "hierarchical": false,
+                    "dtype": "bool",
+                    "access": "key",
+                    "file_formats": [
+                        ".png"
+                    ],
+                    "meta": {
+                        "sky_class_id": 29
+                    },
+                    "cpu": {
+                        "shape": "HW"
+                    },
+                    "gpu": {
+                        "shape": "1HW"
+                    }
+                }
+            ]
+        },
+        {
+            "name": "vkitti2",
+            "modalities": [
+                {
+                    "type": "semantic_segmentation",
+                    "function": "class_segmentation",
+                    "hierarchical": false,
+                    "dtype": "int64",
+                    "access": "key",
+                    "file_formats": [
+                        ".png"
+                    ],
+                    "meta": {
+                        "encoding": "rgb"
+                    },
+                    "cpu": {
+                        "shape": "HWC"
+                    },
+                    "gpu": {
+                        "shape": "CHW"
+                    }
+                },
+                {
+                    "type": "dense_depth",
+                    "function": "depth",
+                    "hierarchical": false,
+                    "dtype": "float32",
+                    "access": "key",
+                    "output_unit": "meters",
+                    "file_formats": [
+                        ".png"
+                    ],
+                    "meta": {
+                        "raw_range": [
+                            0,
+                            65535
+                        ],
+                        "radial_depth": false,
+                        "scale_to_meters": 0.01
+                    },
+                    "cpu": {
+                        "shape": "HW"
+                    },
+                    "gpu": {
+                        "shape": "1HW"
+                    }
+                },
+                {
+                    "type": "instance_segmentation",
+                    "function": "instance_segmentation",
+                    "hierarchical": false,
+                    "dtype": "int64",
+                    "access": "key",
+                    "file_formats": [
+                        ".png"
+                    ],
+                    "meta": {
+                        "encoding": "rgb"
+                    },
+                    "cpu": {
+                        "shape": "HWC"
+                    },
+                    "gpu": {
+                        "shape": "CHW"
+                    }
+                },
+                {
+                    "type": "extrinsics",
+                    "function": "read_extrinsics",
+                    "hierarchical": true,
+                    "dtype": "float32",
+                    "access": "key",
+                    "file_formats": [
+                        ".txt"
+                    ],
+                    "cpu": {
+                        "shape": "Nx1"
+                    },
+                    "gpu": {
+                        "shape": "Nx1"
+                    }
+                },
+                {
+                    "type": "intrinsics",
+                    "function": "read_intrinsics",
+                    "hierarchical": true,
+                    "dtype": "float32",
+                    "access": "key",
+                    "file_formats": [
+                        ".txt"
+                    ],
+                    "cpu": {
+                        "shape": "3x3"
+                    },
+                    "gpu": {
+                        "shape": "3x3"
+                    }
+                },
+                {
+                    "type": "rgb",
+                    "function": "rgb",
+                    "hierarchical": false,
+                    "dtype": "float32",
+                    "access": "key",
+                    "output_range": [
+                        0.0,
+                        1.0
+                    ],
+                    "file_formats": [
+                        ".png"
+                    ],
+                    "cpu": {
+                        "shape": "HWC"
+                    },
+                    "gpu": {
+                        "shape": "CHW"
+                    }
+                },
+                {
+                    "type": "scene_flow",
+                    "function": "scene_flow",
+                    "hierarchical": false,
+                    "dtype": "float32",
+                    "access": "key",
+                    "output_range": [
+                        0.0,
+                        1.0
+                    ],
+                    "file_formats": [
+                        ".png"
+                    ],
+                    "cpu": {
+                        "shape": "HWC"
+                    },
+                    "gpu": {
+                        "shape": "CHW"
+                    }
+                },
+                {
+                    "type": "sky_mask",
+                    "function": "sky_mask",
+                    "hierarchical": false,
+                    "dtype": "bool",
+                    "access": "key",
+                    "file_formats": [
+                        ".png"
+                    ],
+                    "meta": {
+                        "sky_color": [
+                            90,
+                            200,
+                            255
+                        ]
+                    },
+                    "cpu": {
+                        "shape": "HW"
+                    },
+                    "gpu": {
+                        "shape": "1HW"
+                    }
+                }
+            ]
+        }
+    ]
+}

@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import importlib
 import logging
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from types import ModuleType
 from typing import Any, Callable
 
 from torch.utils.data import Dataset
@@ -32,6 +34,78 @@ _DS_CRAWLER_STRUCTURAL_KEYS = frozenset({
     "sampled",
 })
 
+_LOADER_MODULES: dict[str, str] = {
+    "vkitti2": "euler_loading.loaders.gpu.vkitti2",
+    "real_drive_sim": "euler_loading.loaders.gpu.real_drive_sim",
+    "generic_dense_depth": "euler_loading.loaders.gpu.generic_dense_depth",
+}
+
+
+def _resolve_loader_module(name: str) -> ModuleType:
+    """Import and return the GPU loader module for *name*.
+
+    Raises:
+        ValueError: If *name* does not match any known loader.
+    """
+    module_path = _LOADER_MODULES.get(name)
+    if module_path is None:
+        available = ", ".join(sorted(_LOADER_MODULES))
+        raise ValueError(
+            f"Unknown loader {name!r}. Available loaders: {available}"
+        )
+    return importlib.import_module(module_path)
+
+
+def _resolve_loader(
+    *,
+    modality_name: str,
+    modality: "Modality",
+    index: dict[str, Any],
+) -> Callable[..., Any]:
+    """Return the effective loader for a modality.
+
+    If ``modality.loader`` is set, it is returned as-is.  Otherwise the loader
+    is looked up from ``index["euler_loading"]["loader"]`` (the module name,
+    e.g. ``"vkitti2"``) and ``index["euler_loading"]["function"]`` (the
+    function name, e.g. ``"rgb"``).
+    """
+    if modality.loader is not None:
+        return modality.loader
+
+    euler_loading_meta = index.get("euler_loading")
+    if not isinstance(euler_loading_meta, Mapping):
+        raise ValueError(
+            f"Modality {modality_name!r}: no explicit loader provided and the "
+            f"ds-crawler index at {modality.path!r} does not contain an "
+            f"'euler_loading' property."
+        )
+
+    for key in ("loader", "function"):
+        if key not in euler_loading_meta:
+            raise ValueError(
+                f"Modality {modality_name!r}: no explicit loader provided and "
+                f"'euler_loading.{key}' is missing from the ds-crawler index "
+                f"at {modality.path!r}."
+            )
+
+    module_name: str = euler_loading_meta["loader"]
+    func_name: str = euler_loading_meta["function"]
+
+    module = _resolve_loader_module(module_name)
+
+    func = getattr(module, func_name, None)
+    if func is None or not callable(func):
+        available = [
+            attr for attr in dir(module)
+            if not attr.startswith("_") and callable(getattr(module, attr))
+        ]
+        raise ValueError(
+            f"Modality {modality_name!r}: loader module {module_name!r} has no "
+            f"callable {func_name!r}. Available: {', '.join(available)}"
+        )
+
+    return func
+
 
 #TODO: might want to add slots=True in a 3.10+ only codebase
 @dataclass(frozen=True)
@@ -42,8 +116,12 @@ class Modality:
         path: Absolute path to the dataset root directory for this modality.
               Must contain a ``ds-crawler.config`` file (or a cached
               ``output.json`` from a prior indexing run).
-        loader: Callable that takes an absolute file path and returns the loaded
-                data (e.g. a numpy array, a PIL Image, a tensor).
+        loader: Optional callable that takes an absolute file path and returns
+                the loaded data (e.g. a numpy array, a PIL Image, a tensor).
+                When *None* (the default), the loader is resolved automatically
+                from ``euler_loading.loader`` and ``euler_loading.function`` in
+                the ds-crawler index, using the GPU variant of the matching
+                predefined loader.
         used_as: Optional semantic role for experiment logging
                  (e.g. ``"input"``, ``"target"``, ``"condition"``).
         slot: Optional fully-qualified slot name for experiment logging
@@ -60,7 +138,7 @@ class Modality:
     """
 
     path: str
-    loader: Callable[..., Any]
+    loader: Callable[..., Any] | None = None
     used_as: str | None = None
     slot: str | None = None
     modality_type: str | None = None
@@ -212,10 +290,14 @@ class MultiModalDataset(Dataset):
 
         # -- Index each modality and build ID → FileRecord lookups -----------
         self._lookups: dict[str, dict[str, FileRecord]] = {}
+        self._resolved_loaders: dict[str, Callable[..., Any]] = {}
 
         for name, modality in modalities.items():
             index = index_dataset_from_path(modality.path)
             self._index_outputs[name] = index
+            self._resolved_loaders[name] = _resolve_loader(
+                modality_name=name, modality=modality, index=index,
+            )
             records = collect_files(index["dataset"])
             lookup = {
                 "/".join(rec.hierarchy_path + (rec.file_entry["id"],)): rec
@@ -237,6 +319,9 @@ class MultiModalDataset(Dataset):
         for name, modality in self._hierarchical_modalities.items():
             index = index_dataset_from_path(modality.path)
             self._hierarchical_index_outputs[name] = index
+            self._resolved_loaders[name] = _resolve_loader(
+                modality_name=name, modality=modality, index=index,
+            )
             files_by_level = collect_hierarchical_files(index["dataset"])
             self._hierarchical_lookups[name] = files_by_level
             total_files = sum(len(f) for f in files_by_level.values())
@@ -299,7 +384,7 @@ class MultiModalDataset(Dataset):
             record = self._lookups[name][sample_id]
             file_path = f"{modality.path}/{record.file_entry['path']}"
             modality_meta = self._index_outputs[name].get("meta")
-            sample[name] = modality.loader(file_path, modality_meta)
+            sample[name] = self._resolved_loaders[name](file_path, modality_meta)
             meta[name] = record.file_entry
 
             # Hierarchy path from the first modality that has one.
@@ -316,7 +401,7 @@ class MultiModalDataset(Dataset):
             for entry in matched:
                 file_path = f"{modality.path}/{entry['path']}"
                 if file_path not in self._hierarchical_cache:
-                    self._hierarchical_cache[file_path] = modality.loader(
+                    self._hierarchical_cache[file_path] = self._resolved_loaders[name](
                         file_path, modality_meta
                     )
                 loaded[entry["id"]] = self._hierarchical_cache[file_path]

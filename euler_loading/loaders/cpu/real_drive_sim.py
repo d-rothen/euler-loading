@@ -29,16 +29,33 @@ from typing import Any
 import numpy as np
 from PIL import Image
 
+from euler_loading.loaders._annotations import modality_meta
+
 # ---------------------------------------------------------------------------
 # Image modality loaders
 # ---------------------------------------------------------------------------
 
 
+@modality_meta(
+    modality_type="rgb",
+    dtype="float32",
+    shape="HWC",
+    file_formats=[".png"],
+    output_range=[0.0, 1.0],
+)
 def rgb(path: str, meta: dict[str, Any] | None = None) -> np.ndarray:
     """Load an RGB image as an ``(H, W, 3)`` float32 array in ``[0, 1]``."""
     return np.array(Image.open(path).convert("RGB"), dtype=np.float32) / 255.0
 
 
+@modality_meta(
+    modality_type="dense_depth",
+    dtype="float32",
+    shape="HW",
+    file_formats=[".npz"],
+    output_unit="meters",
+    meta={"radial_depth": False},
+)
 def depth(path: str, meta: dict[str, Any] | None = None) -> np.ndarray:
     """Load a Real Drive Sim depth map as an ``(H, W)`` float32 array in **metres**.
 
@@ -48,6 +65,13 @@ def depth(path: str, meta: dict[str, Any] | None = None) -> np.ndarray:
     return np.load(path)["data"].astype(np.float32)
 
 
+@modality_meta(
+    modality_type="semantic_segmentation",
+    dtype="int64",
+    shape="HW",
+    file_formats=[".png"],
+    meta={"encoding": "single_channel", "sky_class_id": 29},
+)
 def class_segmentation(path: str, meta: dict[str, Any] | None = None) -> np.ndarray:
     """Load a class-segmentation mask as an ``(H, W)`` int64 array.
 
@@ -60,6 +84,13 @@ def class_segmentation(path: str, meta: dict[str, Any] | None = None) -> np.ndar
 _SKY_CLASS_ID = 29
 
 
+@modality_meta(
+    modality_type="sky_mask",
+    dtype="bool",
+    shape="HW",
+    file_formats=[".png"],
+    meta={"sky_class_id": 29},
+)
 def sky_mask(path: str, meta: dict[str, Any] | None = None) -> np.ndarray:
     """Load a sky mask as an ``(H, W)`` bool array.
 

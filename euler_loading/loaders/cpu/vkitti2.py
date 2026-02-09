@@ -35,16 +35,33 @@ from typing import Any
 import numpy as np
 from PIL import Image
 
+from euler_loading.loaders._annotations import modality_meta
+
 # ---------------------------------------------------------------------------
 # Image modality loaders
 # ---------------------------------------------------------------------------
 
 
+@modality_meta(
+    modality_type="rgb",
+    dtype="float32",
+    shape="HWC",
+    file_formats=[".png"],
+    output_range=[0.0, 1.0],
+)
 def rgb(path: str, meta: dict[str, Any] | None = None) -> np.ndarray:
     """Load an RGB image as an ``(H, W, 3)`` float32 array in ``[0, 1]``."""
     return np.array(Image.open(path).convert("RGB"), dtype=np.float32) / 255.0
 
 
+@modality_meta(
+    modality_type="dense_depth",
+    dtype="float32",
+    shape="HW",
+    file_formats=[".png"],
+    output_unit="meters",
+    meta={"raw_range": [0, 65535], "radial_depth": False, "scale_to_meters": 0.01},
+)
 def depth(path: str, meta: dict[str, Any] | None = None) -> np.ndarray:
     """Load a VKITTI2 depth map as an ``(H, W)`` float32 array in **metres**.
 
@@ -55,11 +72,25 @@ def depth(path: str, meta: dict[str, Any] | None = None) -> np.ndarray:
     return np.array(Image.open(path), dtype=np.float32) / 100.0
 
 
+@modality_meta(
+    modality_type="semantic_segmentation",
+    dtype="int64",
+    shape="HWC",
+    file_formats=[".png"],
+    meta={"encoding": "rgb"},
+)
 def class_segmentation(path: str, meta: dict[str, Any] | None = None) -> np.ndarray:
     """Load an RGB-encoded class-segmentation mask as an ``(H, W, 3)`` int64 array."""
     return np.array(Image.open(path).convert("RGB"), dtype=np.int64)
 
 
+@modality_meta(
+    modality_type="instance_segmentation",
+    dtype="int64",
+    shape="HWC",
+    file_formats=[".png"],
+    meta={"encoding": "rgb"},
+)
 def instance_segmentation(path: str, meta: dict[str, Any] | None = None) -> np.ndarray:
     """Load an RGB-encoded instance-segmentation mask as an ``(H, W, 3)`` int64 array."""
     return np.array(Image.open(path).convert("RGB"), dtype=np.int64)
@@ -68,6 +99,13 @@ def instance_segmentation(path: str, meta: dict[str, Any] | None = None) -> np.n
 _SKY_COLOR = (90, 200, 255)
 
 
+@modality_meta(
+    modality_type="sky_mask",
+    dtype="bool",
+    shape="HW",
+    file_formats=[".png"],
+    meta={"sky_color": [90, 200, 255]},
+)
 def sky_mask(path: str, meta: dict[str, Any] | None = None) -> np.ndarray:
     """Load a sky mask as an ``(H, W)`` bool array.
 
@@ -82,6 +120,13 @@ def sky_mask(path: str, meta: dict[str, Any] | None = None) -> np.ndarray:
     )
 
 
+@modality_meta(
+    modality_type="scene_flow",
+    dtype="float32",
+    shape="HWC",
+    file_formats=[".png"],
+    output_range=[0.0, 1.0],
+)
 def scene_flow(path: str, meta: dict[str, Any] | None = None) -> np.ndarray:
     """Load an optical / scene-flow map as an ``(H, W, 3)`` float32 array in ``[0, 1]``."""
     return np.array(Image.open(path).convert("RGB"), dtype=np.float32) / 255.0
@@ -92,6 +137,13 @@ def scene_flow(path: str, meta: dict[str, Any] | None = None) -> np.ndarray:
 # ---------------------------------------------------------------------------
 
 
+@modality_meta(
+    modality_type="intrinsics",
+    dtype="float32",
+    hierarchical=True,
+    shape="3x3",
+    file_formats=[".txt"],
+)
 def read_intrinsics(path: str, meta: dict[str, Any] | None = None) -> np.ndarray:
     """Parse a VKITTI2 intrinsics text file into a ``(3, 3)`` float32 *K* matrix.
 
@@ -118,6 +170,13 @@ def read_intrinsics(path: str, meta: dict[str, Any] | None = None) -> np.ndarray
     )
 
 
+@modality_meta(
+    modality_type="extrinsics",
+    dtype="float32",
+    hierarchical=True,
+    shape="Nx1",
+    file_formats=[".txt"],
+)
 def read_extrinsics(path: str, meta: dict[str, Any] | None = None) -> np.ndarray:
     """Parse a VKITTI2 extrinsics text file into a float32 array."""
     return np.loadtxt(path).astype(np.float32)
