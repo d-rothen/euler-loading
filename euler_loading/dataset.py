@@ -116,6 +116,9 @@ class Modality:
         path: Absolute path to the dataset root directory for this modality.
               Must contain a ``ds-crawler.config`` file (or a cached
               ``output.json`` from a prior indexing run).
+        origin_path: Optional original path string before any copying or symlinking for i.e. slurm staging.  
+                This is not used by euler-loading itself but can be useful for experiment 
+                logging to retain references to the original dataset location.
         loader: Optional callable that takes an absolute file path and returns
                 the loaded data (e.g. a numpy array, a PIL Image, a tensor).
                 When *None* (the default), the loader is resolved automatically
@@ -138,6 +141,7 @@ class Modality:
     """
 
     path: str
+    origin_path: str | None = None
     loader: Callable[..., Any] | None = None
     used_as: str | None = None
     slot: str | None = None
