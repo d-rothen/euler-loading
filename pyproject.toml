@@ -4,11 +4,11 @@ version = "0.5.0"
 description = "Multi-modal PyTorch dataloader using ds-crawler indices"
 requires-python = ">=3.9"
 dependencies = [
-    "torch",
     "ds-crawler @ git+https://github.com/d-rothen/ds-crawler",
 ]
 
 [project.optional-dependencies]
+gpu = ["torch"]
 dev = ["pytest"]
 
 [build-system]

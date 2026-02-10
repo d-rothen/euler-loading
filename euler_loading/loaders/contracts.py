@@ -12,9 +12,10 @@ verify conformance at runtime::
 
 from __future__ import annotations
 
-from typing import Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
-import torch
+if TYPE_CHECKING:
+    import torch
 
 
 @runtime_checkable

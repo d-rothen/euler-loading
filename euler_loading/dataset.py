@@ -8,7 +8,11 @@ from dataclasses import dataclass, field
 from types import ModuleType
 from typing import Any, Callable
 
-from torch.utils.data import Dataset
+try:
+    from torch.utils.data import Dataset as _BaseDataset
+except ImportError:
+    class _BaseDataset:  # type: ignore[no-redef]
+        """Fallback when PyTorch is not installed."""
 
 from ds_crawler import index_dataset_from_path, load_dataset_config
 
@@ -151,7 +155,7 @@ class Modality:
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
-class MultiModalDataset(Dataset):
+class MultiModalDataset(_BaseDataset):
     """PyTorch Dataset that loads synchronized multi-modal samples.
 
     Indexes each modality using *ds-crawler*, intersects file IDs across all
