@@ -4,7 +4,7 @@
             "name": "generic_dense_depth",
             "modalities": [
                 {
-                    "type": "dense_depth",
+                    "type": "depth",
                     "function": "depth",
                     "hierarchical": false,
                     "dtype": "float32",
@@ -157,7 +157,7 @@
                     }
                 },
                 {
-                    "type": "dense_depth",
+                    "type": "depth",
                     "function": "depth",
                     "hierarchical": false,
                     "dtype": "float32",
@@ -256,7 +256,7 @@
                     }
                 },
                 {
-                    "type": "dense_depth",
+                    "type": "depth",
                     "function": "depth",
                     "hierarchical": false,
                     "dtype": "float32",

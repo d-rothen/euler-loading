@@ -57,7 +57,7 @@ def rgb(path: str, meta: dict[str, Any] | None = None) -> torch.Tensor:
 
 
 @modality_meta(
-    modality_type="dense_depth",
+    modality_type="depth",
     dtype="float32",
     shape="1HW",
     file_formats=[".png"],

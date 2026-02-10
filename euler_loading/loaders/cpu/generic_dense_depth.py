@@ -91,7 +91,7 @@ def rgb(path: str, meta: dict[str, Any] | None = None) -> np.ndarray:
 
 
 @modality_meta(
-    modality_type="dense_depth",
+    modality_type="depth",
     dtype="float32",
     shape="HW",
     file_formats=[".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff", ".npy", ".npz"],
