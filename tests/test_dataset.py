@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import io
+import os
+import tempfile
+import zipfile
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -830,3 +834,208 @@ class TestRunlogDescription:
             },
             "hierarchical_modalities": {},
         }
+
+
+# ---------------------------------------------------------------------------
+# Zip modality tests
+# ---------------------------------------------------------------------------
+
+def _create_test_zip(tmp_path, name="modality.zip", files=None, prefix=""):
+    """Create a zip file with dummy content files.
+
+    Args:
+        tmp_path: Directory where the zip is created.
+        name: Filename of the zip archive.
+        files: Dict of {entry_name: content_bytes}. Defaults to two PNGs.
+        prefix: Optional root prefix inside the zip (simulates folder-wrapped zips).
+
+    Returns:
+        Path to the created zip file.
+    """
+    if files is None:
+        files = {
+            "f001.png": b"fake-png-001",
+            "f002.png": b"fake-png-002",
+        }
+    zip_path = os.path.join(tmp_path, name)
+    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_STORED) as zf:
+        for entry_name, content in files.items():
+            zf.writestr(prefix + entry_name, content)
+    return zip_path
+
+
+class TestZipModality:
+    """Zip-backed modalities stream files via BytesIO."""
+
+    def _make(self, tmp_path, *, zip_prefix="", loader=None, **kwargs):
+        zip_path = _create_test_zip(tmp_path, prefix=zip_prefix)
+        index = _flat_index("png", ["f001", "f002"])
+
+        capture_loader = loader or MagicMock(return_value="loaded")
+
+        with patch(
+            "euler_loading.dataset.index_dataset_from_path",
+            return_value=index,
+        ), patch(
+            "euler_loading.dataset.is_zip_path",
+            side_effect=lambda p: str(p).endswith(".zip"),
+        ), patch(
+            "euler_loading.dataset.get_zip_root_prefix",
+            return_value=zip_prefix,
+        ):
+            ds = MultiModalDataset(
+                modalities={
+                    "rgb": Modality(zip_path, loader=capture_loader),
+                },
+                **kwargs,
+            )
+        return ds, capture_loader
+
+    def test_loader_receives_bytesio(self, tmp_path):
+        ds, loader = self._make(tmp_path)
+        _ = ds[0]
+        args = loader.call_args[0]
+        assert isinstance(args[0], io.BytesIO)
+
+    def test_bytesio_has_name(self, tmp_path):
+        ds, loader = self._make(tmp_path)
+        _ = ds[0]
+        buf = loader.call_args[0][0]
+        assert hasattr(buf, "name")
+        assert buf.name.endswith(".png")
+
+    def test_bytesio_contains_correct_data(self, tmp_path):
+        ds, loader = self._make(tmp_path)
+        _ = ds[0]
+        buf = loader.call_args[0][0]
+        assert buf.read() == b"fake-png-001"
+
+    def test_zip_prefix_stripped(self, tmp_path):
+        """When the zip has a root prefix, entries are found correctly."""
+        zip_path = _create_test_zip(
+            tmp_path, files={"f001.png": b"data-001"}, prefix="wrapper/",
+        )
+        index = _flat_index("png", ["f001"])
+
+        loader = MagicMock(return_value="loaded")
+        with patch(
+            "euler_loading.dataset.index_dataset_from_path",
+            return_value=index,
+        ), patch(
+            "euler_loading.dataset.is_zip_path",
+            side_effect=lambda p: str(p).endswith(".zip"),
+        ), patch(
+            "euler_loading.dataset.get_zip_root_prefix",
+            return_value="wrapper/",
+        ):
+            ds = MultiModalDataset(
+                modalities={"rgb": Modality(zip_path, loader=loader)},
+            )
+
+        _ = ds[0]
+        buf = loader.call_args[0][0]
+        assert buf.read() == b"data-001"
+
+    def test_non_zip_still_gets_string_path(self, tmp_path):
+        """Filesystem modalities are unaffected by zip support."""
+        index = _flat_index("rgb", ["f001"])
+
+        with patch(
+            "euler_loading.dataset.index_dataset_from_path",
+            return_value=index,
+        ), patch(
+            "euler_loading.dataset.is_zip_path",
+            return_value=False,
+        ):
+            ds = MultiModalDataset(
+                modalities={
+                    "rgb": Modality("/data/rgb", loader=dummy_loader),
+                },
+            )
+        sample = ds[0]
+        assert isinstance(sample["rgb"], str)
+        assert sample["rgb"].startswith("loaded:/data/rgb/")
+
+
+class TestZipMixedModalities:
+    """One zip modality + one filesystem modality in the same dataset."""
+
+    def test_mixed(self, tmp_path):
+        zip_path = _create_test_zip(tmp_path)
+        rgb_index = _flat_index("png", ["f001", "f002"])
+        depth_index = _flat_index("depth", ["f001", "f002"])
+
+        zip_loader = MagicMock(return_value="zip-loaded")
+
+        def mock_index(path, **kw):
+            return rgb_index if str(path) == zip_path else depth_index
+
+        with patch(
+            "euler_loading.dataset.index_dataset_from_path",
+            side_effect=mock_index,
+        ), patch(
+            "euler_loading.dataset.is_zip_path",
+            side_effect=lambda p: str(p).endswith(".zip"),
+        ), patch(
+            "euler_loading.dataset.get_zip_root_prefix",
+            return_value="",
+        ):
+            ds = MultiModalDataset(
+                modalities={
+                    "rgb": Modality(zip_path, loader=zip_loader),
+                    "depth": Modality("/data/depth", loader=dummy_loader),
+                },
+            )
+
+        sample = ds[0]
+        # zip modality got BytesIO
+        buf = zip_loader.call_args[0][0]
+        assert isinstance(buf, io.BytesIO)
+        # filesystem modality got string
+        assert isinstance(sample["depth"], str)
+        assert sample["depth"].startswith("loaded:/data/depth/")
+
+
+class TestZipHierarchicalModality:
+    """Hierarchical modalities from zip archives."""
+
+    def test_hierarchical_zip(self, tmp_path):
+        zip_path = _create_test_zip(
+            tmp_path,
+            name="intrinsics.zip",
+            files={"Scene01/sunset/intrinsic.txt": b"intrinsic-data"},
+        )
+        rgb_index = _deep_regular_index(["f001"])
+        hier_index = _hierarchical_intrinsics_index()
+
+        hier_loader = MagicMock(return_value="parsed-intrinsic")
+
+        def mock_index(path, **kw):
+            if "rgb" in str(path):
+                return rgb_index
+            return hier_index
+
+        with patch(
+            "euler_loading.dataset.index_dataset_from_path",
+            side_effect=mock_index,
+        ), patch(
+            "euler_loading.dataset.is_zip_path",
+            side_effect=lambda p: str(p).endswith(".zip"),
+        ), patch(
+            "euler_loading.dataset.get_zip_root_prefix",
+            return_value="",
+        ):
+            ds = MultiModalDataset(
+                modalities={
+                    "rgb": Modality("/data/rgb", loader=dummy_loader),
+                },
+                hierarchical_modalities={
+                    "intrinsics": Modality(zip_path, loader=hier_loader),
+                },
+            )
+
+        sample = ds[0]
+        assert "intrinsics" in sample
+        buf = hier_loader.call_args[0][0]
+        assert isinstance(buf, io.BytesIO)
+        assert buf.read() == b"intrinsic-data"

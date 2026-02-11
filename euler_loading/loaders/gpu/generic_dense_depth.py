@@ -32,7 +32,7 @@ Usage::
 from __future__ import annotations
 
 import os
-from typing import Any
+from typing import Any, BinaryIO, Union
 
 import numpy as np
 import torch
@@ -50,14 +50,20 @@ _NPZ_EXTENSION = ".npz"
 # ---------------------------------------------------------------------------
 
 
-def _load_image_rgb(path: str) -> np.ndarray:
+def _get_name(path: Union[str, BinaryIO]) -> str:
+    """Return a filename suitable for extension detection."""
+    name = getattr(path, "name", path)
+    return str(name)
+
+
+def _load_image_rgb(path: Union[str, BinaryIO]) -> np.ndarray:
     """Load an image file as ``(H, W, 3)`` float32 in ``[0, 1]``."""
     return np.array(Image.open(path).convert("RGB"), dtype=np.float32) / 255.0
 
 
-def _load_numpy(path: str) -> np.ndarray:
+def _load_numpy(path: Union[str, BinaryIO]) -> np.ndarray:
     """Load a ``.npy`` or ``.npz`` file and return the array as float32."""
-    ext = os.path.splitext(path)[1].lower()
+    ext = os.path.splitext(_get_name(path))[1].lower()
     if ext == _NPZ_EXTENSION:
         npz = np.load(path)
         arr = next(iter(npz.values()))
@@ -78,14 +84,14 @@ def _load_numpy(path: str) -> np.ndarray:
     file_formats=[".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff", ".npy", ".npz"],
     output_range=[0.0, 1.0],
 )
-def rgb(path: str, meta: dict[str, Any] | None = None) -> torch.Tensor:
+def rgb(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None) -> torch.Tensor:
     """Load an RGB sample as a ``(3, H, W)`` float32 tensor in ``[0, 1]``.
 
     - **Image files** are loaded via PIL and normalised to ``[0, 1]``.
     - **NumPy files** are loaded directly and assumed to already be in the
       correct range / layout ``(H, W, 3)``.
     """
-    ext = os.path.splitext(path)[1].lower()
+    ext = os.path.splitext(_get_name(path))[1].lower()
     if ext in _IMAGE_EXTENSIONS:
         arr = _load_image_rgb(path)
     else:
@@ -99,7 +105,7 @@ def rgb(path: str, meta: dict[str, Any] | None = None) -> torch.Tensor:
     shape="1HW",
     file_formats=[".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff", ".npy", ".npz"],
 )
-def depth(path: str, meta: dict[str, Any] | None = None) -> torch.Tensor:
+def depth(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None) -> torch.Tensor:
     """Load a depth map as a ``(1, H, W)`` float32 tensor.
 
     - **Image files** are loaded as single-channel greyscale.
@@ -107,7 +113,7 @@ def depth(path: str, meta: dict[str, Any] | None = None) -> torch.Tensor:
 
     No unit conversion is applied; values are returned as-is.
     """
-    ext = os.path.splitext(path)[1].lower()
+    ext = os.path.splitext(_get_name(path))[1].lower()
     if ext in _IMAGE_EXTENSIONS:
         arr = np.array(Image.open(path), dtype=np.float32)
     else:
@@ -122,7 +128,7 @@ def depth(path: str, meta: dict[str, Any] | None = None) -> torch.Tensor:
     file_formats=[".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff"],
     requires_meta=["sky_mask"],
 )
-def sky_mask(path: str, meta: dict[str, Any] | None = None) -> torch.Tensor:
+def sky_mask(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None) -> torch.Tensor:
     """Load a sky mask as a ``(1, H, W)`` bool tensor.
 
     Reads the file as an RGB image and compares each pixel against the sky
@@ -149,7 +155,7 @@ def sky_mask(path: str, meta: dict[str, Any] | None = None) -> torch.Tensor:
     shape="3x3",
     requires_meta=["intrinsics"],
 )
-def read_intrinsics(path: str, meta: dict[str, Any] | None = None) -> torch.Tensor:
+def read_intrinsics(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None) -> torch.Tensor:
     """Return the ``(3, 3)`` camera intrinsics matrix from *meta*.
 
     The *path* argument is ignored.  The intrinsics are expected under

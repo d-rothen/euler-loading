@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 import importlib
+import io
 import logging
+import os
+from pathlib import Path
 import re
+import zipfile
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from types import ModuleType
@@ -15,6 +19,7 @@ except ImportError:
         """Fallback when PyTorch is not installed."""
 
 from ds_crawler import index_dataset_from_path, load_dataset_config
+from ds_crawler.zip_utils import get_zip_root_prefix, is_zip_path
 
 from .indexing import (
     FileRecord,
@@ -382,12 +387,48 @@ class MultiModalDataset(_BaseDataset):
                     total - matched,
                 )
 
+        # -- Zip archive support ------------------------------------------------
+        self._zip_modalities: set[str] = set()
+        self._zip_prefixes: dict[str, str] = {}
+        self._zip_handles: dict[tuple[str, int], zipfile.ZipFile] = {}
+
+        for name, modality in list(modalities.items()) + list(self._hierarchical_modalities.items()):
+            if is_zip_path(modality.path):
+                self._zip_modalities.add(name)
+                self._zip_prefixes[name] = get_zip_root_prefix(
+                    Path(modality.path)
+                )
+
         # -- Caches ----------------------------------------------------------
         self._hierarchical_cache: dict[str, Any] = {}
 
     def get_modality_metadata(self, modality_name: str) -> dict[str, Any]:
         """Return the metadata dict for a given modality name."""
         return self._index_outputs.get(modality_name, {}).get("meta", {})
+
+    # -- Zip archive helpers -------------------------------------------------
+
+    def _get_zip_handle(self, path: str) -> zipfile.ZipFile:
+        """Return a :class:`zipfile.ZipFile` for *path*, lazily opened per process.
+
+        Each worker process in a PyTorch :class:`~torch.utils.data.DataLoader`
+        gets its own file handle so that forked processes do not share seek
+        positions.
+        """
+        pid = os.getpid()
+        key = (path, pid)
+        if key not in self._zip_handles:
+            self._zip_handles[key] = zipfile.ZipFile(path, "r")
+        return self._zip_handles[key]
+
+    def _open_from_zip(self, name: str, modality_path: str, relative_path: str) -> io.BytesIO:
+        """Read a file from a zip-backed modality into an in-memory buffer."""
+        entry_name = self._zip_prefixes[name] + relative_path
+        zf = self._get_zip_handle(modality_path)
+        data = zf.read(entry_name)
+        buf = io.BytesIO(data)
+        buf.name = relative_path
+        return buf
 
     # -- Dataset interface ---------------------------------------------------
 
@@ -404,9 +445,16 @@ class MultiModalDataset(_BaseDataset):
 
         for name, modality in self._modalities.items():
             record = self._lookups[name][sample_id]
-            file_path = f"{modality.path}/{record.file_entry['path']}"
             modality_meta = self._index_outputs[name].get("meta")
-            sample[name] = self._resolved_loaders[name](file_path, modality_meta)
+
+            if name in self._zip_modalities:
+                file_or_path = self._open_from_zip(
+                    name, modality.path, record.file_entry["path"],
+                )
+            else:
+                file_or_path = f"{modality.path}/{record.file_entry['path']}"
+
+            sample[name] = self._resolved_loaders[name](file_or_path, modality_meta)
             meta[name] = record.file_entry
 
             # Hierarchy path from the first modality that has one.
@@ -421,12 +469,18 @@ class MultiModalDataset(_BaseDataset):
             modality_meta = self._hierarchical_index_outputs[name].get("meta")
             loaded: dict[str, Any] = {}
             for entry in matched:
-                file_path = f"{modality.path}/{entry['path']}"
-                if file_path not in self._hierarchical_cache:
-                    self._hierarchical_cache[file_path] = self._resolved_loaders[name](
-                        file_path, modality_meta
+                cache_key = f"{modality.path}/{entry['path']}"
+                if cache_key not in self._hierarchical_cache:
+                    if name in self._zip_modalities:
+                        file_or_path = self._open_from_zip(
+                            name, modality.path, entry["path"],
+                        )
+                    else:
+                        file_or_path = cache_key
+                    self._hierarchical_cache[cache_key] = self._resolved_loaders[name](
+                        file_or_path, modality_meta
                     )
-                loaded[entry["id"]] = self._hierarchical_cache[file_path]
+                loaded[entry["id"]] = self._hierarchical_cache[cache_key]
             sample[name] = loaded
 
         sample["id"] = file_id

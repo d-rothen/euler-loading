@@ -30,7 +30,7 @@ Usage::
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, BinaryIO, Union
 
 import torch
 import numpy as np
@@ -50,7 +50,7 @@ from euler_loading.loaders._annotations import modality_meta
     file_formats=[".png"],
     output_range=[0.0, 1.0],
 )
-def rgb(path: str, meta: dict[str, Any] | None = None) -> torch.Tensor:
+def rgb(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None) -> torch.Tensor:
     """Load an RGB image as a ``(3, H, W)`` float32 tensor in ``[0, 1]``."""
     arr = np.array(Image.open(path).convert("RGB"), dtype=np.float32) / 255.0
     return torch.from_numpy(arr).permute(2, 0, 1).contiguous()
@@ -64,7 +64,7 @@ def rgb(path: str, meta: dict[str, Any] | None = None) -> torch.Tensor:
     output_unit="meters",
     meta={"raw_range": [0, 65535], "radial_depth": False, "scale_to_meters": 0.01},
 )
-def depth(path: str, meta: dict[str, Any] | None = None) -> torch.Tensor:
+def depth(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None) -> torch.Tensor:
     """Load a VKITTI2 depth map as a ``(1, H, W)`` float32 tensor in **metres**.
     VKITTI2 stores depth as 16-bit PNG where each pixel value represents
     depth in centimetres.  This loader converts to metres
@@ -81,7 +81,7 @@ def depth(path: str, meta: dict[str, Any] | None = None) -> torch.Tensor:
     file_formats=[".png"],
     meta={"encoding": "rgb"},
 )
-def class_segmentation(path: str, meta: dict[str, Any] | None = None) -> torch.Tensor:
+def class_segmentation(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None) -> torch.Tensor:
     """Load an RGB-encoded class-segmentation mask as a ``(3, H, W)`` long tensor."""
     arr = np.array(Image.open(path).convert("RGB"), dtype=np.int64)
     return torch.from_numpy(arr).permute(2, 0, 1).contiguous()
@@ -94,7 +94,7 @@ def class_segmentation(path: str, meta: dict[str, Any] | None = None) -> torch.T
     file_formats=[".png"],
     meta={"encoding": "rgb"},
 )
-def instance_segmentation(path: str, meta: dict[str, Any] | None = None) -> torch.Tensor:
+def instance_segmentation(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None) -> torch.Tensor:
     """Load an RGB-encoded instance-segmentation mask as a ``(3, H, W)`` long tensor."""
     arr = np.array(Image.open(path).convert("RGB"), dtype=np.int64)
     return torch.from_numpy(arr).permute(2, 0, 1).contiguous()
@@ -110,7 +110,7 @@ _SKY_COLOR = (90, 200, 255)
     file_formats=[".png"],
     meta={"sky_color": [90, 200, 255]},
 )
-def sky_mask(path: str, meta: dict[str, Any] | None = None) -> torch.Tensor:
+def sky_mask(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None) -> torch.Tensor:
     """Load a sky mask as a ``(1, H, W)`` bool tensor.
 
     Reads the RGB class-segmentation PNG and returns ``True`` where the
@@ -132,7 +132,7 @@ def sky_mask(path: str, meta: dict[str, Any] | None = None) -> torch.Tensor:
     file_formats=[".png"],
     output_range=[0.0, 1.0],
 )
-def scene_flow(path: str, meta: dict[str, Any] | None = None) -> torch.Tensor:
+def scene_flow(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None) -> torch.Tensor:
     """Load an optical / scene-flow map as a ``(3, H, W)`` float32 tensor in ``[0, 1]``."""
     arr = np.array(Image.open(path).convert("RGB"), dtype=np.float32) / 255.0
     return torch.from_numpy(arr).permute(2, 0, 1).contiguous()
@@ -150,7 +150,7 @@ def scene_flow(path: str, meta: dict[str, Any] | None = None) -> torch.Tensor:
     shape="3x3",
     file_formats=[".txt"],
 )
-def read_intrinsics(path: str, meta: dict[str, Any] | None = None) -> torch.Tensor:
+def read_intrinsics(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None) -> torch.Tensor:
     """Parse a VKITTI2 intrinsics text file into a ``(3, 3)`` float32 *K* matrix.
 
     The file has the header ``frame cameraID K[0,0] K[1,1] K[0,2] K[1,2]``.
@@ -183,6 +183,6 @@ def read_intrinsics(path: str, meta: dict[str, Any] | None = None) -> torch.Tens
     shape="Nx1",
     file_formats=[".txt"],
 )
-def read_extrinsics(path: str, meta: dict[str, Any] | None = None) -> torch.Tensor:
+def read_extrinsics(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None) -> torch.Tensor:
     """Parse a VKITTI2 extrinsics text file into a float32 tensor."""
     return torch.from_numpy(np.loadtxt(path).astype(np.float32))

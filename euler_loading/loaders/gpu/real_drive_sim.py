@@ -28,7 +28,7 @@ Usage::
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import Any, BinaryIO, Union
 
 import torch
 import numpy as np
@@ -48,7 +48,7 @@ from euler_loading.loaders._annotations import modality_meta
     file_formats=[".png"],
     output_range=[0.0, 1.0],
 )
-def rgb(path: str, meta: dict[str, Any] | None = None) -> torch.Tensor:
+def rgb(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None) -> torch.Tensor:
     """Load an RGB image as a ``(3, H, W)`` float32 tensor in ``[0, 1]``."""
     arr = np.array(Image.open(path).convert("RGB"), dtype=np.float32) / 255.0
     return torch.from_numpy(arr).permute(2, 0, 1).contiguous()
@@ -62,7 +62,7 @@ def rgb(path: str, meta: dict[str, Any] | None = None) -> torch.Tensor:
     output_unit="meters",
     meta={"radial_depth": False},
 )
-def depth(path: str, meta: dict[str, Any] | None = None) -> torch.Tensor:
+def depth(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None) -> torch.Tensor:
     """Load a Real Drive Sim depth map as a ``(1, H, W)`` float32 tensor in **metres**.
 
     Real Drive Sim stores depth as float32 values in ``.npz`` files under
@@ -79,7 +79,7 @@ def depth(path: str, meta: dict[str, Any] | None = None) -> torch.Tensor:
     file_formats=[".png"],
     meta={"encoding": "single_channel", "sky_class_id": 29},
 )
-def class_segmentation(path: str, meta: dict[str, Any] | None = None) -> torch.Tensor:
+def class_segmentation(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None) -> torch.Tensor:
     """Load a class-segmentation mask as a ``(1, H, W)`` long tensor.
 
     Real Drive Sim encodes class IDs in the first (red) channel of an
@@ -99,7 +99,7 @@ _SKY_CLASS_ID = 29
     file_formats=[".png"],
     meta={"sky_class_id": 29},
 )
-def sky_mask(path: str, meta: dict[str, Any] | None = None) -> torch.Tensor:
+def sky_mask(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None) -> torch.Tensor:
     """Load a sky mask as a ``(1, H, W)`` bool tensor.
 
     Reads the red channel of the segmentation PNG and returns ``True``
@@ -112,6 +112,14 @@ def sky_mask(path: str, meta: dict[str, Any] | None = None) -> torch.Tensor:
 # ---------------------------------------------------------------------------
 # Calibration loader
 # ---------------------------------------------------------------------------
+
+
+def _load_json(path: Union[str, BinaryIO]) -> Any:
+    """Load JSON from a file path or an in-memory buffer."""
+    if isinstance(path, str):
+        with open(path) as f:
+            return json.load(f)
+    return json.load(path)
 
 
 def _quat_to_rotation_matrix(qw: float, qx: float, qy: float, qz: float) -> torch.Tensor:
@@ -134,7 +142,7 @@ def _quat_to_rotation_matrix(qw: float, qx: float, qy: float, qz: float) -> torc
     file_formats=[".json"],
     meta={"sensors": ["CS_FRONT", "HDL_32E", "HDL_64E"], "keys": ["K", "T", "distortion"]},
 )
-def calibration(path: str, meta: dict[str, Any] | None = None) -> dict[str, dict[str, torch.Tensor]]:
+def calibration(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None) -> dict[str, dict[str, torch.Tensor]]:
     """Load a Real Drive Sim calibration JSON.
 
     The file contains parallel arrays ``names``, ``intrinsics``, and
@@ -146,8 +154,7 @@ def calibration(path: str, meta: dict[str, Any] | None = None) -> dict[str, dict
     - ``"distortion"`` – ``(8,)`` float32 distortion coefficients
       ``[k1, k2, p1, p2, k3, k4, k5, k6]``.
     """
-    with open(path) as f:
-        data = json.load(f)
+    data = _load_json(path)
 
     result: dict[str, dict[str, torch.Tensor]] = {}
     for name, intr, extr in zip(data["names"], data["intrinsics"], data["extrinsics"]):
@@ -185,10 +192,9 @@ def calibration(path: str, meta: dict[str, Any] | None = None) -> dict[str, dict
     shape="dict",
     file_formats=[".json"],
 )
-def all_intrinsics(path: str, meta: dict[str, Any] | None = None) -> dict[str, torch.Tensor]:
+def all_intrinsics(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None) -> dict[str, torch.Tensor]:
     """Load only the intrinsics from a Real Drive Sim calibration JSON."""
-    with open(path) as f:
-        data = json.load(f)
+    data = _load_json(path)
     result: dict[str, torch.Tensor] = {}
     
     for name, intr in zip(data["names"], data["intrinsics"]):
@@ -211,7 +217,7 @@ def all_intrinsics(path: str, meta: dict[str, Any] | None = None) -> dict[str, t
     file_formats=[".json"],
     meta={"sensor": "CS_FRONT"},
 )
-def read_intrinsics(path: str, meta: dict[str, Any] | None = None) -> torch.Tensor:
+def read_intrinsics(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None) -> torch.Tensor:
     """Load the intrinsics for a specific sensor from a Real Drive Sim calibration JSON."""
     all_intrinsics_data = all_intrinsics(path)
     return all_intrinsics_data["CS_FRONT"]
