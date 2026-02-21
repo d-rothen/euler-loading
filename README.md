@@ -2,18 +2,20 @@
 
 Multi-modal PyTorch `Dataset` that synchronises files across arbitrary dataset modalities indexed by [ds-crawler](https://github.com/d-rothen/ds-crawler).
 
-Each modality points at a directory that carries its own `ds-crawler.config` (or cached `output.json`).
+Each modality points at a directory (or `.zip` archive) that carries its own `ds-crawler.config` (or cached `output.json`).
 ds-crawler indexes the directory tree, discovers files, and exposes hierarchical metadata (path properties, calibration files, …).
 euler-loading then **intersects file IDs** across all modalities so that every sample contains exactly one file per modality. Additional hierarchical data (e.g. per-scene calibration files) can be loaded via `hierarchical_modalities`.
-How a file is actually **loaded** (image, depth map, point cloud, …) is entirely up to the caller — a plain `Callable[[str], Any]` per modality.
+How a file is actually **loaded** (image, depth map, point cloud, …) is configurable per modality — either supply a `Callable` or let euler-loading resolve a built-in loader automatically from the ds-crawler config.
 
 ## Installation
 
 ```bash
-uv pip install git+https://github.com/d-rothen/euler-loading.git
+uv pip install "euler-loading[gpu] @ git+https://github.com/d-rothen/euler-loading.git"
 ```
 
 Requires Python >= 3.9. PyTorch and ds-crawler are pulled in automatically.
+
+The `[gpu]` extra installs PyTorch. Without it the package still works but the GPU loader variants are unavailable — use the CPU (numpy) loaders instead.
 
 ## Quick start
 
@@ -46,14 +48,15 @@ Works with `torch.utils.data.DataLoader` out of the box.
 
 ## API
 
-### `Modality(path, loader, ..., metadata=None)`
+### `Modality(path, ..., loader=None, metadata=None)`
 
 Frozen dataclass describing one data modality.
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `path` | `str` | Absolute path to the modality root. Must contain a `ds-crawler.config` or cached `output.json`. |
-| `loader` | `Callable[[str], Any]` | Receives the absolute file path, returns loaded data. |
+| `path` | `str` | Absolute path to the modality root directory or `.zip` archive. Must contain a `ds-crawler.config` or cached `output.json`. |
+| `origin_path` | `str \| None` | Original path before copying/symlinking (e.g. for SLURM staging). Not used by euler-loading itself — useful for experiment logging to retain references to the original dataset location. |
+| `loader` | `Callable[..., Any] \| None` | Receives the file path (or `BinaryIO` buffer for zip-backed modalities) and an optional `meta` dict. Returns loaded data. When `None`, the loader is resolved automatically from the ds-crawler index (see [Automatic loader resolution](#automatic-loader-resolution)). |
 | `used_as` | `str \| None` | Optional experiment role (e.g. `input`, `target`, `condition`). |
 | `slot` | `str \| None` | Optional fully-qualified logging slot (e.g. `dehaze.input.rgb`). |
 | `modality_type` | `str \| None` | Optional modality type override (e.g. `rgb`, `depth`). |
@@ -62,7 +65,7 @@ Frozen dataclass describing one data modality.
 | `metadata` | `dict[str, Any]` | Optional arbitrary metadata. Keys under `metadata["euler_loading"]` are treated as euler-loading defaults. |
 
 The loader is the **only** place where domain-specific I/O happens.
-euler-loading never interprets file contents — it only resolves *which* file to load and passes the path to your function.
+euler-loading never interprets file contents — it only resolves *which* file to load and passes the path (or in-memory buffer) to your function.
 
 ### `MultiModalDataset.describe_for_runlog()`
 
@@ -73,6 +76,7 @@ Returns a structured descriptor for run metadata:
   "modalities": {
     "hazy_rgb": {
       "path": "...",
+      "origin_path": "...",
       "used_as": "input",
       "slot": "dehaze.input.rgb",
       "modality_type": "rgb",
@@ -81,6 +85,7 @@ Returns a structured descriptor for run metadata:
   "hierarchical_modalities": {
     "camera_intrinsics": {
       "path": "...",
+      "origin_path": "...",
       "used_as": "condition",
       "slot": "dehaze.condition.camera_intrinsics",
       "hierarchy_scope": "scene_camera",
@@ -91,6 +96,18 @@ Returns a structured descriptor for run metadata:
 ```
 
 Resolution order is: explicit `Modality` fields -> `Modality.metadata["euler_loading"]` -> ds-crawler config `properties["euler_loading"]` -> heuristics.
+
+### `MultiModalDataset.modality_paths()`
+
+Returns a dict mapping each regular modality name to `{"path": ..., "origin_path": ...}`.
+
+### `MultiModalDataset.hierarchical_modality_paths()`
+
+Returns a dict mapping each hierarchical modality name to `{"path": ..., "origin_path": ...}`.
+
+### `MultiModalDataset.get_modality_metadata(modality_name)`
+
+Returns the ds-crawler metadata dict for the given modality.
 
 ### `MultiModalDataset(modalities, hierarchical_modalities=None, transforms=None)`
 
@@ -141,16 +158,18 @@ Frozen dataclass exposed for introspection. Each record ties a ds-crawler file e
 
 ## Loader functions
 
-A loader is any callable with the signature `(path: str) -> Any`. Examples:
+A loader is any callable with the signature `(path: str | BinaryIO, meta: dict | None) -> Any`.
+The `meta` argument receives the ds-crawler metadata for the modality (or `None` if unavailable).
+For zip-backed modalities, `path` is an in-memory `io.BytesIO` buffer instead of a filesystem path.
 
 ```python
 from PIL import Image
 import numpy as np
 
-def load_rgb(path: str):
+def load_rgb(path, meta=None):
     return Image.open(path).convert("RGB")
 
-def load_depth(path: str):
+def load_depth(path, meta=None):
     return np.load(path)
 ```
 
@@ -166,13 +185,63 @@ def mask_sky_in_depth(sample: dict) -> dict:
     return sample
 ```
 
+## Zip archive support
+
+Modality paths can point to `.zip` files instead of directories. euler-loading detects zip paths automatically and reads files directly from the archive without extraction:
+
+```python
+dataset = MultiModalDataset(
+    modalities={
+        "rgb":   Modality("/data/vkitti2/rgb.zip",   loader=load_rgb),
+        "depth": Modality("/data/vkitti2/depth",      loader=load_depth),   # filesystem and zip can be mixed
+    },
+)
+```
+
+- Loaders receive an `io.BytesIO` buffer (with a `.name` attribute for extension detection) instead of a file path.
+- Each DataLoader worker process gets its own `ZipFile` handle, so multi-worker loading is safe.
+- Built-in loaders accept both `str` paths and `BinaryIO` buffers transparently.
+
+## Automatic loader resolution
+
+When `Modality.loader` is `None`, euler-loading resolves the loader from the ds-crawler index. The index must contain:
+
+```json
+{
+  "euler_loading": {
+    "loader": "vkitti2",
+    "function": "rgb"
+  }
+}
+```
+
+`loader` is the module name (`vkitti2`, `real_drive_sim`, or `generic_dense_depth`) and `function` is the function within that module. The GPU variant is used by default.
+
 ## ds-crawler integration
 
 Every modality root must be independently indexable by ds-crawler.
-Place a `ds-crawler.config` in the root of each modality directory — ds-crawler will then parse the directory tree and assign each file an ID derived from its path properties.
+Place a `ds-crawler.config` in the root of each modality directory (or zip archive) — ds-crawler will then parse the directory tree and assign each file an ID derived from its path properties.
 Files across modalities are matched by these IDs, so **the directory structure must be consistent** across modalities (identical hierarchy and naming conventions up to the modality-specific parts captured in the config).
 
 Calibration files or other per-scene/per-sequence metadata can be loaded via `hierarchical_modalities`. These files are matched to samples based on their position in the hierarchy — all files at or above a sample's hierarchy level are included and cached for efficiency.
+
+## DenseDepthLoader protocol
+
+`euler_loading.DenseDepthLoader` is a `runtime_checkable` Protocol defining the loader contract for dense-depth datasets. A conforming module must expose:
+
+| Function | Return type |
+|----------|-------------|
+| `rgb(path, meta=None)` | `(3, H, W)` float32 in `[0, 1]` |
+| `depth(path, meta=None)` | `(1, H, W)` float32 in metres |
+| `sky_mask(path, meta=None)` | `(1, H, W)` bool |
+| `read_intrinsics(path, meta=None)` | `(3, 3)` float32 camera matrix |
+
+```python
+from euler_loading import DenseDepthLoader
+from euler_loading.loaders.gpu import vkitti2
+
+assert isinstance(vkitti2, DenseDepthLoader)
+```
 
 ## Testing
 
@@ -206,6 +275,8 @@ for batch in loader:
 Each dataset has a **GPU** variant (returns `torch.Tensor` in CHW format) and a **CPU** variant (returns `np.ndarray` in HWC format).
 The top-level imports (`euler_loading.loaders.vkitti2`, `euler_loading.loaders.real_drive_sim`) re-export the GPU variants for backward compatibility.
 
+All built-in loaders accept both filesystem paths (`str`) and in-memory buffers (`BinaryIO`), so they work transparently with zip-backed modalities.
+
 ### Virtual KITTI 2 (`euler_loading.loaders.vkitti2`)
 
 | Function | Description |
@@ -228,7 +299,18 @@ The top-level imports (`euler_loading.loaders.vkitti2`, `euler_loading.loaders.r
 | `sky_mask` | Binary mask where class ID == 29 (sky) |
 | `calibration` | Per-sensor calibration from JSON: returns `dict[sensor_name, {"K": (3,3), "T": (4,4), "distortion": (8,)}]` (use with `hierarchical_modalities`) |
 
-CPU variants live under `euler_loading.loaders.cpu.{vkitti2,real_drive_sim}`.
+### Generic Dense Depth (`euler_loading.loaders.gpu.generic_dense_depth`)
+
+A format-agnostic loader that infers the loading strategy from the file extension. Useful for datasets that don't have a dedicated loader module.
+
+| Function | Description |
+|----------|-------------|
+| `rgb` | RGB from image files (`.png`, `.jpg`, `.bmp`, `.tif`) or NumPy files (`.npy`, `.npz`), normalised to [0, 1] |
+| `depth` | Depth map from image or NumPy files, returned as-is (no unit conversion) |
+| `sky_mask` | Binary mask by comparing pixels against `meta["sky_mask"]` (`[R, G, B]`). Requires `meta` |
+| `read_intrinsics` | Returns `meta["intrinsics"]` as a `(3, 3)` tensor. Ignores path; requires `meta` |
+
+CPU variants of all loaders live under `euler_loading.loaders.cpu.{vkitti2,real_drive_sim,generic_dense_depth}`.
 
 ### Flattening hierarchical modalities
 
