@@ -566,14 +566,18 @@ def _build_runlog_entry(
     return entry
 
 
+_PROPERTY_NAMESPACE_KEYS = ("euler_loading", "euler_train")
+
+
 def _build_euler_loading_layers(*candidates: Any) -> list[Mapping[str, Any]]:
     layers: list[Mapping[str, Any]] = []
     for candidate in candidates:
         if not isinstance(candidate, Mapping):
             continue
-        namespaced = candidate.get("euler_loading")
-        if isinstance(namespaced, Mapping):
-            layers.append(namespaced)
+        for ns in _PROPERTY_NAMESPACE_KEYS:
+            namespaced = candidate.get(ns)
+            if isinstance(namespaced, Mapping):
+                layers.append(namespaced)
     return layers
 
 
