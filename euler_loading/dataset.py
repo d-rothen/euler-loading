@@ -50,8 +50,13 @@ _LOADER_MODULES: dict[str, str] = {
 }
 
 
-def _resolve_loader_module(name: str) -> ModuleType:
+def resolve_loader_module(name: str) -> ModuleType:
     """Import and return the GPU loader module for *name*.
+
+    Example::
+
+        module = resolve_loader_module("vkitti2")
+        sky_fn = module.sky_mask  # get a specific function
 
     Raises:
         ValueError: If *name* does not match any known loader.
@@ -100,7 +105,7 @@ def _resolve_loader(
     module_name: str = euler_loading_meta["loader"]
     func_name: str = euler_loading_meta["function"]
 
-    module = _resolve_loader_module(module_name)
+    module = resolve_loader_module(module_name)
 
     func = getattr(module, func_name, None)
     if func is None or not callable(func):
