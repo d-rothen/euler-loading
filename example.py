@@ -29,27 +29,23 @@ TEXTGT_INTRINSICS_PATH = f"{VKITTI2_ROOT}/vkitti_2.0.3_textgt"
 
 cpu_dataset = MultiModalDataset(
     modalities={
-        "rgb": Modality(RGB_PATH, loader=vkitti2_cpu.rgb),
-        "depth": Modality(DEPTH_PATH, loader=vkitti2_cpu.depth),
-        "classSegmentation": Modality(CLASS_SEG_PATH, loader=vkitti2_cpu.class_segmentation),
+        "rgb": Modality(RGB_PATH),
+        "depth": Modality(DEPTH_PATH),
+        "classSegmentation": Modality(CLASS_SEG_PATH),
     },
     hierarchical_modalities={
-        "textgt_intrinsics": Modality(
-            TEXTGT_INTRINSICS_PATH, loader=vkitti2_cpu.read_intrinsics
-        ),
+        "intrinsics": Modality(TEXTGT_INTRINSICS_PATH),
     },
 )
 
 gpu_dataset = MultiModalDataset(
     modalities={
-        "rgb": Modality(RGB_PATH, loader=vkitti2_gpu.rgb),
-        "depth": Modality(DEPTH_PATH, loader=vkitti2_gpu.depth),
-        "classSegmentation": Modality(CLASS_SEG_PATH, loader=vkitti2_gpu.class_segmentation),
+        "rgb": Modality(RGB_PATH),
+        "depth": Modality(DEPTH_PATH),
+        "classSegmentation": Modality(CLASS_SEG_PATH),
     },
     hierarchical_modalities={
-        "textgt_intrinsics": Modality(
-            TEXTGT_INTRINSICS_PATH, loader=vkitti2_gpu.read_intrinsics
-        ),
+        "intrinsics": Modality(TEXTGT_INTRINSICS_PATH),
     },
 )
 

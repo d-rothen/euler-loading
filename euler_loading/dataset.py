@@ -406,6 +406,40 @@ class MultiModalDataset(_BaseDataset):
         """Return the metadata dict for a given modality name."""
         return self._index_outputs.get(modality_name, {}).get("meta", {})
 
+    def get_dataset_name(self) -> str | None:
+        """Return the dataset name from the first modality's ds-crawler index.
+
+        The ``"name"`` field in each modality's ``output.json`` typically
+        identifies the dataset (e.g. ``"vkitti2"``).  This method returns the
+        name from the first regular modality.  If other modalities declare a
+        different name, a warning is logged.
+
+        Returns:
+            The dataset name string, or *None* if no modality has a ``"name"``.
+        """
+        first_name: str | None = None
+        first_modality: str | None = None
+
+        for modality_name, index in self._index_outputs.items():
+            name = index.get("name")
+            if name is None:
+                continue
+            if first_name is None:
+                first_name = name
+                first_modality = modality_name
+            elif name != first_name:
+                logger.warning(
+                    "Modality '%s' has dataset name '%s', but '%s' has '%s'. "
+                    "Using '%s'.",
+                    modality_name,
+                    name,
+                    first_modality,
+                    first_name,
+                    first_name,
+                )
+
+        return first_name
+
     # -- Zip archive helpers -------------------------------------------------
 
     def _get_zip_handle(self, path: str) -> zipfile.ZipFile:

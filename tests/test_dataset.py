@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import logging
 import os
 import tempfile
 import zipfile
@@ -1039,3 +1040,101 @@ class TestZipHierarchicalModality:
         buf = hier_loader.call_args[0][0]
         assert isinstance(buf, io.BytesIO)
         assert buf.read() == b"intrinsic-data"
+
+
+# ---------------------------------------------------------------------------
+# get_dataset_name tests
+# ---------------------------------------------------------------------------
+
+class TestGetDatasetName:
+    """Tests for MultiModalDataset.get_dataset_name()."""
+
+    def test_returns_name_from_index(self):
+        index = {**_flat_index("rgb", ["f001"]), "name": "vkitti2"}
+
+        with patch(
+            "euler_loading.dataset.index_dataset_from_path",
+            return_value=index,
+        ):
+            ds = MultiModalDataset(
+                modalities={"rgb": Modality("/data/rgb", loader=dummy_loader)},
+            )
+
+        assert ds.get_dataset_name() == "vkitti2"
+
+    def test_returns_none_when_no_name(self):
+        index = _flat_index("rgb", ["f001"])
+
+        with patch(
+            "euler_loading.dataset.index_dataset_from_path",
+            return_value=index,
+        ):
+            ds = MultiModalDataset(
+                modalities={"rgb": Modality("/data/rgb", loader=dummy_loader)},
+            )
+
+        assert ds.get_dataset_name() is None
+
+    def test_returns_first_when_all_agree(self):
+        rgb_index = {**_flat_index("rgb", ["f001"]), "name": "vkitti2"}
+        depth_index = {**_flat_index("depth", ["f001"]), "name": "vkitti2"}
+
+        def mock_index(path, **kw):
+            return rgb_index if "rgb" in path else depth_index
+
+        with patch(
+            "euler_loading.dataset.index_dataset_from_path",
+            side_effect=mock_index,
+        ):
+            ds = MultiModalDataset(
+                modalities={
+                    "rgb": Modality("/data/rgb", loader=dummy_loader),
+                    "depth": Modality("/data/depth", loader=dummy_loader),
+                },
+            )
+
+        assert ds.get_dataset_name() == "vkitti2"
+
+    def test_warns_on_differing_names(self, caplog):
+        rgb_index = {**_flat_index("rgb", ["f001"]), "name": "vkitti2"}
+        depth_index = {**_flat_index("depth", ["f001"]), "name": "kitti"}
+
+        def mock_index(path, **kw):
+            return rgb_index if "rgb" in path else depth_index
+
+        with patch(
+            "euler_loading.dataset.index_dataset_from_path",
+            side_effect=mock_index,
+        ):
+            ds = MultiModalDataset(
+                modalities={
+                    "rgb": Modality("/data/rgb", loader=dummy_loader),
+                    "depth": Modality("/data/depth", loader=dummy_loader),
+                },
+            )
+
+        with caplog.at_level(logging.WARNING, logger="euler_loading.dataset"):
+            name = ds.get_dataset_name()
+
+        assert name == "vkitti2"
+        assert any("kitti" in record.message for record in caplog.records)
+
+    def test_skips_modalities_without_name(self):
+        rgb_index = _flat_index("rgb", ["f001"])  # no "name"
+        depth_index = {**_flat_index("depth", ["f001"]), "name": "vkitti2"}
+
+        def mock_index(path, **kw):
+            return rgb_index if "rgb" in path else depth_index
+
+        with patch(
+            "euler_loading.dataset.index_dataset_from_path",
+            side_effect=mock_index,
+        ):
+            ds = MultiModalDataset(
+                modalities={
+                    "rgb": Modality("/data/rgb", loader=dummy_loader),
+                    "depth": Modality("/data/depth", loader=dummy_loader),
+                },
+            )
+
+        assert ds.get_dataset_name() == "vkitti2"
