@@ -454,6 +454,7 @@ class MultiModalDataset(_BaseDataset):
         gets its own file handle so that forked processes do not share seek
         positions.
         """
+        path = path.rstrip("/")
         pid = os.getpid()
         key = (path, pid)
         if key not in self._zip_handles:
