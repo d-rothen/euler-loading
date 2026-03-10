@@ -70,6 +70,14 @@ def resolve_loader_module(name: str) -> ModuleType:
     return importlib.import_module(module_path)
 
 
+def resolve_writer_module(name: str) -> ModuleType:
+    """Import and return the writer module for *name*.
+
+    Writers live next to loader functions in the same modules.
+    """
+    return resolve_loader_module(name)
+
+
 def _resolve_loader(
     *,
     modality_name: str,
@@ -121,6 +129,73 @@ def _resolve_loader(
     return func
 
 
+def _writer_name_candidates(read_function_name: str, explicit: Any) -> list[str]:
+    names: list[str] = []
+    explicit_name = _as_non_empty_str(explicit)
+    if explicit_name is not None:
+        names.append(explicit_name)
+
+    if read_function_name.startswith("read_"):
+        names.append(f"write_{read_function_name[len('read_'):]}")
+    names.append(f"write_{read_function_name}")
+
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for name in names:
+        if name in seen:
+            continue
+        seen.add(name)
+        deduped.append(name)
+    return deduped
+
+
+def _resolve_writer(
+    *,
+    modality_name: str,
+    modality: "Modality",
+    index: dict[str, Any],
+) -> Callable[..., Any] | None:
+    """Return the effective writer for a modality, if available."""
+    if modality.writer is not None:
+        return modality.writer
+
+    euler_loading_meta = index.get("euler_loading")
+    if not isinstance(euler_loading_meta, Mapping):
+        return None
+
+    module_name = _as_non_empty_str(euler_loading_meta.get("loader"))
+    read_function_name = _as_non_empty_str(euler_loading_meta.get("function"))
+    if module_name is None or read_function_name is None:
+        return None
+
+    try:
+        module = resolve_writer_module(module_name)
+    except ValueError:
+        logger.warning(
+            "Modality '%s': cannot resolve writer module %r.",
+            modality_name,
+            module_name,
+        )
+        return None
+
+    writer_names = _writer_name_candidates(
+        read_function_name, euler_loading_meta.get("writer_function")
+    )
+    for writer_name in writer_names:
+        writer = getattr(module, writer_name, None)
+        if callable(writer):
+            return writer
+
+    logger.debug(
+        "Modality '%s': no writer found in %s for read function %r (tried %s).",
+        modality_name,
+        module_name,
+        read_function_name,
+        ", ".join(writer_names),
+    )
+    return None
+
+
 #TODO: might want to add slots=True in a 3.10+ only codebase
 @dataclass(frozen=True)
 class Modality:
@@ -139,6 +214,13 @@ class Modality:
                 from ``euler_loading.loader`` and ``euler_loading.function`` in
                 the ds-crawler index, using the GPU variant of the matching
                 predefined loader.
+        writer: Optional callable that writes a loaded/predicted modality back
+                to disk. Expected signature is
+                ``(path: str, value: Any, meta: dict[str, Any] | None) -> None``.
+                When *None* (the default), the writer is resolved automatically
+                from ``euler_loading.loader`` + ``euler_loading.function`` using
+                writer naming conventions (e.g. ``write_depth`` for ``depth``,
+                ``write_intrinsics`` for ``read_intrinsics``).
         used_as: Optional semantic role for experiment logging
                  (e.g. ``"input"``, ``"target"``, ``"condition"``).
         slot: Optional fully-qualified slot name for experiment logging
@@ -157,6 +239,7 @@ class Modality:
     path: str
     origin_path: str | None = None
     loader: Callable[..., Any] | None = None
+    writer: Callable[..., Any] | None = None
     used_as: str | None = None
     slot: str | None = None
     modality_type: str | None = None
@@ -323,11 +406,15 @@ class MultiModalDataset(_BaseDataset):
         # -- Index each modality and build ID → FileRecord lookups -----------
         self._lookups: dict[str, dict[str, FileRecord]] = {}
         self._resolved_loaders: dict[str, Callable[..., Any]] = {}
+        self._resolved_writers: dict[str, Callable[..., Any] | None] = {}
 
         for name, modality in modalities.items():
             index = index_dataset_from_path(modality.path)
             self._index_outputs[name] = index
             self._resolved_loaders[name] = _resolve_loader(
+                modality_name=name, modality=modality, index=index,
+            )
+            self._resolved_writers[name] = _resolve_writer(
                 modality_name=name, modality=modality, index=index,
             )
             records = collect_files(index["dataset"])
@@ -352,6 +439,9 @@ class MultiModalDataset(_BaseDataset):
             index = index_dataset_from_path(modality.path)
             self._hierarchical_index_outputs[name] = index
             self._resolved_loaders[name] = _resolve_loader(
+                modality_name=name, modality=modality, index=index,
+            )
+            self._resolved_writers[name] = _resolve_writer(
                 modality_name=name, modality=modality, index=index,
             )
             files_by_level = collect_hierarchical_files(index["dataset"])
@@ -410,6 +500,87 @@ class MultiModalDataset(_BaseDataset):
     def get_modality_metadata(self, modality_name: str) -> dict[str, Any]:
         """Return the metadata dict for a given modality name."""
         return self._index_outputs.get(modality_name, {}).get("meta", {})
+
+    def get_writer(self, modality_name: str) -> Callable[..., Any]:
+        """Return the resolved writer callable for *modality_name*.
+
+        Raises:
+            KeyError: If the modality is unknown.
+            ValueError: If no writer is configured or discoverable.
+        """
+        if (
+            modality_name not in self._modalities
+            and modality_name not in self._hierarchical_modalities
+        ):
+            raise KeyError(f"Unknown modality {modality_name!r}")
+
+        writer = self._resolved_writers.get(modality_name)
+        if writer is None:
+            raise ValueError(
+                f"No writer configured for modality {modality_name!r}. "
+                "Set Modality.writer explicitly or expose a compatible built-in "
+                "writer in the loader module."
+            )
+        return writer
+
+    def write_sample(
+        self,
+        sample_index: int,
+        outputs: Mapping[str, Any],
+        output_root: str | os.PathLike[str] | Mapping[str, str | os.PathLike[str]],
+        *,
+        create_dirs: bool = True,
+        overwrite: bool = True,
+    ) -> dict[str, str]:
+        """Write model outputs for one sample to disk.
+
+        Output filenames are derived from ds-crawler relative paths, preserving
+        the source dataset hierarchy under *output_root*.
+
+        Args:
+            sample_index: Index in this dataset.
+            outputs: Mapping of modality name to predicted/loaded value.
+            output_root: Either a single root directory for all modalities, or
+                a per-modality mapping ``{modality_name: root_dir}``.
+            create_dirs: If true, create parent directories as needed.
+            overwrite: If false, raise when a target file already exists.
+
+        Returns:
+            Mapping ``{modality_name: written_absolute_path}``.
+        """
+        if sample_index < 0 or sample_index >= len(self):
+            raise IndexError(
+                f"sample_index {sample_index} out of range for dataset of length {len(self)}"
+            )
+
+        sample_id = self._common_ids[sample_index]
+        written_paths: dict[str, str] = {}
+
+        for modality_name, value in outputs.items():
+            if modality_name not in self._lookups:
+                raise KeyError(
+                    f"Modality {modality_name!r} is not a regular modality and cannot "
+                    "be addressed by sample index."
+                )
+
+            writer = self.get_writer(modality_name)
+            modality_root = _resolve_output_root(
+                output_root=output_root, modality_name=modality_name
+            )
+            record = self._lookups[modality_name][sample_id]
+            target_path = Path(modality_root) / record.file_entry["path"]
+
+            if create_dirs:
+                target_path.parent.mkdir(parents=True, exist_ok=True)
+
+            if not overwrite and target_path.exists():
+                raise FileExistsError(str(target_path))
+
+            modality_meta = self._index_outputs[modality_name].get("meta")
+            writer(str(target_path), value, modality_meta)
+            written_paths[modality_name] = str(target_path)
+
+        return written_paths
 
     def get_dataset_name(self) -> str | None:
         """Return the dataset name from the first modality's ds-crawler index.
@@ -824,3 +995,20 @@ def _first_non_empty_list(*candidates: list[str] | None) -> list[str]:
         if candidate is not None:
             return candidate
     return []
+
+
+def _resolve_output_root(
+    *,
+    output_root: str | os.PathLike[str] | Mapping[str, str | os.PathLike[str]],
+    modality_name: str,
+) -> str:
+    if isinstance(output_root, (str, os.PathLike)):
+        return str(output_root)
+
+    root = output_root.get(modality_name)
+    if root is None:
+        raise KeyError(
+            f"Missing output root for modality {modality_name!r}. "
+            "Provide a string root for all modalities or a mapping containing this modality."
+        )
+    return str(root)

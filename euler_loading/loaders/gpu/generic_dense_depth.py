@@ -31,6 +31,7 @@ Usage::
 
 from __future__ import annotations
 
+import json
 import os
 from typing import Any, BinaryIO, Union
 
@@ -39,6 +40,14 @@ import torch
 from PIL import Image
 
 from euler_loading.loaders._annotations import modality_meta
+from euler_loading.loaders._writer_utils import (
+    ensure_parent,
+    to_bool_mask,
+    to_hwc_rgb,
+    to_hw,
+    to_numpy,
+    to_uint8,
+)
 
 _IMAGE_EXTENSIONS = frozenset({".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff"})
 _NPY_EXTENSION = ".npy"
@@ -170,3 +179,109 @@ def read_intrinsics(path: Union[str, BinaryIO], meta: dict[str, Any] | None = No
     if isinstance(K, torch.Tensor):
         return K.to(dtype=torch.float32)
     return torch.tensor(K, dtype=torch.float32)
+
+
+# ---------------------------------------------------------------------------
+# Writers
+# ---------------------------------------------------------------------------
+
+
+def write_rgb(path: str, value: Any, meta: dict[str, Any] | None = None) -> None:
+    """Write RGB data to image or NumPy formats based on extension."""
+    ensure_parent(path)
+    ext = os.path.splitext(path)[1].lower()
+    rgb = to_hwc_rgb(value, name="rgb")
+
+    if ext in _IMAGE_EXTENSIONS:
+        arr = to_uint8(rgb, scale_unit_range=True)
+        Image.fromarray(arr, mode="RGB").save(path)
+        return
+
+    rgb_f32 = rgb.astype(np.float32)
+    if ext == _NPY_EXTENSION:
+        np.save(path, rgb_f32)
+        return
+    if ext == _NPZ_EXTENSION:
+        np.savez_compressed(path, data=rgb_f32)
+        return
+
+    raise ValueError(f"Unsupported RGB output extension: {ext}")
+
+
+def write_depth(path: str, value: Any, meta: dict[str, Any] | None = None) -> None:
+    """Write depth data to image or NumPy formats based on extension."""
+    ensure_parent(path)
+    ext = os.path.splitext(path)[1].lower()
+    depth = to_hw(value, name="depth")
+
+    if ext in _IMAGE_EXTENSIONS:
+        depth_f32 = depth.astype(np.float32)
+        if (
+            np.issubdtype(depth.dtype, np.integer)
+            and depth_f32.size > 0
+            and float(depth_f32.min()) >= 0.0
+            and float(depth_f32.max()) <= 255.0
+        ):
+            Image.fromarray(depth_f32.astype(np.uint8), mode="L").save(path)
+            return
+        depth_u16 = np.clip(np.rint(depth_f32), 0, 65535).astype(np.uint16)
+        Image.fromarray(depth_u16, mode="I;16").save(path)
+        return
+
+    depth_f32 = depth.astype(np.float32)
+    if ext == _NPY_EXTENSION:
+        np.save(path, depth_f32)
+        return
+    if ext == _NPZ_EXTENSION:
+        np.savez_compressed(path, data=depth_f32)
+        return
+
+    raise ValueError(f"Unsupported depth output extension: {ext}")
+
+
+def write_sky_mask(path: str, value: Any, meta: dict[str, Any] | None = None) -> None:
+    """Write a sky mask using either RGB encoding or NumPy formats."""
+    ensure_parent(path)
+    ext = os.path.splitext(path)[1].lower()
+    mask = to_bool_mask(value)
+
+    if ext in _IMAGE_EXTENSIONS:
+        sky_color_raw = (meta or {}).get("sky_mask", [255, 255, 255])
+        sky_color = np.asarray(sky_color_raw, dtype=np.uint8)
+        if sky_color.shape != (3,):
+            raise ValueError("meta['sky_mask'] must be a 3-element RGB color")
+        rgb = np.zeros(mask.shape + (3,), dtype=np.uint8)
+        rgb[mask] = sky_color
+        Image.fromarray(rgb, mode="RGB").save(path)
+        return
+
+    if ext == _NPY_EXTENSION:
+        np.save(path, mask.astype(np.bool_))
+        return
+    if ext == _NPZ_EXTENSION:
+        np.savez_compressed(path, data=mask.astype(np.bool_))
+        return
+
+    raise ValueError(f"Unsupported sky-mask output extension: {ext}")
+
+
+def write_intrinsics(path: str, value: Any, meta: dict[str, Any] | None = None) -> None:
+    """Write a 3x3 intrinsics matrix to text, JSON, or NumPy format."""
+    ensure_parent(path)
+    ext = os.path.splitext(path)[1].lower()
+    K = to_numpy(value).astype(np.float32)
+    if K.shape != (3, 3):
+        raise ValueError(f"intrinsics must have shape (3, 3), got {K.shape}")
+
+    if ext == ".json":
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump({"intrinsics": K.tolist()}, f)
+        return
+    if ext == _NPY_EXTENSION:
+        np.save(path, K)
+        return
+    if ext == _NPZ_EXTENSION:
+        np.savez_compressed(path, data=K)
+        return
+
+    np.savetxt(path, K, fmt="%.9g")

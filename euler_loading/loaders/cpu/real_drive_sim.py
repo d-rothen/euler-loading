@@ -30,6 +30,13 @@ import numpy as np
 from PIL import Image
 
 from euler_loading.loaders._annotations import modality_meta
+from euler_loading.loaders._writer_utils import (
+    ensure_parent,
+    to_bool_mask,
+    to_hwc_rgb,
+    to_hw,
+    to_uint8,
+)
 
 # ---------------------------------------------------------------------------
 # Image modality loaders
@@ -98,3 +105,41 @@ def sky_mask(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None) -> 
     where the class ID equals ``29`` (sky).
     """
     return np.array(Image.open(path), dtype=np.uint8)[:, :, 0] == _SKY_CLASS_ID
+
+
+# ---------------------------------------------------------------------------
+# Writers
+# ---------------------------------------------------------------------------
+
+
+def write_rgb(path: str, value: Any, meta: dict[str, Any] | None = None) -> None:
+    """Write an RGB array/tensor to PNG."""
+    ensure_parent(path)
+    arr = to_uint8(to_hwc_rgb(value, name="rgb"), scale_unit_range=True)
+    Image.fromarray(arr, mode="RGB").save(path)
+
+
+def write_depth(path: str, value: Any, meta: dict[str, Any] | None = None) -> None:
+    """Write a depth map to a Real Drive Sim ``.npz`` file under key ``data``."""
+    ensure_parent(path)
+    depth = to_hw(value, name="depth").astype(np.float32)
+    np.savez_compressed(path, data=depth)
+
+
+def write_class_segmentation(path: str, value: Any, meta: dict[str, Any] | None = None) -> None:
+    """Write class IDs as an RGBA PNG with IDs stored in the red channel."""
+    ensure_parent(path)
+    class_ids = np.clip(to_hw(value, name="class_segmentation"), 0, 255).astype(np.uint8)
+    rgba = np.zeros(class_ids.shape + (4,), dtype=np.uint8)
+    rgba[:, :, 0] = class_ids
+    rgba[:, :, 3] = 255
+    Image.fromarray(rgba, mode="RGBA").save(path)
+
+
+def write_sky_mask(path: str, value: Any, meta: dict[str, Any] | None = None) -> None:
+    """Write a sky mask as a class-ID PNG compatible with :func:`sky_mask`."""
+    sky_class_id = int((meta or {}).get("sky_class_id", _SKY_CLASS_ID))
+    mask = to_bool_mask(value)
+    class_ids = np.zeros(mask.shape, dtype=np.uint8)
+    class_ids[mask] = np.uint8(sky_class_id)
+    write_class_segmentation(path, class_ids, meta=meta)

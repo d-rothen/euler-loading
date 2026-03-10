@@ -6,6 +6,7 @@ Each modality points at a directory (or `.zip` archive) that carries its own `ds
 ds-crawler indexes the directory tree, discovers files, and exposes hierarchical metadata (path properties, calibration files, …).
 euler-loading then **intersects file IDs** across all modalities so that every sample contains exactly one file per modality. Additional hierarchical data (e.g. per-scene calibration files) can be loaded via `hierarchical_modalities`.
 How a file is actually **loaded** (image, depth map, point cloud, …) is configurable per modality — either supply a `Callable` or let euler-loading resolve a built-in loader automatically from the ds-crawler config.
+Writer functions can be resolved the same way, so inference outputs can be written back in dataset-native formats.
 
 ## Installation
 
@@ -57,6 +58,7 @@ Frozen dataclass describing one data modality.
 | `path` | `str` | Absolute path to the modality root directory or `.zip` archive. Must contain a `ds-crawler.config` or cached `output.json`. |
 | `origin_path` | `str \| None` | Original path before copying/symlinking (e.g. for SLURM staging). Not used by euler-loading itself — useful for experiment logging to retain references to the original dataset location. |
 | `loader` | `Callable[..., Any] \| None` | Receives the file path (or `BinaryIO` buffer for zip-backed modalities) and an optional `meta` dict. Returns loaded data. When `None`, the loader is resolved automatically from the ds-crawler index (see [Automatic loader resolution](#automatic-loader-resolution)). |
+| `writer` | `Callable[..., Any] \| None` | Receives `(path, value, meta)` and writes modality data to disk. When `None`, euler-loading tries to resolve a built-in writer from ds-crawler metadata (`write_<function>` or `write_<suffix>` for `read_<suffix>`). |
 | `used_as` | `str \| None` | Optional experiment role (e.g. `input`, `target`, `condition`). |
 | `slot` | `str \| None` | Optional fully-qualified logging slot (e.g. `dehaze.input.rgb`). |
 | `modality_type` | `str \| None` | Optional modality type override (e.g. `rgb`, `depth`). |
@@ -66,6 +68,18 @@ Frozen dataclass describing one data modality.
 
 The loader is the **only** place where domain-specific I/O happens.
 euler-loading never interprets file contents — it only resolves *which* file to load and passes the path (or in-memory buffer) to your function.
+
+### `MultiModalDataset.get_writer(modality_name)`
+
+Returns the resolved writer callable for a modality. Raises `ValueError` when no writer is configured/discoverable.
+
+### `MultiModalDataset.write_sample(sample_index, outputs, output_root, ...)`
+
+Writes one sample's modality outputs back to disk using resolved writers.
+
+- `outputs` is `{modality_name: value}`.
+- `output_root` is either one root path for all modalities or per-modality roots.
+- Relative dataset paths are preserved under the output root(s), so generated data can be re-indexed with matching IDs.
 
 ### `MultiModalDataset.describe_for_runlog()`
 
@@ -162,6 +176,9 @@ A loader is any callable with the signature `(path: str | BinaryIO, meta: dict |
 The `meta` argument receives the ds-crawler metadata for the modality (or `None` if unavailable).
 For zip-backed modalities, `path` is an in-memory `io.BytesIO` buffer instead of a filesystem path.
 
+A writer is any callable with the signature `(path: str, value: Any, meta: dict | None) -> None`.
+Use `meta` for format parameters (units, encoding details) instead of modality-specific argument variants.
+
 ```python
 from PIL import Image
 import numpy as np
@@ -217,6 +234,12 @@ When `Modality.loader` is `None`, euler-loading resolves the loader from the ds-
 
 `loader` is the module name (`vkitti2`, `real_drive_sim`, or `generic_dense_depth`) and `function` is the function within that module. The GPU variant is used by default.
 
+Writer resolution uses the same module and function metadata:
+
+- preferred explicit key: `euler_loading.writer_function`
+- fallback naming: `write_<function>`
+- for read-style functions: also tries `write_<suffix>` for `read_<suffix>`
+
 ## ds-crawler integration
 
 Every modality root must be independently indexable by ds-crawler.
@@ -235,6 +258,8 @@ Calibration files or other per-scene/per-sequence metadata can be loaded via `hi
 | `depth(path, meta=None)` | `(1, H, W)` float32 in metres |
 | `sky_mask(path, meta=None)` | `(1, H, W)` bool |
 | `read_intrinsics(path, meta=None)` | `(3, 3)` float32 camera matrix |
+
+`euler_loading.DenseDepthWriter` and `euler_loading.DenseDepthCodec` provide matching writer and combined reader/writer contracts.
 
 ```python
 from euler_loading import DenseDepthLoader

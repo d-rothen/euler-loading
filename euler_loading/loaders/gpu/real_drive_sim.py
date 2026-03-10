@@ -35,6 +35,14 @@ import numpy as np
 from PIL import Image
 
 from euler_loading.loaders._annotations import modality_meta
+from euler_loading.loaders._writer_utils import (
+    ensure_parent,
+    to_bool_mask,
+    to_hwc_rgb,
+    to_hw,
+    to_numpy,
+    to_uint8,
+)
 
 # ---------------------------------------------------------------------------
 # Image modality loaders
@@ -221,3 +229,205 @@ def read_intrinsics(path: Union[str, BinaryIO], meta: dict[str, Any] | None = No
     """Load the intrinsics for a specific sensor from a Real Drive Sim calibration JSON."""
     all_intrinsics_data = all_intrinsics(path)
     return all_intrinsics_data["CS_FRONT"]
+
+
+# ---------------------------------------------------------------------------
+# Writers
+# ---------------------------------------------------------------------------
+
+
+def write_rgb(path: str, value: Any, meta: dict[str, Any] | None = None) -> None:
+    """Write an RGB tensor/array to PNG."""
+    ensure_parent(path)
+    arr = to_uint8(to_hwc_rgb(value, name="rgb"), scale_unit_range=True)
+    Image.fromarray(arr, mode="RGB").save(path)
+
+
+def write_depth(path: str, value: Any, meta: dict[str, Any] | None = None) -> None:
+    """Write a depth map to a Real Drive Sim ``.npz`` file under key ``data``."""
+    ensure_parent(path)
+    depth = to_hw(value, name="depth").astype(np.float32)
+    np.savez_compressed(path, data=depth)
+
+
+def write_class_segmentation(path: str, value: Any, meta: dict[str, Any] | None = None) -> None:
+    """Write class IDs as an RGBA PNG with IDs stored in the red channel."""
+    ensure_parent(path)
+    class_ids = np.clip(to_hw(value, name="class_segmentation"), 0, 255).astype(np.uint8)
+    rgba = np.zeros(class_ids.shape + (4,), dtype=np.uint8)
+    rgba[:, :, 0] = class_ids
+    rgba[:, :, 3] = 255
+    Image.fromarray(rgba, mode="RGBA").save(path)
+
+
+def write_sky_mask(path: str, value: Any, meta: dict[str, Any] | None = None) -> None:
+    """Write a sky mask as a class-ID PNG compatible with :func:`sky_mask`."""
+    sky_class_id = int((meta or {}).get("sky_class_id", _SKY_CLASS_ID))
+    mask = to_bool_mask(value)
+    class_ids = np.zeros(mask.shape, dtype=np.uint8)
+    class_ids[mask] = np.uint8(sky_class_id)
+    write_class_segmentation(path, class_ids, meta=meta)
+
+
+def _rotation_matrix_to_quaternion(R: np.ndarray) -> tuple[float, float, float, float]:
+    """Convert a 3x3 rotation matrix to quaternion ``(qw, qx, qy, qz)``."""
+    trace = float(np.trace(R))
+
+    if trace > 0.0:
+        s = np.sqrt(trace + 1.0) * 2.0
+        qw = 0.25 * s
+        qx = (R[2, 1] - R[1, 2]) / s
+        qy = (R[0, 2] - R[2, 0]) / s
+        qz = (R[1, 0] - R[0, 1]) / s
+    elif R[0, 0] > R[1, 1] and R[0, 0] > R[2, 2]:
+        s = np.sqrt(1.0 + R[0, 0] - R[1, 1] - R[2, 2]) * 2.0
+        qw = (R[2, 1] - R[1, 2]) / s
+        qx = 0.25 * s
+        qy = (R[0, 1] + R[1, 0]) / s
+        qz = (R[0, 2] + R[2, 0]) / s
+    elif R[1, 1] > R[2, 2]:
+        s = np.sqrt(1.0 + R[1, 1] - R[0, 0] - R[2, 2]) * 2.0
+        qw = (R[0, 2] - R[2, 0]) / s
+        qx = (R[0, 1] + R[1, 0]) / s
+        qy = 0.25 * s
+        qz = (R[1, 2] + R[2, 1]) / s
+    else:
+        s = np.sqrt(1.0 + R[2, 2] - R[0, 0] - R[1, 1]) * 2.0
+        qw = (R[1, 0] - R[0, 1]) / s
+        qx = (R[0, 2] + R[2, 0]) / s
+        qy = (R[1, 2] + R[2, 1]) / s
+        qz = 0.25 * s
+
+    quat = np.array([qw, qx, qy, qz], dtype=np.float64)
+    norm = float(np.linalg.norm(quat))
+    if norm == 0.0:
+        return (1.0, 0.0, 0.0, 0.0)
+    quat /= norm
+    return (float(quat[0]), float(quat[1]), float(quat[2]), float(quat[3]))
+
+
+def _intrinsics_from_matrix(K: np.ndarray, distortion: np.ndarray) -> dict[str, float]:
+    return {
+        "fx": float(K[0, 0]),
+        "fy": float(K[1, 1]),
+        "skew": float(K[0, 1]),
+        "cx": float(K[0, 2]),
+        "cy": float(K[1, 2]),
+        "k1": float(distortion[0]),
+        "k2": float(distortion[1]),
+        "p1": float(distortion[2]),
+        "p2": float(distortion[3]),
+        "k3": float(distortion[4]),
+        "k4": float(distortion[5]),
+        "k5": float(distortion[6]),
+        "k6": float(distortion[7]),
+    }
+
+
+def _extrinsics_from_matrix(T: np.ndarray) -> dict[str, dict[str, float]]:
+    qw, qx, qy, qz = _rotation_matrix_to_quaternion(T[:3, :3])
+    return {
+        "translation": {
+            "x": float(T[0, 3]),
+            "y": float(T[1, 3]),
+            "z": float(T[2, 3]),
+        },
+        "rotation": {
+            "qw": qw,
+            "qx": qx,
+            "qy": qy,
+            "qz": qz,
+        },
+    }
+
+
+def write_calibration(
+    path: str,
+    value: Any,
+    meta: dict[str, Any] | None = None,
+) -> None:
+    """Write Real Drive Sim calibration JSON from parsed calibration data."""
+    ensure_parent(path)
+    calibration_data = value
+    if not isinstance(calibration_data, dict):
+        raise ValueError("calibration value must be dict[sensor_name, sensor_data]")
+
+    names: list[str] = []
+    intrinsics: list[dict[str, float]] = []
+    extrinsics: list[dict[str, dict[str, float]]] = []
+
+    for sensor_name, sensor in calibration_data.items():
+        if not isinstance(sensor, dict):
+            raise ValueError(
+                f"calibration[{sensor_name!r}] must be a dict with keys K, T, distortion"
+            )
+        K = to_numpy(sensor["K"]).astype(np.float32)
+        T = to_numpy(sensor["T"]).astype(np.float32)
+        distortion = to_numpy(sensor["distortion"]).astype(np.float32).reshape(-1)
+
+        if K.shape != (3, 3):
+            raise ValueError(f"calibration[{sensor_name!r}]['K'] must be shape (3, 3)")
+        if T.shape != (4, 4):
+            raise ValueError(f"calibration[{sensor_name!r}]['T'] must be shape (4, 4)")
+        if distortion.size != 8:
+            raise ValueError(
+                f"calibration[{sensor_name!r}]['distortion'] must contain 8 coefficients"
+            )
+
+        names.append(sensor_name)
+        intrinsics.append(_intrinsics_from_matrix(K, distortion))
+        extrinsics.append(_extrinsics_from_matrix(T))
+
+    payload = {
+        "names": names,
+        "intrinsics": intrinsics,
+        "extrinsics": extrinsics,
+    }
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(payload, f)
+
+
+def write_all_intrinsics(
+    path: str,
+    value: Any,
+    meta: dict[str, Any] | None = None,
+) -> None:
+    """Write intrinsics-only mapping to Real Drive Sim calibration JSON."""
+    ensure_parent(path)
+    intrinsics_map = value
+    if not isinstance(intrinsics_map, dict):
+        raise ValueError("all_intrinsics value must be dict[sensor_name, K]")
+
+    names: list[str] = []
+    intrinsics: list[dict[str, float]] = []
+    extrinsics: list[dict[str, dict[str, float]]] = []
+    zero_distortion = np.zeros(8, dtype=np.float32)
+
+    for sensor_name, K_value in intrinsics_map.items():
+        K = to_numpy(K_value).astype(np.float32)
+        if K.shape != (3, 3):
+            raise ValueError(
+                f"all_intrinsics[{sensor_name!r}] must have shape (3, 3)"
+            )
+        names.append(sensor_name)
+        intrinsics.append(_intrinsics_from_matrix(K, zero_distortion))
+        extrinsics.append(
+            {
+                "translation": {"x": 0.0, "y": 0.0, "z": 0.0},
+                "rotation": {"qw": 1.0, "qx": 0.0, "qy": 0.0, "qz": 0.0},
+            }
+        )
+
+    payload = {
+        "names": names,
+        "intrinsics": intrinsics,
+        "extrinsics": extrinsics,
+    }
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(payload, f)
+
+
+def write_intrinsics(path: str, value: Any, meta: dict[str, Any] | None = None) -> None:
+    """Write a single-sensor intrinsics matrix as calibration JSON."""
+    sensor_name = str((meta or {}).get("sensor", "CS_FRONT"))
+    write_all_intrinsics(path, {sensor_name: value}, meta=meta)

@@ -36,3 +36,28 @@ class DenseDepthLoader(Protocol):
     def depth(self, path: Union[str, BinaryIO], meta: dict[str, Any] | None = None) -> torch.Tensor: ...
     def sky_mask(self, path: Union[str, BinaryIO], meta: dict[str, Any] | None = None) -> torch.Tensor: ...
     def read_intrinsics(self, path: Union[str, BinaryIO], meta: dict[str, Any] | None = None) -> torch.Tensor: ...
+
+
+@runtime_checkable
+class DenseDepthWriter(Protocol):
+    """Contract for dense-depth modality writers.
+
+    A conforming module exposes write functions parallel to
+    :class:`DenseDepthLoader`, with a shared ``(path, value, meta=None)``
+    signature:
+
+    - **write_rgb**
+    - **write_depth**
+    - **write_sky_mask**
+    - **write_intrinsics**
+    """
+
+    def write_rgb(self, path: str, value: Any, meta: dict[str, Any] | None = None) -> None: ...
+    def write_depth(self, path: str, value: Any, meta: dict[str, Any] | None = None) -> None: ...
+    def write_sky_mask(self, path: str, value: Any, meta: dict[str, Any] | None = None) -> None: ...
+    def write_intrinsics(self, path: str, value: Any, meta: dict[str, Any] | None = None) -> None: ...
+
+
+@runtime_checkable
+class DenseDepthCodec(DenseDepthLoader, DenseDepthWriter, Protocol):
+    """Combined reader/writer contract for dense-depth datasets."""

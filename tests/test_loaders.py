@@ -12,6 +12,7 @@ from euler_loading.loaders import vkitti2
 from euler_loading.loaders.gpu import vkitti2 as gpu_vkitti2
 from euler_loading.loaders.gpu import real_drive_sim as gpu_rds
 from euler_loading.loaders.cpu import vkitti2 as cpu_vkitti2
+from euler_loading.loaders.cpu import real_drive_sim as cpu_rds
 
 # ---------------------------------------------------------------------------
 # Shared fixtures
@@ -25,6 +26,17 @@ LOADER_NAMES = [
     "scene_flow",
     "read_intrinsics",
     "read_extrinsics",
+]
+
+WRITER_NAMES = [
+    "write_rgb",
+    "write_depth",
+    "write_class_segmentation",
+    "write_instance_segmentation",
+    "write_sky_mask",
+    "write_scene_flow",
+    "write_intrinsics",
+    "write_extrinsics",
 ]
 
 
@@ -89,6 +101,18 @@ class TestVKITTI2ModuleContents:
 
     @pytest.mark.parametrize("name", LOADER_NAMES)
     def test_cpu_has_callable(self, name):
+        assert callable(getattr(cpu_vkitti2, name))
+
+    @pytest.mark.parametrize("name", WRITER_NAMES)
+    def test_top_level_has_writer_callable(self, name):
+        assert callable(getattr(vkitti2, name))
+
+    @pytest.mark.parametrize("name", WRITER_NAMES)
+    def test_gpu_has_writer_callable(self, name):
+        assert callable(getattr(gpu_vkitti2, name))
+
+    @pytest.mark.parametrize("name", WRITER_NAMES)
+    def test_cpu_has_writer_callable(self, name):
         assert callable(getattr(cpu_vkitti2, name))
 
 
@@ -377,3 +401,78 @@ class TestRDSCalibration:
 
     def test_distortion_dtype(self):
         assert self.result["CS_FRONT"]["distortion"].dtype == torch.float32
+
+
+# ---------------------------------------------------------------------------
+# Writer round-trip tests
+# ---------------------------------------------------------------------------
+
+
+class TestVKITTI2Writers:
+    def test_gpu_write_depth_roundtrip(self, tmp_path):
+        depth = torch.tensor(
+            [[[1.0, 2.0], [3.0, 4.0]]],
+            dtype=torch.float32,
+        )
+        path = tmp_path / "depth.png"
+
+        gpu_vkitti2.write_depth(str(path), depth)
+        loaded = gpu_vkitti2.depth(str(path))
+
+        assert torch.allclose(loaded, depth, atol=1e-4)
+
+    def test_cpu_write_depth_roundtrip(self, tmp_path):
+        depth = np.array([[1.0, 2.0], [3.0, 4.0]], dtype=np.float32)
+        path = tmp_path / "depth.png"
+
+        cpu_vkitti2.write_depth(str(path), depth)
+        loaded = cpu_vkitti2.depth(str(path))
+
+        assert np.allclose(loaded, depth, atol=1e-4)
+
+    def test_gpu_write_intrinsics_roundtrip(self, tmp_path):
+        K = torch.tensor(
+            [[725.0, 0.0, 620.5], [0.0, 725.0, 187.0], [0.0, 0.0, 1.0]],
+            dtype=torch.float32,
+        )
+        path = tmp_path / "intrinsics.txt"
+
+        gpu_vkitti2.write_intrinsics(str(path), K)
+        loaded = gpu_vkitti2.read_intrinsics(str(path))
+
+        assert torch.allclose(loaded, K, atol=1e-4)
+
+
+class TestRDSWriters:
+    def test_gpu_write_depth_roundtrip(self, tmp_path):
+        depth = torch.tensor(
+            [[[1.25, 2.5], [3.75, 4.0]]],
+            dtype=torch.float32,
+        )
+        path = tmp_path / "depth.npz"
+
+        gpu_rds.write_depth(str(path), depth)
+        loaded = gpu_rds.depth(str(path))
+
+        assert torch.allclose(loaded, depth, atol=1e-6)
+
+    def test_cpu_write_depth_roundtrip(self, tmp_path):
+        depth = np.array([[1.25, 2.5], [3.75, 4.0]], dtype=np.float32)
+        path = tmp_path / "depth.npz"
+
+        cpu_rds.write_depth(str(path), depth)
+        loaded = cpu_rds.depth(str(path))
+
+        assert np.allclose(loaded, depth, atol=1e-6)
+
+    def test_gpu_write_sky_mask_roundtrip(self, tmp_path):
+        mask = torch.tensor(
+            [[[True, False], [False, True]]],
+            dtype=torch.bool,
+        )
+        path = tmp_path / "sky.png"
+
+        gpu_rds.write_sky_mask(str(path), mask)
+        loaded = gpu_rds.sky_mask(str(path))
+
+        assert torch.equal(loaded, mask)
