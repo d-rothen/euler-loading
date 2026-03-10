@@ -1,16 +1,12 @@
 from __future__ import annotations
 
-import importlib
 import io
 import logging
 import os
 from pathlib import Path
-import re
-import tempfile
 import zipfile
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from types import ModuleType
 from typing import Any, Callable
 
 try:
@@ -27,187 +23,38 @@ from ds_crawler import (
 )
 from ds_crawler.zip_utils import get_zip_root_prefix, is_zip_path
 
+from ._metadata import _build_runlog_entry, _get_ds_crawler_descriptor
+from ._resolution import (
+    _resolve_loader,
+    _resolve_writer,
+    resolve_loader_module,
+    resolve_writer_module,
+)
+from ._writing import (
+    OutputDestination,
+    _build_writer_full_id,
+    _destination_location,
+    _destination_rel_exists,
+    _resolve_output_destination,
+    _write_value_to_destination,
+    create_dataset_writer_from_index,
+)
 from .indexing import (
     FileRecord,
     collect_files,
     collect_hierarchical_files,
     match_hierarchical_files,
 )
-from .loaders._writer_utils import supports_stream_target
 
 logger = logging.getLogger(__name__)
 
-
-_DS_CRAWLER_STRUCTURAL_KEYS = frozenset({
-    "name",
-    "type",
-    "id_regex",
-    "id_regex_join_char",
-    "euler_train",
-    "dataset",
-    "hierarchy_regex",
-    "named_capture_group_value_separator",
-    "sampled",
-})
-
-_LOADER_MODULES: dict[str, str] = {
-    "vkitti2": "euler_loading.loaders.gpu.vkitti2",
-    "real_drive_sim": "euler_loading.loaders.gpu.real_drive_sim",
-    "generic_dense_depth": "euler_loading.loaders.gpu.generic_dense_depth",
-}
-
-_OutputDestination = (
-    str
-    | os.PathLike[str]
-    | DatasetWriter
-    | ZipDatasetWriter
-)
-
-
-def resolve_loader_module(name: str) -> ModuleType:
-    """Import and return the GPU loader module for *name*.
-
-    Example::
-
-        module = resolve_loader_module("vkitti2")
-        sky_fn = module.sky_mask  # get a specific function
-
-    Raises:
-        ValueError: If *name* does not match any known loader.
-    """
-    module_path = _LOADER_MODULES.get(name)
-    if module_path is None:
-        available = ", ".join(sorted(_LOADER_MODULES))
-        raise ValueError(
-            f"Unknown loader {name!r}. Available loaders: {available}"
-        )
-    return importlib.import_module(module_path)
-
-
-def resolve_writer_module(name: str) -> ModuleType:
-    """Import and return the writer module for *name*.
-
-    Writers live next to loader functions in the same modules.
-    """
-    return resolve_loader_module(name)
-
-
-def _resolve_loader(
-    *,
-    modality_name: str,
-    modality: "Modality",
-    index: dict[str, Any],
-) -> Callable[..., Any]:
-    """Return the effective loader for a modality.
-
-    If ``modality.loader`` is set, it is returned as-is.  Otherwise the loader
-    is looked up from ``index["euler_loading"]["loader"]`` (the module name,
-    e.g. ``"vkitti2"``) and ``index["euler_loading"]["function"]`` (the
-    function name, e.g. ``"rgb"``).
-    """
-    if modality.loader is not None:
-        return modality.loader
-
-    euler_loading_meta = index.get("euler_loading")
-    if not isinstance(euler_loading_meta, Mapping):
-        raise ValueError(
-            f"Modality {modality_name!r}: no explicit loader provided and the "
-            f"ds-crawler index at {modality.path!r} does not contain an "
-            f"'euler_loading' property."
-        )
-
-    for key in ("loader", "function"):
-        if key not in euler_loading_meta:
-            raise ValueError(
-                f"Modality {modality_name!r}: no explicit loader provided and "
-                f"'euler_loading.{key}' is missing from the ds-crawler index "
-                f"at {modality.path!r}."
-            )
-
-    module_name: str = euler_loading_meta["loader"]
-    func_name: str = euler_loading_meta["function"]
-
-    module = resolve_loader_module(module_name)
-
-    func = getattr(module, func_name, None)
-    if func is None or not callable(func):
-        available = [
-            attr for attr in dir(module)
-            if not attr.startswith("_") and callable(getattr(module, attr))
-        ]
-        raise ValueError(
-            f"Modality {modality_name!r}: loader module {module_name!r} has no "
-            f"callable {func_name!r}. Available: {', '.join(available)}"
-        )
-
-    return func
-
-
-def _writer_name_candidates(read_function_name: str, explicit: Any) -> list[str]:
-    names: list[str] = []
-    explicit_name = _as_non_empty_str(explicit)
-    if explicit_name is not None:
-        names.append(explicit_name)
-
-    if read_function_name.startswith("read_"):
-        names.append(f"write_{read_function_name[len('read_'):]}")
-    names.append(f"write_{read_function_name}")
-
-    deduped: list[str] = []
-    seen: set[str] = set()
-    for name in names:
-        if name in seen:
-            continue
-        seen.add(name)
-        deduped.append(name)
-    return deduped
-
-
-def _resolve_writer(
-    *,
-    modality_name: str,
-    modality: "Modality",
-    index: dict[str, Any],
-) -> Callable[..., Any] | None:
-    """Return the effective writer for a modality, if available."""
-    if modality.writer is not None:
-        return modality.writer
-
-    euler_loading_meta = index.get("euler_loading")
-    if not isinstance(euler_loading_meta, Mapping):
-        return None
-
-    module_name = _as_non_empty_str(euler_loading_meta.get("loader"))
-    read_function_name = _as_non_empty_str(euler_loading_meta.get("function"))
-    if module_name is None or read_function_name is None:
-        return None
-
-    try:
-        module = resolve_writer_module(module_name)
-    except ValueError:
-        logger.warning(
-            "Modality '%s': cannot resolve writer module %r.",
-            modality_name,
-            module_name,
-        )
-        return None
-
-    writer_names = _writer_name_candidates(
-        read_function_name, euler_loading_meta.get("writer_function")
-    )
-    for writer_name in writer_names:
-        writer = getattr(module, writer_name, None)
-        if callable(writer):
-            return writer
-
-    logger.debug(
-        "Modality '%s': no writer found in %s for read function %r (tried %s).",
-        modality_name,
-        module_name,
-        read_function_name,
-        ", ".join(writer_names),
-    )
-    return None
+__all__ = [
+    "Modality",
+    "MultiModalDataset",
+    "create_dataset_writer_from_index",
+    "resolve_loader_module",
+    "resolve_writer_module",
+]
 
 
 #TODO: might want to add slots=True in a 3.10+ only codebase
@@ -306,9 +153,7 @@ class MultiModalDataset(_BaseDataset):
     """
 
     def modality_paths(self) -> dict[str, dict[str, str]]:
-        """Return a list of the names of all modalities in this dataset."""
-        #return {name: mod.path for name, mod in self._modalities.items()}
-        #get mod.path and mod.origin_path if it exists, otherwise fallback to mod.path
+        """Return modality names mapped to their current and origin paths."""
         res = {}
         for name, mod in self._modalities.items():
             path = mod.path
@@ -368,6 +213,7 @@ class MultiModalDataset(_BaseDataset):
                 path=modality.path,
                 index_output=self._index_outputs.get(name),
                 cache=descriptor_cache,
+                load_dataset_config_fn=load_dataset_config,
             )
             modalities[name] = _build_runlog_entry(
                 name=name,
@@ -384,6 +230,7 @@ class MultiModalDataset(_BaseDataset):
                 path=modality.path,
                 index_output=self._hierarchical_index_outputs.get(name),
                 cache=descriptor_cache,
+                load_dataset_config_fn=load_dataset_config,
             )
             hierarchy_levels = list(self._hierarchical_lookups.get(name, {}).keys())
             hierarchical_modalities[name] = _build_runlog_entry(
@@ -564,7 +411,7 @@ class MultiModalDataset(_BaseDataset):
         self,
         sample_index: int,
         outputs: Mapping[str, Any],
-        output_root: _OutputDestination | Mapping[str, _OutputDestination],
+        output_root: OutputDestination | Mapping[str, OutputDestination],
         *,
         create_dirs: bool = True,
         overwrite: bool = True,
@@ -756,449 +603,3 @@ class MultiModalDataset(_BaseDataset):
             sample = transform(sample)
 
         return sample
-
-
-def _build_runlog_entry(
-    name: str,
-    modality: Modality,
-    descriptor: Mapping[str, Any],
-    *,
-    is_hierarchical: bool,
-    regular_modality_names: list[str],
-    hierarchy_levels: list[tuple[str, ...]] | None,
-) -> dict[str, Any]:
-    euler_loading_properties = _build_euler_loading_layers(
-        modality.metadata,
-        descriptor.get("properties"),
-    )
-    used_as = _first_non_empty(
-        modality.used_as,
-        _as_non_empty_str(
-            _resolve_euler_loading_property(euler_loading_properties, "used_as")
-        ),
-        _infer_used_as(name=name, is_hierarchical=is_hierarchical),
-    )
-    modality_type = _first_non_empty(
-        modality.modality_type,
-        _as_non_empty_str(
-            _resolve_euler_loading_property(euler_loading_properties, "modality_type")
-        ),
-        _as_non_empty_str(descriptor.get("modality_type")),
-        _infer_modality_type(name=name, path=modality.path),
-    )
-    slot = _first_non_empty(
-        modality.slot,
-        _as_non_empty_str(_resolve_euler_loading_property(euler_loading_properties, "slot")),
-        _infer_slot(
-            name=name,
-            used_as=used_as,
-            modality_type=modality_type,
-            euler_loading_properties=euler_loading_properties,
-        ),
-    )
-
-    entry: dict[str, Any] = {"path": modality.path}
-    if used_as is not None:
-        entry["used_as"] = used_as
-    if slot is not None:
-        entry["slot"] = slot
-    if modality_type is not None:
-        entry["modality_type"] = modality_type
-
-    if is_hierarchical:
-        hierarchy_scope = _first_non_empty(
-            modality.hierarchy_scope,
-            _as_non_empty_str(
-                _resolve_euler_loading_property(
-                    euler_loading_properties, "hierarchy_scope"
-                )
-            ),
-            _infer_hierarchy_scope_from_regex(descriptor.get("hierarchy_regex")),
-            _infer_hierarchy_scope_from_levels(hierarchy_levels),
-        )
-        if hierarchy_scope is not None:
-            entry["hierarchy_scope"] = hierarchy_scope
-
-        applies_to = _first_non_empty_list(
-            _as_string_list(modality.applies_to),
-            _as_string_list(
-                _resolve_euler_loading_property(euler_loading_properties, "applies_to")
-            ),
-            list(regular_modality_names),
-        )
-        entry["applies_to"] = applies_to
-
-    return entry
-
-
-_PROPERTY_NAMESPACE_KEYS = ("euler_loading", "euler_train")
-
-
-def _build_euler_loading_layers(*candidates: Any) -> list[Mapping[str, Any]]:
-    layers: list[Mapping[str, Any]] = []
-    for candidate in candidates:
-        if not isinstance(candidate, Mapping):
-            continue
-        for ns in _PROPERTY_NAMESPACE_KEYS:
-            namespaced = candidate.get(ns)
-            if isinstance(namespaced, Mapping):
-                layers.append(namespaced)
-    return layers
-
-
-def _resolve_euler_loading_property(
-    euler_loading_properties: list[Mapping[str, Any]],
-    key: str,
-) -> Any:
-    for layer in euler_loading_properties:
-        value = layer.get(key)
-        if value is not None:
-            return value
-    return None
-
-
-def _get_ds_crawler_descriptor(
-    *,
-    path: str,
-    index_output: Mapping[str, Any] | None,
-    cache: dict[str, dict[str, Any]],
-) -> dict[str, Any]:
-    if path not in cache:
-        cache[path] = _read_ds_crawler_descriptor(path=path, index_output=index_output)
-    return cache[path]
-
-
-def _read_ds_crawler_descriptor(
-    *,
-    path: str,
-    index_output: Mapping[str, Any] | None,
-) -> dict[str, Any]:
-    properties: dict[str, Any] = {}
-    descriptor: dict[str, Any] = {"properties": properties}
-
-    if isinstance(index_output, Mapping):
-        properties.update(_extract_ds_crawler_properties(index_output))
-        index_type = _as_non_empty_str(index_output.get("type"))
-        if index_type is not None:
-            descriptor["modality_type"] = index_type
-        hierarchy_regex = _as_non_empty_str(index_output.get("hierarchy_regex"))
-        if hierarchy_regex is not None:
-            descriptor["hierarchy_regex"] = hierarchy_regex
-
-    try:
-        cfg = load_dataset_config({"path": path})
-    except Exception:
-        return descriptor
-
-    cfg_properties = getattr(cfg, "properties", None)
-    if isinstance(cfg_properties, Mapping):
-        properties.update(dict(cfg_properties))
-
-    cfg_type = _as_non_empty_str(getattr(cfg, "type", None))
-    if cfg_type is not None:
-        descriptor["modality_type"] = cfg_type
-
-    cfg_hierarchy_regex = _as_non_empty_str(getattr(cfg, "hierarchy_regex", None))
-    if cfg_hierarchy_regex is not None:
-        descriptor["hierarchy_regex"] = cfg_hierarchy_regex
-
-    return descriptor
-
-
-def _extract_ds_crawler_properties(index_output: Mapping[str, Any]) -> dict[str, Any]:
-    return {
-        str(key): value
-        for key, value in index_output.items()
-        if key not in _DS_CRAWLER_STRUCTURAL_KEYS
-    }
-
-
-def _infer_used_as(*, name: str, is_hierarchical: bool) -> str | None:
-    lowered = name.lower()
-    if any(
-        token in lowered
-        for token in ("condition", "cond", "camera", "intrinsics", "extrinsics", "pose")
-    ):
-        return "condition"
-    if any(token in lowered for token in ("target", "gt", "label", "clear", "clean")):
-        return "target"
-    if any(token in lowered for token in ("input", "source", "src", "hazy", "noisy", "raw")):
-        return "input"
-    if is_hierarchical:
-        return "condition"
-    return None
-
-
-def _infer_modality_type(*, name: str, path: str) -> str | None:
-    lowered = f"{name} {path}".lower()
-    if any(token in lowered for token in ("rgb", "image", "img", "color", "colour")):
-        return "rgb"
-    if any(token in lowered for token in ("depth", "disparity")):
-        return "depth"
-    if any(token in lowered for token in ("segmentation", "segment", "mask", "semantic")):
-        return "segmentation"
-    return None
-
-
-def _infer_slot(
-    *,
-    name: str,
-    used_as: str | None,
-    modality_type: str | None,
-    euler_loading_properties: list[Mapping[str, Any]],
-) -> str | None:
-    if used_as is None:
-        return None
-    task = _as_non_empty_str(
-        _resolve_euler_loading_property(euler_loading_properties, "task")
-    )
-    leaf = modality_type or name
-    if task is not None:
-        return f"{task}.{used_as}.{leaf}"
-    return f"{used_as}.{leaf}"
-
-
-def _infer_hierarchy_scope_from_regex(value: Any) -> str | None:
-    regex = _as_non_empty_str(value)
-    if regex is None:
-        return None
-    try:
-        pattern = re.compile(regex)
-    except re.error:
-        return None
-
-    if not pattern.groupindex:
-        return None
-
-    ordered_names = [
-        name for name, _ in sorted(pattern.groupindex.items(), key=lambda item: item[1])
-    ]
-    if not ordered_names:
-        return None
-    return "_".join(ordered_names)
-
-
-def _infer_hierarchy_scope_from_levels(
-    levels: list[tuple[str, ...]] | None,
-) -> str | None:
-    if not levels:
-        return None
-
-    non_root_levels = [level for level in levels if level]
-    if not non_root_levels:
-        return "root"
-
-    max_depth = max(len(level) for level in non_root_levels)
-    deepest_levels = [level for level in non_root_levels if len(level) == max_depth]
-
-    tokens: list[str] = []
-    for idx in range(max_depth):
-        candidates = {
-            token
-            for token in (_extract_hierarchy_token(level[idx]) for level in deepest_levels)
-            if token is not None
-        }
-        if len(candidates) != 1:
-            return f"level_{max_depth}"
-        tokens.append(next(iter(candidates)))
-
-    if not tokens:
-        return f"level_{max_depth}"
-    return "_".join(tokens)
-
-
-def _extract_hierarchy_token(value: str) -> str | None:
-    for separator in (":", "=", "__", "_", "-"):
-        if separator not in value:
-            continue
-        prefix = value.split(separator, 1)[0].strip().lower()
-        if prefix and any(ch.isalpha() for ch in prefix):
-            return prefix
-    return None
-
-
-def _as_non_empty_str(value: Any) -> str | None:
-    if value is None:
-        return None
-    text = str(value).strip()
-    return text or None
-
-
-def _as_string_list(value: Any) -> list[str] | None:
-    if value is None:
-        return None
-    if isinstance(value, (list, tuple, set)):
-        parsed = [_as_non_empty_str(item) for item in value]
-        return [item for item in parsed if item is not None]
-
-    single = _as_non_empty_str(value)
-    if single is None:
-        return []
-    return [single]
-
-
-def _first_non_empty(*candidates: str | None) -> str | None:
-    for candidate in candidates:
-        if candidate is not None:
-            return candidate
-    return None
-
-
-def _first_non_empty_list(*candidates: list[str] | None) -> list[str]:
-    for candidate in candidates:
-        if candidate is not None:
-            return candidate
-    return []
-
-
-def create_dataset_writer_from_index(
-    *,
-    index_output: Mapping[str, Any],
-    root: str | os.PathLike[str],
-    zip: bool = False,
-) -> DatasetWriter | ZipDatasetWriter:
-    """Create a ds-crawler writer that mirrors an existing index's metadata."""
-    name = _as_non_empty_str(index_output.get("name")) or "dataset"
-    type_name = _as_non_empty_str(index_output.get("type")) or "other"
-    euler_train = index_output.get("euler_train")
-    if not isinstance(euler_train, Mapping):
-        raise ValueError(
-            "index_output must contain an 'euler_train' mapping to build a writer."
-        )
-
-    separator = _first_non_empty(
-        _as_non_empty_str(index_output.get("named_capture_group_value_separator")),
-        _as_non_empty_str(index_output.get("id_regex_join_char")),
-    )
-    properties = _extract_ds_crawler_properties(index_output)
-    writer_cls = ZipDatasetWriter if zip else DatasetWriter
-    return writer_cls(
-        root,
-        name=name,
-        type=type_name,
-        euler_train=dict(euler_train),
-        separator=separator,
-        **properties,
-    )
-
-
-def _resolve_output_destination(
-    *,
-    output_root: _OutputDestination | Mapping[str, _OutputDestination],
-    modality_name: str,
-) -> _OutputDestination:
-    if isinstance(output_root, (str, os.PathLike, DatasetWriter, ZipDatasetWriter)):
-        return output_root
-
-    destination = output_root.get(modality_name)
-    if destination is None:
-        raise KeyError(
-            f"Missing output destination for modality {modality_name!r}. "
-            "Provide a shared destination or a mapping containing this modality."
-        )
-    return destination
-
-
-def _destination_location(
-    destination: _OutputDestination,
-    relative_path: str,
-) -> str:
-    if isinstance(destination, ZipDatasetWriter):
-        return f"{destination.root}::{relative_path}"
-    if isinstance(destination, DatasetWriter):
-        return str(destination.root / relative_path)
-    return str(Path(destination) / relative_path)
-
-
-def _build_writer_full_id(*, relative_path: str, file_id: str) -> str:
-    parent_parts = Path(relative_path).parent.parts
-    hierarchy_parts = tuple(part for part in parent_parts if part not in ("", "."))
-    return "/" + "/".join(hierarchy_parts + (file_id,))
-
-
-def _destination_rel_exists(
-    destination: _OutputDestination,
-    relative_path: str,
-) -> bool:
-    seen_paths = getattr(destination, "__euler_loading_written_paths__", None)
-    if isinstance(seen_paths, set) and relative_path in seen_paths:
-        return True
-
-    if isinstance(destination, ZipDatasetWriter):
-        return False
-    if isinstance(destination, DatasetWriter):
-        return (destination.root / relative_path).exists()
-    return (Path(destination) / relative_path).exists()
-
-
-def _register_destination_rel_path(
-    destination: _OutputDestination,
-    relative_path: str,
-) -> None:
-    if not isinstance(destination, (DatasetWriter, ZipDatasetWriter)):
-        return
-    seen_paths = getattr(destination, "__euler_loading_written_paths__", None)
-    if not isinstance(seen_paths, set):
-        seen_paths = set()
-        setattr(destination, "__euler_loading_written_paths__", seen_paths)
-    seen_paths.add(relative_path)
-
-
-def _set_stream_name(stream: Any, basename: str) -> None:
-    if getattr(stream, "name", None):
-        return
-    try:
-        setattr(stream, "name", basename)
-    except Exception:
-        logger.debug("Could not assign basename %r to stream target.", basename)
-
-
-def _write_value_to_destination(
-    *,
-    destination: _OutputDestination,
-    writer: Callable[..., Any],
-    value: Any,
-    meta: dict[str, Any] | None,
-    full_id: str,
-    basename: str,
-    relative_path: str,
-    source_meta: Mapping[str, Any] | None,
-    create_dirs: bool,
-) -> str:
-    if isinstance(destination, ZipDatasetWriter):
-        if supports_stream_target(writer):
-            with destination.open(
-                full_id,
-                basename,
-                source_meta=dict(source_meta or {}),
-            ) as stream:
-                _set_stream_name(stream, basename)
-                writer(stream, value, meta)
-        else:
-            with tempfile.TemporaryDirectory() as tmpdir:
-                temp_path = Path(tmpdir) / basename
-                writer(str(temp_path), value, meta)
-                destination.write(
-                    full_id,
-                    basename,
-                    temp_path.read_bytes(),
-                    source_meta=dict(source_meta or {}),
-                )
-        _register_destination_rel_path(destination, relative_path)
-        return _destination_location(destination, relative_path)
-
-    if isinstance(destination, DatasetWriter):
-        target_path = destination.get_path(
-            full_id,
-            basename,
-            source_meta=dict(source_meta or {}),
-        )
-        writer(str(target_path), value, meta)
-        _register_destination_rel_path(destination, relative_path)
-        return str(target_path)
-
-    target_path = Path(destination) / relative_path
-    if create_dirs:
-        target_path.parent.mkdir(parents=True, exist_ok=True)
-    writer(str(target_path), value, meta)
-    return str(target_path)
