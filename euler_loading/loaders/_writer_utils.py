@@ -2,10 +2,22 @@
 
 from __future__ import annotations
 
+import json
+import os
 from pathlib import Path
-from typing import Any
+from typing import Any, BinaryIO
 
 import numpy as np
+from PIL import Image
+
+_IMAGE_FORMATS = {
+    ".png": "PNG",
+    ".jpg": "JPEG",
+    ".jpeg": "JPEG",
+    ".bmp": "BMP",
+    ".tif": "TIFF",
+    ".tiff": "TIFF",
+}
 
 
 def to_numpy(value: Any) -> np.ndarray:
@@ -85,6 +97,74 @@ def to_uint8(value: Any, *, scale_unit_range: bool) -> np.ndarray:
     return np.clip(np.rint(arr), 0, 255).astype(np.uint8)
 
 
-def ensure_parent(path: str) -> None:
-    """Create parent directories for *path*."""
-    Path(path).parent.mkdir(parents=True, exist_ok=True)
+def mark_stream_supported(func: Any) -> Any:
+    """Annotate a writer as supporting binary stream targets."""
+    setattr(func, "__euler_loading_supports_stream__", True)
+    return func
+
+
+def supports_stream_target(writer: Any) -> bool:
+    """Return whether *writer* accepts binary stream targets."""
+    return bool(getattr(writer, "__euler_loading_supports_stream__", False))
+
+
+def get_target_name(target: str | os.PathLike[str] | BinaryIO) -> str:
+    """Return a filename suitable for extension detection."""
+    name = getattr(target, "name", target)
+    return str(name)
+
+
+def ensure_parent(target: str | os.PathLike[str] | BinaryIO) -> None:
+    """Create parent directories for filesystem targets, no-op for streams."""
+    if isinstance(target, (str, os.PathLike)):
+        Path(target).parent.mkdir(parents=True, exist_ok=True)
+
+
+def save_image(
+    target: str | os.PathLike[str] | BinaryIO,
+    image: Image.Image,
+    *,
+    format: str | None = None,
+) -> None:
+    """Save a PIL image to a path or binary stream."""
+    ensure_parent(target)
+    if isinstance(target, (str, os.PathLike)):
+        image.save(target)
+        return
+
+    image_format = format
+    if image_format is None:
+        ext = os.path.splitext(get_target_name(target))[1].lower()
+        image_format = _IMAGE_FORMATS.get(ext)
+    if image_format is None:
+        raise ValueError(
+            "Binary image targets must expose a filename extension via "
+            "target.name or provide an explicit format."
+        )
+    image.save(target, format=image_format)
+
+
+def write_text(
+    target: str | os.PathLike[str] | BinaryIO,
+    text: str,
+    *,
+    encoding: str = "utf-8",
+) -> None:
+    """Write text to a filesystem path or binary stream."""
+    ensure_parent(target)
+    if isinstance(target, (str, os.PathLike)):
+        with open(target, "w", encoding=encoding) as f:
+            f.write(text)
+        return
+    target.write(text.encode(encoding))
+
+
+def write_json(
+    target: str | os.PathLike[str] | BinaryIO,
+    payload: Any,
+    *,
+    encoding: str = "utf-8",
+) -> None:
+    """Write JSON to a filesystem path or binary stream."""
+    text = json.dumps(payload)
+    write_text(target, text, encoding=encoding)

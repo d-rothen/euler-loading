@@ -41,11 +41,16 @@ from PIL import Image
 from euler_loading.loaders._annotations import modality_meta
 from euler_loading.loaders._writer_utils import (
     ensure_parent,
+    get_target_name,
+    mark_stream_supported,
+    save_image,
     to_bool_mask,
     to_hwc_rgb,
     to_hw,
     to_numpy,
     to_uint8,
+    write_json,
+    write_text,
 )
 
 _IMAGE_EXTENSIONS = frozenset({".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff"})
@@ -60,8 +65,7 @@ _NPZ_EXTENSION = ".npz"
 
 def _get_name(path: Union[str, BinaryIO]) -> str:
     """Return a filename suitable for extension detection."""
-    name = getattr(path, "name", path)
-    return str(name)
+    return get_target_name(path)
 
 
 def _load_image_rgb(path: Union[str, BinaryIO]) -> np.ndarray:
@@ -177,15 +181,16 @@ def read_intrinsics(path: Union[str, BinaryIO], meta: dict[str, Any] | None = No
 # ---------------------------------------------------------------------------
 
 
-def write_rgb(path: str, value: Any, meta: dict[str, Any] | None = None) -> None:
+@mark_stream_supported
+def write_rgb(path: Union[str, BinaryIO], value: Any, meta: dict[str, Any] | None = None) -> None:
     """Write RGB data to image or NumPy formats based on extension."""
     ensure_parent(path)
-    ext = os.path.splitext(path)[1].lower()
+    ext = os.path.splitext(_get_name(path))[1].lower()
     rgb = to_hwc_rgb(value, name="rgb")
 
     if ext in _IMAGE_EXTENSIONS:
         arr = to_uint8(rgb, scale_unit_range=True)
-        Image.fromarray(arr, mode="RGB").save(path)
+        save_image(path, Image.fromarray(arr, mode="RGB"))
         return
 
     rgb_f32 = rgb.astype(np.float32)
@@ -199,10 +204,11 @@ def write_rgb(path: str, value: Any, meta: dict[str, Any] | None = None) -> None
     raise ValueError(f"Unsupported RGB output extension: {ext}")
 
 
-def write_depth(path: str, value: Any, meta: dict[str, Any] | None = None) -> None:
+@mark_stream_supported
+def write_depth(path: Union[str, BinaryIO], value: Any, meta: dict[str, Any] | None = None) -> None:
     """Write depth data to image or NumPy formats based on extension."""
     ensure_parent(path)
-    ext = os.path.splitext(path)[1].lower()
+    ext = os.path.splitext(_get_name(path))[1].lower()
     depth = to_hw(value, name="depth")
 
     if ext in _IMAGE_EXTENSIONS:
@@ -213,10 +219,10 @@ def write_depth(path: str, value: Any, meta: dict[str, Any] | None = None) -> No
             and float(depth_f32.min()) >= 0.0
             and float(depth_f32.max()) <= 255.0
         ):
-            Image.fromarray(depth_f32.astype(np.uint8), mode="L").save(path)
+            save_image(path, Image.fromarray(depth_f32.astype(np.uint8), mode="L"))
             return
         depth_u16 = np.clip(np.rint(depth_f32), 0, 65535).astype(np.uint16)
-        Image.fromarray(depth_u16, mode="I;16").save(path)
+        save_image(path, Image.fromarray(depth_u16, mode="I;16"), format="PNG")
         return
 
     depth_f32 = depth.astype(np.float32)
@@ -230,10 +236,11 @@ def write_depth(path: str, value: Any, meta: dict[str, Any] | None = None) -> No
     raise ValueError(f"Unsupported depth output extension: {ext}")
 
 
-def write_sky_mask(path: str, value: Any, meta: dict[str, Any] | None = None) -> None:
+@mark_stream_supported
+def write_sky_mask(path: Union[str, BinaryIO], value: Any, meta: dict[str, Any] | None = None) -> None:
     """Write a sky mask using either RGB encoding or NumPy formats."""
     ensure_parent(path)
-    ext = os.path.splitext(path)[1].lower()
+    ext = os.path.splitext(_get_name(path))[1].lower()
     mask = to_bool_mask(value)
 
     if ext in _IMAGE_EXTENSIONS:
@@ -243,7 +250,7 @@ def write_sky_mask(path: str, value: Any, meta: dict[str, Any] | None = None) ->
             raise ValueError("meta['sky_mask'] must be a 3-element RGB color")
         rgb = np.zeros(mask.shape + (3,), dtype=np.uint8)
         rgb[mask] = sky_color
-        Image.fromarray(rgb, mode="RGB").save(path)
+        save_image(path, Image.fromarray(rgb, mode="RGB"))
         return
 
     if ext == _NPY_EXTENSION:
@@ -256,17 +263,17 @@ def write_sky_mask(path: str, value: Any, meta: dict[str, Any] | None = None) ->
     raise ValueError(f"Unsupported sky-mask output extension: {ext}")
 
 
-def write_intrinsics(path: str, value: Any, meta: dict[str, Any] | None = None) -> None:
+@mark_stream_supported
+def write_intrinsics(path: Union[str, BinaryIO], value: Any, meta: dict[str, Any] | None = None) -> None:
     """Write a 3x3 intrinsics matrix to text, JSON, or NumPy format."""
     ensure_parent(path)
-    ext = os.path.splitext(path)[1].lower()
+    ext = os.path.splitext(_get_name(path))[1].lower()
     K = to_numpy(value).astype(np.float32)
     if K.shape != (3, 3):
         raise ValueError(f"intrinsics must have shape (3, 3), got {K.shape}")
 
     if ext == ".json":
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump({"intrinsics": K.tolist()}, f)
+        write_json(path, {"intrinsics": K.tolist()})
         return
     if ext == _NPY_EXTENSION:
         np.save(path, K)
@@ -275,4 +282,5 @@ def write_intrinsics(path: str, value: Any, meta: dict[str, Any] | None = None) 
         np.savez_compressed(path, data=K)
         return
 
-    np.savetxt(path, K, fmt="%.9g")
+    text = "\n".join(" ".join(f"{entry:.9g}" for entry in row) for row in K) + "\n"
+    write_text(path, text)

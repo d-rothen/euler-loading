@@ -2,10 +2,15 @@
 
 from __future__ import annotations
 
+import io
+import json
 from typing import Any
 from unittest.mock import patch
+import zipfile
 
+import numpy as np
 import pytest
+from PIL import Image
 
 from euler_loading import Modality, MultiModalDataset, resolve_writer_module
 from euler_loading.loaders.gpu import vkitti2 as gpu_vkitti2
@@ -14,18 +19,28 @@ from .conftest import dummy_loader
 
 
 def _flat_index(
-    modality: str,
+    extension: str,
     file_ids: list[str],
     *,
+    name: str | None = None,
+    type_name: str | None = None,
+    euler_train: dict[str, Any] | None = None,
     euler_loading: dict[str, Any] | None = None,
     meta: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    resolved_type = type_name or extension
     index: dict[str, Any] = {
+        "name": name or resolved_type,
+        "type": resolved_type,
+        "euler_train": euler_train or {
+            "used_as": "input",
+            "modality_type": resolved_type,
+        },
         "dataset": {
             "files": [
                 {
                     "id": fid,
-                    "path": f"scene/{fid}.{modality}",
+                    "path": f"scene/{fid}.{extension}",
                     "path_properties": {},
                     "basename_properties": {},
                 }
@@ -152,3 +167,110 @@ class TestWriteSample:
 
         with pytest.raises(ValueError, match="No writer configured"):
             ds.write_sample(0, {"depth": "prediction"}, "/tmp/out")
+
+    def test_write_sample_with_dataset_writer_destination(self, tmp_path):
+        calls: list[tuple[str, Any, dict[str, Any] | None]] = []
+
+        def writer(path: str, value: Any, meta: dict[str, Any] | None = None) -> None:
+            calls.append((path, value, meta))
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(str(value))
+
+        index = _flat_index(
+            "txt",
+            ["f001"],
+            euler_loading={"loader": "generic_dense_depth", "function": "rgb"},
+            meta={"unit": "meters"},
+        )
+
+        with patch(
+            "euler_loading.dataset.index_dataset_from_path",
+            return_value=index,
+        ):
+            ds = MultiModalDataset(
+                modalities={
+                    "depth": Modality(
+                        "/data/depth", loader=dummy_loader, writer=writer
+                    )
+                }
+            )
+
+        output_writer = ds.create_output_writer("depth", tmp_path / "out")
+        written = ds.write_sample(0, {"depth": "prediction"}, output_writer)
+        output_writer.save_index()
+
+        expected_path = tmp_path / "out" / "scene" / "f001.txt"
+        assert written["depth"] == str(expected_path)
+        assert expected_path.read_text() == "prediction"
+        assert calls == [(str(expected_path), "prediction", {"unit": "meters"})]
+
+        with open(tmp_path / "out" / ".ds_crawler" / "output.json") as f:
+            output_index = json.load(f)
+        assert output_index["euler_loading"]["function"] == "rgb"
+
+    def test_write_sample_with_zip_dataset_writer_destination(self, tmp_path):
+        def writer(path: str, value: Any, meta: dict[str, Any] | None = None) -> None:
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(str(value))
+
+        index = _flat_index("txt", ["f001"])
+
+        with patch(
+            "euler_loading.dataset.index_dataset_from_path",
+            return_value=index,
+        ):
+            ds = MultiModalDataset(
+                modalities={
+                    "depth": Modality(
+                        "/data/depth", loader=dummy_loader, writer=writer
+                    )
+                }
+            )
+
+        output_writer = ds.create_output_writer("depth", tmp_path / "out.zip", zip=True)
+        written = ds.write_sample(0, {"depth": "prediction"}, output_writer)
+        output_writer.save_index()
+
+        assert written["depth"] == f"{tmp_path / 'out.zip'}::scene/f001.txt"
+
+        with zipfile.ZipFile(tmp_path / "out.zip") as zf:
+            with zf.open("scene/f001.txt") as entry:
+                assert entry.read().decode("utf-8") == "prediction"
+            with zf.open(".ds_crawler/output.json") as entry:
+                output_index = json.load(io.TextIOWrapper(entry, encoding="utf-8"))
+        assert output_index["type"] == "txt"
+
+    def test_write_sample_with_stream_writer_to_zip_destination(self, tmp_path):
+        def writer(target: Any, value: Any, meta: dict[str, Any] | None = None) -> None:
+            assert not isinstance(target, str)
+            image = Image.fromarray(value, mode="RGB")
+            image.save(target, format="PNG")
+
+        writer.__euler_loading_supports_stream__ = True
+
+        index = _flat_index(
+            "png",
+            ["f001"],
+            type_name="rgb",
+            meta={"range": [0, 255]},
+        )
+
+        with patch(
+            "euler_loading.dataset.index_dataset_from_path",
+            return_value=index,
+        ):
+            ds = MultiModalDataset(
+                modalities={
+                    "rgb": Modality("/data/rgb", loader=dummy_loader, writer=writer)
+                }
+            )
+
+        output_writer = ds.create_output_writer("rgb", tmp_path / "rgb.zip", zip=True)
+        image = np.full((4, 5, 3), 64, dtype=np.uint8)
+        ds.write_sample(0, {"rgb": image}, output_writer)
+        output_writer.save_index()
+
+        with zipfile.ZipFile(tmp_path / "rgb.zip") as zf:
+            with zf.open("scene/f001.png") as entry:
+                loaded = np.array(Image.open(io.BytesIO(entry.read())))
+        np.testing.assert_array_equal(loaded, image)

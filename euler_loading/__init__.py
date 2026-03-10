@@ -1,6 +1,7 @@
 """euler-loading: Multi-modal PyTorch dataloader using ds-crawler indices."""
 
 from .dataset import (
+    create_dataset_writer_from_index,
     Modality,
     MultiModalDataset,
     resolve_loader_module,
@@ -16,6 +17,7 @@ __all__ = [
     "FileRecord",
     "Modality",
     "MultiModalDataset",
+    "create_dataset_writer_from_index",
     "resolve_loader_module",
     "resolve_writer_module",
 ]

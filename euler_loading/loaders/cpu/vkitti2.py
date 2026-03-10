@@ -38,11 +38,14 @@ from PIL import Image
 from euler_loading.loaders._annotations import modality_meta
 from euler_loading.loaders._writer_utils import (
     ensure_parent,
+    mark_stream_supported,
+    save_image,
     to_bool_mask,
     to_hwc_rgb,
     to_hw,
     to_numpy,
     to_uint8,
+    write_text,
 )
 
 # ---------------------------------------------------------------------------
@@ -195,36 +198,41 @@ def read_extrinsics(path: Union[str, BinaryIO], meta: dict[str, Any] | None = No
 # ---------------------------------------------------------------------------
 
 
-def write_rgb(path: str, value: Any, meta: dict[str, Any] | None = None) -> None:
+@mark_stream_supported
+def write_rgb(path: Union[str, BinaryIO], value: Any, meta: dict[str, Any] | None = None) -> None:
     """Write an RGB array/tensor to PNG."""
     ensure_parent(path)
     arr = to_uint8(to_hwc_rgb(value, name="rgb"), scale_unit_range=True)
-    Image.fromarray(arr, mode="RGB").save(path)
+    save_image(path, Image.fromarray(arr, mode="RGB"), format="PNG")
 
 
-def write_depth(path: str, value: Any, meta: dict[str, Any] | None = None) -> None:
+@mark_stream_supported
+def write_depth(path: Union[str, BinaryIO], value: Any, meta: dict[str, Any] | None = None) -> None:
     """Write a depth map in VKITTI2 encoding (uint16 centimetres PNG)."""
     ensure_parent(path)
     depth_m = to_hw(value, name="depth").astype(np.float32)
     depth_cm = np.clip(np.rint(depth_m * 100.0), 0, 65535).astype(np.uint16)
-    Image.fromarray(depth_cm, mode="I;16").save(path)
+    save_image(path, Image.fromarray(depth_cm, mode="I;16"), format="PNG")
 
 
-def write_class_segmentation(path: str, value: Any, meta: dict[str, Any] | None = None) -> None:
+@mark_stream_supported
+def write_class_segmentation(path: Union[str, BinaryIO], value: Any, meta: dict[str, Any] | None = None) -> None:
     """Write an RGB-encoded class segmentation map."""
     ensure_parent(path)
     arr = to_uint8(to_hwc_rgb(value, name="class_segmentation"), scale_unit_range=False)
-    Image.fromarray(arr, mode="RGB").save(path)
+    save_image(path, Image.fromarray(arr, mode="RGB"), format="PNG")
 
 
-def write_instance_segmentation(path: str, value: Any, meta: dict[str, Any] | None = None) -> None:
+@mark_stream_supported
+def write_instance_segmentation(path: Union[str, BinaryIO], value: Any, meta: dict[str, Any] | None = None) -> None:
     """Write an RGB-encoded instance segmentation map."""
     ensure_parent(path)
     arr = to_uint8(to_hwc_rgb(value, name="instance_segmentation"), scale_unit_range=False)
-    Image.fromarray(arr, mode="RGB").save(path)
+    save_image(path, Image.fromarray(arr, mode="RGB"), format="PNG")
 
 
-def write_sky_mask(path: str, value: Any, meta: dict[str, Any] | None = None) -> None:
+@mark_stream_supported
+def write_sky_mask(path: Union[str, BinaryIO], value: Any, meta: dict[str, Any] | None = None) -> None:
     """Write a sky-mask image in VKITTI2-compatible RGB encoding."""
     ensure_parent(path)
     mask = to_bool_mask(value)
@@ -234,33 +242,37 @@ def write_sky_mask(path: str, value: Any, meta: dict[str, Any] | None = None) ->
         raise ValueError("meta['sky_color'] must be a 3-element RGB color")
     arr = np.zeros(mask.shape + (3,), dtype=np.uint8)
     arr[mask] = sky_color
-    Image.fromarray(arr, mode="RGB").save(path)
+    save_image(path, Image.fromarray(arr, mode="RGB"), format="PNG")
 
 
-def write_scene_flow(path: str, value: Any, meta: dict[str, Any] | None = None) -> None:
+@mark_stream_supported
+def write_scene_flow(path: Union[str, BinaryIO], value: Any, meta: dict[str, Any] | None = None) -> None:
     """Write a scene-flow map to PNG as RGB in [0, 255]."""
     ensure_parent(path)
     arr = to_uint8(to_hwc_rgb(value, name="scene_flow"), scale_unit_range=True)
-    Image.fromarray(arr, mode="RGB").save(path)
+    save_image(path, Image.fromarray(arr, mode="RGB"), format="PNG")
 
 
-def write_intrinsics(path: str, value: Any, meta: dict[str, Any] | None = None) -> None:
+@mark_stream_supported
+def write_intrinsics(path: Union[str, BinaryIO], value: Any, meta: dict[str, Any] | None = None) -> None:
     """Write a 3x3 camera intrinsic matrix in VKITTI2 text format."""
     ensure_parent(path)
     K = to_numpy(value).astype(np.float32)
     if K.shape != (3, 3):
         raise ValueError(f"intrinsics must have shape (3, 3), got {K.shape}")
 
-    with open(path, "w", encoding="utf-8") as f:
-        f.write("frame cameraID K[0,0] K[1,1] K[0,2] K[1,2]\n")
-        f.write(
-            f"0 0 {float(K[0, 0]):.6f} {float(K[1, 1]):.6f} "
-            f"{float(K[0, 2]):.6f} {float(K[1, 2]):.6f}\n"
-        )
+    write_text(
+        path,
+        "frame cameraID K[0,0] K[1,1] K[0,2] K[1,2]\n"
+        f"0 0 {float(K[0, 0]):.6f} {float(K[1, 1]):.6f} "
+        f"{float(K[0, 2]):.6f} {float(K[1, 2]):.6f}\n",
+    )
 
 
-def write_extrinsics(path: str, value: Any, meta: dict[str, Any] | None = None) -> None:
+@mark_stream_supported
+def write_extrinsics(path: Union[str, BinaryIO], value: Any, meta: dict[str, Any] | None = None) -> None:
     """Write an extrinsics matrix to whitespace-delimited text."""
     ensure_parent(path)
     arr = to_numpy(value).astype(np.float32)
-    np.savetxt(path, arr, fmt="%.9g")
+    text = "\n".join(" ".join(f"{entry:.9g}" for entry in row) for row in arr) + "\n"
+    write_text(path, text)

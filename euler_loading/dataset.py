@@ -6,6 +6,7 @@ import logging
 import os
 from pathlib import Path
 import re
+import tempfile
 import zipfile
 from collections.abc import Mapping
 from dataclasses import dataclass, field
@@ -18,7 +19,12 @@ except ImportError:
     class _BaseDataset:  # type: ignore[no-redef]
         """Fallback when PyTorch is not installed."""
 
-from ds_crawler import index_dataset_from_path, load_dataset_config
+from ds_crawler import (
+    DatasetWriter,
+    ZipDatasetWriter,
+    index_dataset_from_path,
+    load_dataset_config,
+)
 from ds_crawler.zip_utils import get_zip_root_prefix, is_zip_path
 
 from .indexing import (
@@ -27,6 +33,7 @@ from .indexing import (
     collect_hierarchical_files,
     match_hierarchical_files,
 )
+from .loaders._writer_utils import supports_stream_target
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +55,13 @@ _LOADER_MODULES: dict[str, str] = {
     "real_drive_sim": "euler_loading.loaders.gpu.real_drive_sim",
     "generic_dense_depth": "euler_loading.loaders.gpu.generic_dense_depth",
 }
+
+_OutputDestination = (
+    str
+    | os.PathLike[str]
+    | DatasetWriter
+    | ZipDatasetWriter
+)
 
 
 def resolve_loader_module(name: str) -> ModuleType:
@@ -216,7 +230,7 @@ class Modality:
                 predefined loader.
         writer: Optional callable that writes a loaded/predicted modality back
                 to disk. Expected signature is
-                ``(path: str, value: Any, meta: dict[str, Any] | None) -> None``.
+                ``(target: str | BinaryIO, value: Any, meta: dict[str, Any] | None) -> None``.
                 When *None* (the default), the writer is resolved automatically
                 from ``euler_loading.loader`` + ``euler_loading.function`` using
                 writer naming conventions (e.g. ``write_depth`` for ``depth``,
@@ -501,6 +515,29 @@ class MultiModalDataset(_BaseDataset):
         """Return the metadata dict for a given modality name."""
         return self._index_outputs.get(modality_name, {}).get("meta", {})
 
+    def get_modality_index(self, modality_name: str) -> dict[str, Any]:
+        """Return the cached ds-crawler index for a modality."""
+        if modality_name in self._modalities:
+            return dict(self._index_outputs[modality_name])
+        if modality_name in self._hierarchical_modalities:
+            return dict(self._hierarchical_index_outputs[modality_name])
+        raise KeyError(f"Unknown modality {modality_name!r}")
+
+    def create_output_writer(
+        self,
+        modality_name: str,
+        root: str | os.PathLike[str],
+        *,
+        zip: bool = False,
+    ) -> DatasetWriter | ZipDatasetWriter:
+        """Create a ds-crawler writer preconfigured from a modality's index."""
+        index_output = self.get_modality_index(modality_name)
+        return create_dataset_writer_from_index(
+            index_output=index_output,
+            root=root,
+            zip=zip,
+        )
+
     def get_writer(self, modality_name: str) -> Callable[..., Any]:
         """Return the resolved writer callable for *modality_name*.
 
@@ -527,12 +564,12 @@ class MultiModalDataset(_BaseDataset):
         self,
         sample_index: int,
         outputs: Mapping[str, Any],
-        output_root: str | os.PathLike[str] | Mapping[str, str | os.PathLike[str]],
+        output_root: _OutputDestination | Mapping[str, _OutputDestination],
         *,
         create_dirs: bool = True,
         overwrite: bool = True,
     ) -> dict[str, str]:
-        """Write model outputs for one sample to disk.
+        """Write model outputs for one sample to disk or a dataset writer.
 
         Output filenames are derived from ds-crawler relative paths, preserving
         the source dataset hierarchy under *output_root*.
@@ -540,13 +577,19 @@ class MultiModalDataset(_BaseDataset):
         Args:
             sample_index: Index in this dataset.
             outputs: Mapping of modality name to predicted/loaded value.
-            output_root: Either a single root directory for all modalities, or
-                a per-modality mapping ``{modality_name: root_dir}``.
-            create_dirs: If true, create parent directories as needed.
-            overwrite: If false, raise when a target file already exists.
+            output_root: Either a single destination for all modalities, or a
+                per-modality mapping. Destinations can be filesystem roots,
+                :class:`ds_crawler.DatasetWriter`, or
+                :class:`ds_crawler.ZipDatasetWriter`.
+            create_dirs: If true, create parent directories as needed for
+                filesystem destinations.
+            overwrite: If false, raise when a target file already exists or a
+                duplicate writer entry would be created.
 
         Returns:
-            Mapping ``{modality_name: written_absolute_path}``.
+            Mapping ``{modality_name: written_location}``. For filesystem
+            destinations this is an absolute path; for zip destinations it is
+            ``"<archive>.zip::<relative/path>"``.
         """
         if sample_index < 0 or sample_index >= len(self):
             raise IndexError(
@@ -564,21 +607,32 @@ class MultiModalDataset(_BaseDataset):
                 )
 
             writer = self.get_writer(modality_name)
-            modality_root = _resolve_output_root(
+            destination = _resolve_output_destination(
                 output_root=output_root, modality_name=modality_name
             )
             record = self._lookups[modality_name][sample_id]
-            target_path = Path(modality_root) / record.file_entry["path"]
-
-            if create_dirs:
-                target_path.parent.mkdir(parents=True, exist_ok=True)
-
-            if not overwrite and target_path.exists():
-                raise FileExistsError(str(target_path))
-
             modality_meta = self._index_outputs[modality_name].get("meta")
-            writer(str(target_path), value, modality_meta)
-            written_paths[modality_name] = str(target_path)
+            basename = Path(record.file_entry["path"]).name
+            relative_path = record.file_entry["path"]
+            full_id = _build_writer_full_id(
+                relative_path=relative_path,
+                file_id=record.file_entry["id"],
+            )
+
+            if _destination_rel_exists(destination, relative_path) and not overwrite:
+                raise FileExistsError(_destination_location(destination, relative_path))
+
+            written_paths[modality_name] = _write_value_to_destination(
+                destination=destination,
+                writer=writer,
+                value=value,
+                meta=modality_meta,
+                full_id=full_id,
+                basename=basename,
+                relative_path=relative_path,
+                source_meta=record.file_entry,
+                create_dirs=create_dirs,
+            )
 
         return written_paths
 
@@ -997,18 +1051,154 @@ def _first_non_empty_list(*candidates: list[str] | None) -> list[str]:
     return []
 
 
-def _resolve_output_root(
+def create_dataset_writer_from_index(
     *,
-    output_root: str | os.PathLike[str] | Mapping[str, str | os.PathLike[str]],
-    modality_name: str,
-) -> str:
-    if isinstance(output_root, (str, os.PathLike)):
-        return str(output_root)
-
-    root = output_root.get(modality_name)
-    if root is None:
-        raise KeyError(
-            f"Missing output root for modality {modality_name!r}. "
-            "Provide a string root for all modalities or a mapping containing this modality."
+    index_output: Mapping[str, Any],
+    root: str | os.PathLike[str],
+    zip: bool = False,
+) -> DatasetWriter | ZipDatasetWriter:
+    """Create a ds-crawler writer that mirrors an existing index's metadata."""
+    name = _as_non_empty_str(index_output.get("name")) or "dataset"
+    type_name = _as_non_empty_str(index_output.get("type")) or "other"
+    euler_train = index_output.get("euler_train")
+    if not isinstance(euler_train, Mapping):
+        raise ValueError(
+            "index_output must contain an 'euler_train' mapping to build a writer."
         )
-    return str(root)
+
+    separator = _first_non_empty(
+        _as_non_empty_str(index_output.get("named_capture_group_value_separator")),
+        _as_non_empty_str(index_output.get("id_regex_join_char")),
+    )
+    properties = _extract_ds_crawler_properties(index_output)
+    writer_cls = ZipDatasetWriter if zip else DatasetWriter
+    return writer_cls(
+        root,
+        name=name,
+        type=type_name,
+        euler_train=dict(euler_train),
+        separator=separator,
+        **properties,
+    )
+
+
+def _resolve_output_destination(
+    *,
+    output_root: _OutputDestination | Mapping[str, _OutputDestination],
+    modality_name: str,
+) -> _OutputDestination:
+    if isinstance(output_root, (str, os.PathLike, DatasetWriter, ZipDatasetWriter)):
+        return output_root
+
+    destination = output_root.get(modality_name)
+    if destination is None:
+        raise KeyError(
+            f"Missing output destination for modality {modality_name!r}. "
+            "Provide a shared destination or a mapping containing this modality."
+        )
+    return destination
+
+
+def _destination_location(
+    destination: _OutputDestination,
+    relative_path: str,
+) -> str:
+    if isinstance(destination, ZipDatasetWriter):
+        return f"{destination.root}::{relative_path}"
+    if isinstance(destination, DatasetWriter):
+        return str(destination.root / relative_path)
+    return str(Path(destination) / relative_path)
+
+
+def _build_writer_full_id(*, relative_path: str, file_id: str) -> str:
+    parent_parts = Path(relative_path).parent.parts
+    hierarchy_parts = tuple(part for part in parent_parts if part not in ("", "."))
+    return "/" + "/".join(hierarchy_parts + (file_id,))
+
+
+def _destination_rel_exists(
+    destination: _OutputDestination,
+    relative_path: str,
+) -> bool:
+    seen_paths = getattr(destination, "__euler_loading_written_paths__", None)
+    if isinstance(seen_paths, set) and relative_path in seen_paths:
+        return True
+
+    if isinstance(destination, ZipDatasetWriter):
+        return False
+    if isinstance(destination, DatasetWriter):
+        return (destination.root / relative_path).exists()
+    return (Path(destination) / relative_path).exists()
+
+
+def _register_destination_rel_path(
+    destination: _OutputDestination,
+    relative_path: str,
+) -> None:
+    if not isinstance(destination, (DatasetWriter, ZipDatasetWriter)):
+        return
+    seen_paths = getattr(destination, "__euler_loading_written_paths__", None)
+    if not isinstance(seen_paths, set):
+        seen_paths = set()
+        setattr(destination, "__euler_loading_written_paths__", seen_paths)
+    seen_paths.add(relative_path)
+
+
+def _set_stream_name(stream: Any, basename: str) -> None:
+    if getattr(stream, "name", None):
+        return
+    try:
+        setattr(stream, "name", basename)
+    except Exception:
+        logger.debug("Could not assign basename %r to stream target.", basename)
+
+
+def _write_value_to_destination(
+    *,
+    destination: _OutputDestination,
+    writer: Callable[..., Any],
+    value: Any,
+    meta: dict[str, Any] | None,
+    full_id: str,
+    basename: str,
+    relative_path: str,
+    source_meta: Mapping[str, Any] | None,
+    create_dirs: bool,
+) -> str:
+    if isinstance(destination, ZipDatasetWriter):
+        if supports_stream_target(writer):
+            with destination.open(
+                full_id,
+                basename,
+                source_meta=dict(source_meta or {}),
+            ) as stream:
+                _set_stream_name(stream, basename)
+                writer(stream, value, meta)
+        else:
+            with tempfile.TemporaryDirectory() as tmpdir:
+                temp_path = Path(tmpdir) / basename
+                writer(str(temp_path), value, meta)
+                destination.write(
+                    full_id,
+                    basename,
+                    temp_path.read_bytes(),
+                    source_meta=dict(source_meta or {}),
+                )
+        _register_destination_rel_path(destination, relative_path)
+        return _destination_location(destination, relative_path)
+
+    if isinstance(destination, DatasetWriter):
+        target_path = destination.get_path(
+            full_id,
+            basename,
+            source_meta=dict(source_meta or {}),
+        )
+        writer(str(target_path), value, meta)
+        _register_destination_rel_path(destination, relative_path)
+        return str(target_path)
+
+    target_path = Path(destination) / relative_path
+    if create_dirs:
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+    writer(str(target_path), value, meta)
+    return str(target_path)

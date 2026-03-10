@@ -37,11 +37,14 @@ from PIL import Image
 from euler_loading.loaders._annotations import modality_meta
 from euler_loading.loaders._writer_utils import (
     ensure_parent,
+    mark_stream_supported,
+    save_image,
     to_bool_mask,
     to_hwc_rgb,
     to_hw,
     to_numpy,
     to_uint8,
+    write_json,
 )
 
 # ---------------------------------------------------------------------------
@@ -236,31 +239,35 @@ def read_intrinsics(path: Union[str, BinaryIO], meta: dict[str, Any] | None = No
 # ---------------------------------------------------------------------------
 
 
-def write_rgb(path: str, value: Any, meta: dict[str, Any] | None = None) -> None:
+@mark_stream_supported
+def write_rgb(path: Union[str, BinaryIO], value: Any, meta: dict[str, Any] | None = None) -> None:
     """Write an RGB tensor/array to PNG."""
     ensure_parent(path)
     arr = to_uint8(to_hwc_rgb(value, name="rgb"), scale_unit_range=True)
-    Image.fromarray(arr, mode="RGB").save(path)
+    save_image(path, Image.fromarray(arr, mode="RGB"), format="PNG")
 
 
-def write_depth(path: str, value: Any, meta: dict[str, Any] | None = None) -> None:
+@mark_stream_supported
+def write_depth(path: Union[str, BinaryIO], value: Any, meta: dict[str, Any] | None = None) -> None:
     """Write a depth map to a Real Drive Sim ``.npz`` file under key ``data``."""
     ensure_parent(path)
     depth = to_hw(value, name="depth").astype(np.float32)
     np.savez_compressed(path, data=depth)
 
 
-def write_class_segmentation(path: str, value: Any, meta: dict[str, Any] | None = None) -> None:
+@mark_stream_supported
+def write_class_segmentation(path: Union[str, BinaryIO], value: Any, meta: dict[str, Any] | None = None) -> None:
     """Write class IDs as an RGBA PNG with IDs stored in the red channel."""
     ensure_parent(path)
     class_ids = np.clip(to_hw(value, name="class_segmentation"), 0, 255).astype(np.uint8)
     rgba = np.zeros(class_ids.shape + (4,), dtype=np.uint8)
     rgba[:, :, 0] = class_ids
     rgba[:, :, 3] = 255
-    Image.fromarray(rgba, mode="RGBA").save(path)
+    save_image(path, Image.fromarray(rgba, mode="RGBA"), format="PNG")
 
 
-def write_sky_mask(path: str, value: Any, meta: dict[str, Any] | None = None) -> None:
+@mark_stream_supported
+def write_sky_mask(path: Union[str, BinaryIO], value: Any, meta: dict[str, Any] | None = None) -> None:
     """Write a sky mask as a class-ID PNG compatible with :func:`sky_mask`."""
     sky_class_id = int((meta or {}).get("sky_class_id", _SKY_CLASS_ID))
     mask = to_bool_mask(value)
@@ -341,8 +348,9 @@ def _extrinsics_from_matrix(T: np.ndarray) -> dict[str, dict[str, float]]:
     }
 
 
+@mark_stream_supported
 def write_calibration(
-    path: str,
+    path: Union[str, BinaryIO],
     value: Any,
     meta: dict[str, Any] | None = None,
 ) -> None:
@@ -383,12 +391,12 @@ def write_calibration(
         "intrinsics": intrinsics,
         "extrinsics": extrinsics,
     }
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(payload, f)
+    write_json(path, payload)
 
 
+@mark_stream_supported
 def write_all_intrinsics(
-    path: str,
+    path: Union[str, BinaryIO],
     value: Any,
     meta: dict[str, Any] | None = None,
 ) -> None:
@@ -423,11 +431,11 @@ def write_all_intrinsics(
         "intrinsics": intrinsics,
         "extrinsics": extrinsics,
     }
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(payload, f)
+    write_json(path, payload)
 
 
-def write_intrinsics(path: str, value: Any, meta: dict[str, Any] | None = None) -> None:
+@mark_stream_supported
+def write_intrinsics(path: Union[str, BinaryIO], value: Any, meta: dict[str, Any] | None = None) -> None:
     """Write a single-sensor intrinsics matrix as calibration JSON."""
     sensor_name = str((meta or {}).get("sensor", "CS_FRONT"))
     write_all_intrinsics(path, {sensor_name: value}, meta=meta)
