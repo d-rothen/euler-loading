@@ -9,10 +9,13 @@ import pytest
 import torch
 
 from euler_loading.loaders import vkitti2
+from euler_loading.loaders import generic as generic_top
 from euler_loading.loaders.gpu import vkitti2 as gpu_vkitti2
 from euler_loading.loaders.gpu import real_drive_sim as gpu_rds
+from euler_loading.loaders.gpu import generic as gpu_generic
 from euler_loading.loaders.cpu import vkitti2 as cpu_vkitti2
 from euler_loading.loaders.cpu import real_drive_sim as cpu_rds
+from euler_loading.loaders.cpu import generic as cpu_generic
 
 # ---------------------------------------------------------------------------
 # Shared fixtures
@@ -476,3 +479,162 @@ class TestRDSWriters:
         loaded = gpu_rds.sky_mask(str(path))
 
         assert torch.equal(loaded, mask)
+
+
+# ---------------------------------------------------------------------------
+# Generic spherical_map loader tests
+# ---------------------------------------------------------------------------
+
+GENERIC_LOADER_NAMES = ["spherical_map"]
+GENERIC_WRITER_NAMES = ["write_spherical_map"]
+
+
+@pytest.fixture()
+def spherical_npy_path(tmp_path):
+    """Write a small (3, 4, 5) float32 .npy file."""
+    arr = np.random.default_rng(42).random((3, 4, 5), dtype=np.float32)
+    p = tmp_path / "spherical.npy"
+    np.save(str(p), arr)
+    return str(p), arr
+
+
+@pytest.fixture()
+def spherical_npz_path(tmp_path):
+    """Write a small (3, 4, 5) float32 .npz file."""
+    arr = np.random.default_rng(42).random((3, 4, 5), dtype=np.float32)
+    p = tmp_path / "spherical.npz"
+    np.savez_compressed(str(p), data=arr)
+    return str(p), arr
+
+
+class TestGenericModuleContents:
+    """The generic module exposes the expected loader and writer functions."""
+
+    @pytest.mark.parametrize("name", GENERIC_LOADER_NAMES)
+    def test_gpu_has_callable(self, name):
+        assert callable(getattr(gpu_generic, name))
+
+    @pytest.mark.parametrize("name", GENERIC_LOADER_NAMES)
+    def test_cpu_has_callable(self, name):
+        assert callable(getattr(cpu_generic, name))
+
+    @pytest.mark.parametrize("name", GENERIC_WRITER_NAMES)
+    def test_gpu_has_writer_callable(self, name):
+        assert callable(getattr(gpu_generic, name))
+
+    @pytest.mark.parametrize("name", GENERIC_WRITER_NAMES)
+    def test_cpu_has_writer_callable(self, name):
+        assert callable(getattr(cpu_generic, name))
+
+    @pytest.mark.parametrize("name", GENERIC_LOADER_NAMES)
+    def test_top_level_has_callable(self, name):
+        assert callable(getattr(generic_top, name))
+
+
+class TestGPUGenericLoaders:
+    """GPU generic loaders produce torch tensors."""
+
+    def test_spherical_map_npy_returns_float_tensor(self, spherical_npy_path):
+        path, _ = spherical_npy_path
+        result = gpu_generic.spherical_map(path)
+        assert isinstance(result, torch.Tensor)
+        assert result.dtype == torch.float32
+
+    def test_spherical_map_npy_shape_is_chw(self, spherical_npy_path):
+        path, expected = spherical_npy_path
+        result = gpu_generic.spherical_map(path)
+        assert result.shape == (3, 4, 5)
+
+    def test_spherical_map_npy_values_match(self, spherical_npy_path):
+        path, expected = spherical_npy_path
+        result = gpu_generic.spherical_map(path)
+        assert torch.allclose(result, torch.from_numpy(expected))
+
+    def test_spherical_map_npz_returns_float_tensor(self, spherical_npz_path):
+        path, _ = spherical_npz_path
+        result = gpu_generic.spherical_map(path)
+        assert isinstance(result, torch.Tensor)
+        assert result.dtype == torch.float32
+
+    def test_spherical_map_npz_shape_is_chw(self, spherical_npz_path):
+        path, expected = spherical_npz_path
+        result = gpu_generic.spherical_map(path)
+        assert result.shape == (3, 4, 5)
+
+    def test_spherical_map_npz_values_match(self, spherical_npz_path):
+        path, expected = spherical_npz_path
+        result = gpu_generic.spherical_map(path)
+        assert torch.allclose(result, torch.from_numpy(expected))
+
+
+class TestCPUGenericLoaders:
+    """CPU generic loaders produce numpy arrays in HWC layout."""
+
+    def test_spherical_map_npy_returns_float_array(self, spherical_npy_path):
+        path, _ = spherical_npy_path
+        result = cpu_generic.spherical_map(path)
+        assert isinstance(result, np.ndarray)
+        assert result.dtype == np.float32
+
+    def test_spherical_map_npy_shape_is_hwc(self, spherical_npy_path):
+        path, _ = spherical_npy_path
+        result = cpu_generic.spherical_map(path)
+        assert result.shape == (4, 5, 3)
+
+    def test_spherical_map_npy_values_match(self, spherical_npy_path):
+        path, expected = spherical_npy_path
+        result = cpu_generic.spherical_map(path)
+        assert np.allclose(result, np.transpose(expected, (1, 2, 0)))
+
+    def test_spherical_map_npz_returns_float_array(self, spherical_npz_path):
+        path, _ = spherical_npz_path
+        result = cpu_generic.spherical_map(path)
+        assert isinstance(result, np.ndarray)
+        assert result.dtype == np.float32
+
+    def test_spherical_map_npz_shape_is_hwc(self, spherical_npz_path):
+        path, _ = spherical_npz_path
+        result = cpu_generic.spherical_map(path)
+        assert result.shape == (4, 5, 3)
+
+
+class TestGenericWriters:
+    """Writer round-trip tests for generic loaders."""
+
+    def test_gpu_write_spherical_map_npy_roundtrip(self, tmp_path):
+        data = torch.rand(3, 4, 5, dtype=torch.float32)
+        path = tmp_path / "spherical.npy"
+        gpu_generic.write_spherical_map(str(path), data)
+        loaded = gpu_generic.spherical_map(str(path))
+        assert torch.allclose(loaded, data)
+
+    def test_gpu_write_spherical_map_npz_roundtrip(self, tmp_path):
+        data = torch.rand(3, 4, 5, dtype=torch.float32)
+        path = tmp_path / "spherical.npz"
+        gpu_generic.write_spherical_map(str(path), data)
+        loaded = gpu_generic.spherical_map(str(path))
+        assert torch.allclose(loaded, data)
+
+    def test_cpu_write_spherical_map_npy_roundtrip(self, tmp_path):
+        data = np.random.default_rng(0).random((4, 5, 3)).astype(np.float32)
+        path = tmp_path / "spherical.npy"
+        cpu_generic.write_spherical_map(str(path), data)
+        loaded = cpu_generic.spherical_map(str(path))
+        assert np.allclose(loaded, data)
+
+    def test_cpu_write_spherical_map_npz_roundtrip(self, tmp_path):
+        data = np.random.default_rng(0).random((4, 5, 3)).astype(np.float32)
+        path = tmp_path / "spherical.npz"
+        cpu_generic.write_spherical_map(str(path), data)
+        loaded = cpu_generic.spherical_map(str(path))
+        assert np.allclose(loaded, data)
+
+
+class TestGenericBackwardCompat:
+    """``from euler_loading.loaders import generic`` returns GPU loaders."""
+
+    def test_top_level_spherical_map_matches_gpu(self, spherical_npy_path):
+        path, _ = spherical_npy_path
+        top = generic_top.spherical_map(path)
+        gpu = gpu_generic.spherical_map(path)
+        assert torch.equal(top, gpu)

@@ -19,6 +19,7 @@ _LOADER_MODULES: dict[str, str] = {
     "vkitti2": "euler_loading.loaders.gpu.vkitti2",
     "real_drive_sim": "euler_loading.loaders.gpu.real_drive_sim",
     "generic_dense_depth": "euler_loading.loaders.gpu.generic_dense_depth",
+    "generic": "euler_loading.loaders.gpu.generic",
 }
 
 
