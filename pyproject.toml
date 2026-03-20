@@ -6,7 +6,7 @@ requires-python = ">=3.9"
 dependencies = [
     "numpy",
     "Pillow",
-    "ds-crawler @ git+https://github.com/d-rothen/ds-crawler",
+    "ds-crawler",
 ]
 
 [project.optional-dependencies]
