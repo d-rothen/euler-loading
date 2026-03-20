@@ -1,6 +1,28 @@
 {
     "supportedLoaders": [
         {
+            "name": "generic",
+            "modalities": [
+                {
+                    "type": "spherical_map",
+                    "function": "spherical_map",
+                    "hierarchical": false,
+                    "dtype": "float32",
+                    "access": "key",
+                    "file_formats": [
+                        ".npy",
+                        ".npz"
+                    ],
+                    "cpu": {
+                        "shape": "HWC"
+                    },
+                    "gpu": {
+                        "shape": "CHW"
+                    }
+                }
+            ]
+        },
+        {
             "name": "generic_dense_depth",
             "modalities": [
                 {
