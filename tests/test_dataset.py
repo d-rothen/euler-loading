@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import io
+import json
 import logging
 import os
-import tempfile
 import zipfile
 from types import SimpleNamespace
 from typing import Any
@@ -37,6 +37,37 @@ def _flat_index(modality: str, file_ids: list[str]) -> dict[str, Any]:
             ]
         }
     }
+
+
+def _write_inline_split(
+    root: os.PathLike[str] | str,
+    split_name: str,
+    dataset_node: dict[str, Any],
+) -> None:
+    metadata_dir = os.path.join(root, ".ds_crawler")
+    os.makedirs(metadata_dir, exist_ok=True)
+    with open(os.path.join(metadata_dir, f"split_{split_name}.json"), "w") as f:
+        json.dump(dataset_node, f)
+
+
+def _create_zip_with_inline_split(
+    tmp_path,
+    *,
+    name: str,
+    files: dict[str, bytes],
+    split_name: str,
+    dataset_node: dict[str, Any],
+    prefix: str = "",
+) -> str:
+    zip_path = os.path.join(tmp_path, name)
+    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_STORED) as zf:
+        for entry_name, content in files.items():
+            zf.writestr(prefix + entry_name, content)
+        zf.writestr(
+            f"{prefix}.ds_crawler/split_{split_name}.json",
+            json.dumps(dataset_node),
+        )
+    return zip_path
 
 
 # ---------------------------------------------------------------------------
@@ -161,6 +192,113 @@ class TestSingleModality:
                 modalities={"rgb": Modality("/data/rgb", loader=dummy_loader)},
             )
         assert len(ds) == 2
+
+
+class TestInlineSplitLoading:
+    def test_regular_modalities_load_inline_splits_from_filesystem(self, tmp_path):
+        rgb_root = tmp_path / "rgb"
+        depth_root = tmp_path / "depth"
+        rgb_root.mkdir()
+        depth_root.mkdir()
+
+        rgb_index = _flat_index("rgb", ["f001", "f002", "f003"])
+        depth_index = _flat_index("depth", ["f001", "f002", "f003"])
+        rgb_split = _flat_index("rgb", ["f002", "f003"])["dataset"]
+        depth_split = _flat_index("depth", ["f003"])["dataset"]
+        _write_inline_split(rgb_root, "train", rgb_split)
+        _write_inline_split(depth_root, "train", depth_split)
+
+        def mock_index(path, **kw):
+            if str(path) == str(rgb_root):
+                return rgb_index
+            return depth_index
+
+        with patch(
+            "euler_loading.dataset.index_dataset_from_path",
+            side_effect=mock_index,
+        ):
+            ds = MultiModalDataset(
+                modalities={
+                    "rgb": Modality(
+                        str(rgb_root), split="train", loader=dummy_loader
+                    ),
+                    "depth": Modality(
+                        str(depth_root), split="train", loader=dummy_loader
+                    ),
+                },
+            )
+
+        assert len(ds) == 1
+        assert ds[0]["id"] == "f003"
+        assert ds.modality_paths()["rgb"] == {
+            "path": str(rgb_root),
+            "origin_path": None,
+            "split": "train",
+        }
+        assert ds.get_modality_index("rgb")["dataset"] == rgb_split
+
+    def test_missing_inline_split_raises_file_not_found(self, tmp_path):
+        root = tmp_path / "rgb"
+        root.mkdir()
+        index = _flat_index("rgb", ["f001"])
+
+        with patch(
+            "euler_loading.dataset.index_dataset_from_path",
+            return_value=index,
+        ), pytest.raises(FileNotFoundError, match="split_train.json"):
+            MultiModalDataset(
+                modalities={
+                    "rgb": Modality(str(root), split="train", loader=dummy_loader),
+                },
+            )
+
+    def test_invalid_inline_split_name_raises_value_error(self, tmp_path):
+        root = tmp_path / "rgb"
+        root.mkdir()
+        index = _flat_index("rgb", ["f001"])
+
+        with patch(
+            "euler_loading.dataset.index_dataset_from_path",
+            return_value=index,
+        ), pytest.raises(ValueError, match="split_name"):
+            MultiModalDataset(
+                modalities={
+                    "rgb": Modality(str(root), split="bad/name", loader=dummy_loader),
+                },
+            )
+
+    def test_zip_modalities_load_inline_splits(self, tmp_path):
+        split_dataset = _flat_index("png", ["f002"])["dataset"]
+        zip_path = _create_zip_with_inline_split(
+            tmp_path,
+            name="rgb.zip",
+            files={
+                "f001.png": b"fake-png-001",
+                "f002.png": b"fake-png-002",
+            },
+            split_name="train",
+            dataset_node=split_dataset,
+            prefix="rgb/",
+        )
+        full_index = _flat_index("png", ["f001", "f002"])
+        loader = MagicMock(return_value="loaded")
+
+        with patch(
+            "euler_loading.dataset.index_dataset_from_path",
+            return_value=full_index,
+        ):
+            ds = MultiModalDataset(
+                modalities={
+                    "rgb": Modality(zip_path, split="train", loader=loader),
+                },
+            )
+
+        assert len(ds) == 1
+        sample = ds[0]
+        assert sample["id"] == "f002"
+        buf = loader.call_args[0][0]
+        assert isinstance(buf, io.BytesIO)
+        assert buf.read() == b"fake-png-002"
 
 
 

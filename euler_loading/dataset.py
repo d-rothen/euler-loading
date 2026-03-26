@@ -23,6 +23,7 @@ from ds_crawler import (
 )
 from ds_crawler.zip_utils import get_zip_root_prefix, is_zip_path
 
+from ._ds_crawler_utils import load_index_output
 from ._metadata import _build_runlog_entry, _get_ds_crawler_descriptor
 from ._resolution import (
     _resolve_loader,
@@ -92,6 +93,9 @@ class Modality:
                          (e.g. ``"scene_camera"``).
         applies_to: Optional list of regular-modality names a hierarchical
                     modality applies to.
+        split: Optional inline split name. When set, euler-loading reads the
+               full ds-crawler metadata from the modality root and overlays the
+               dataset payload from ``.ds_crawler/split_<name>.json``.
         metadata: Optional arbitrary metadata. Keys under
                   ``metadata["euler_loading"]`` are treated as
                   euler-loading-specific defaults.
@@ -106,6 +110,7 @@ class Modality:
     modality_type: str | None = None
     hierarchy_scope: str | None = None
     applies_to: list[str] | None = None
+    split: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
@@ -152,22 +157,38 @@ class MultiModalDataset(_BaseDataset):
         # sample["rgb"], sample["depth"], sample["intrinsics_file"]["intrinsic"], ...
     """
 
-    def modality_paths(self) -> dict[str, dict[str, str]]:
-        """Return modality names mapped to their current and origin paths."""
+    def modality_paths(self) -> dict[str, dict[str, str | None]]:
+        """Return modality names mapped to their current path metadata.
+
+        Each entry always contains ``path`` and ``origin_path``. A ``split``
+        key is included when the modality is configured to load an inline
+        ds-crawler split.
+        """
         res = {}
         for name, mod in self._modalities.items():
             path = mod.path
             origin = mod.origin_path
-            res[name] = {"path": path, "origin_path": origin}
+            entry: dict[str, str | None] = {"path": path, "origin_path": origin}
+            if mod.split is not None:
+                entry["split"] = mod.split
+            res[name] = entry
         return res
 
-    def hierarchical_modality_paths(self) -> dict[str, dict[str, str]]:
-        """Return a dict of hierarchical modality names to their root paths."""
+    def hierarchical_modality_paths(self) -> dict[str, dict[str, str | None]]:
+        """Return hierarchical modality names mapped to their path metadata.
+
+        Each entry always contains ``path`` and ``origin_path``. A ``split``
+        key is included when the modality is configured to load an inline
+        ds-crawler split.
+        """
         res = {}
         for name, mod in self._hierarchical_modalities.items():
             path = mod.path
             origin = mod.origin_path
-            res[name] = {"path": path, "origin_path": origin}
+            entry: dict[str, str | None] = {"path": path, "origin_path": origin}
+            if mod.split is not None:
+                entry["split"] = mod.split
+            res[name] = entry
         return res
 
     def describe_for_runlog(self) -> dict[str, dict[str, dict[str, Any]]]:
@@ -180,6 +201,7 @@ class MultiModalDataset(_BaseDataset):
                 "<name>": {
                   "path": "...",
                   "origin_path": "...",
+                  "split": "...",
                   "used_as": "...",
                   "slot": "...",
                   "modality_type": "...",
@@ -189,6 +211,7 @@ class MultiModalDataset(_BaseDataset):
                 "<name>": {
                   "path": "...",
                   "origin_path": "...",
+                  "split": "...",
                   "used_as": "...",
                   "slot": "...",
                   "modality_type": "...",
@@ -270,7 +293,11 @@ class MultiModalDataset(_BaseDataset):
         self._resolved_writers: dict[str, Callable[..., Any] | None] = {}
 
         for name, modality in modalities.items():
-            index = index_dataset_from_path(modality.path)
+            index = load_index_output(
+                modality.path,
+                split=modality.split,
+                index_dataset_from_path_fn=index_dataset_from_path,
+            )
             self._index_outputs[name] = index
             self._resolved_loaders[name] = _resolve_loader(
                 modality_name=name, modality=modality, index=index,
@@ -285,10 +312,11 @@ class MultiModalDataset(_BaseDataset):
             }
             self._lookups[name] = lookup
             logger.info(
-                "Modality '%s': indexed %d files from %s",
+                "Modality '%s': indexed %d files from %s%s",
                 name,
                 len(lookup),
                 modality.path,
+                f" (split={modality.split})" if modality.split is not None else "",
             )
 
         # -- Index hierarchical modalities -----------------------------------
@@ -297,7 +325,11 @@ class MultiModalDataset(_BaseDataset):
         ] = {}
 
         for name, modality in self._hierarchical_modalities.items():
-            index = index_dataset_from_path(modality.path)
+            index = load_index_output(
+                modality.path,
+                split=modality.split,
+                index_dataset_from_path_fn=index_dataset_from_path,
+            )
             self._hierarchical_index_outputs[name] = index
             self._resolved_loaders[name] = _resolve_loader(
                 modality_name=name, modality=modality, index=index,
@@ -310,11 +342,12 @@ class MultiModalDataset(_BaseDataset):
             total_files = sum(len(f) for f in files_by_level.values())
             logger.info(
                 "Hierarchical modality '%s': indexed %d files across %d "
-                "hierarchy levels from %s",
+                "hierarchy levels from %s%s",
                 name,
                 total_files,
                 len(files_by_level),
                 modality.path,
+                f" (split={modality.split})" if modality.split is not None else "",
             )
 
         # -- Compute common IDs (intersection across regular modalities) -----

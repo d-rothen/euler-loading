@@ -61,6 +61,8 @@ def _build_runlog_entry(
     )
 
     entry: dict[str, Any] = {"path": modality.path}
+    if modality.split is not None:
+        entry["split"] = modality.split
     if used_as is not None:
         entry["used_as"] = used_as
     if slot is not None:

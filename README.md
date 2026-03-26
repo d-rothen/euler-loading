@@ -25,9 +25,9 @@ from euler_loading import Modality, MultiModalDataset
 
 dataset = MultiModalDataset(
     modalities={
-        "rgb":   Modality("/data/vkitti2/rgb",   loader=load_rgb),
-        "depth": Modality("/data/vkitti2/depth", loader=load_depth),
-        "classSegmentation": Modality("/data/vkitti2/classSegmentation", loader=load_classSegmentation),
+        "rgb":   Modality("/data/vkitti2/rgb",   loader=load_rgb, split="train"),
+        "depth": Modality("/data/vkitti2/depth", loader=load_depth, split="train"),
+        "classSegmentation": Modality("/data/vkitti2/classSegmentation", loader=load_classSegmentation, split="train"),
     },
     hierarchical_modalities={           # optional – for files at intermediate hierarchy levels
         "intrinsics": Modality("/data/vkitti2/intrinsics", loader=parse_intrinsics),
@@ -64,6 +64,7 @@ Frozen dataclass describing one data modality.
 | `modality_type` | `str \| None` | Optional modality type override (e.g. `rgb`, `depth`). |
 | `hierarchy_scope` | `str \| None` | Optional scope label for hierarchical modalities (e.g. `scene_camera`). |
 | `applies_to` | `list[str] \| None` | Optional list of regular modality names a hierarchical modality applies to. |
+| `split` | `str \| None` | Optional inline split name. Loads `.ds_crawler/split_<name>.json` from the modality root (directory or zip) and overlays it on the normal ds-crawler metadata. |
 | `metadata` | `dict[str, Any]` | Optional arbitrary metadata. Keys under `metadata["euler_loading"]` are treated as euler-loading defaults. |
 
 The loader is the **only** place where domain-specific I/O happens.
@@ -111,13 +112,28 @@ Returns a structured descriptor for run metadata:
 
 Resolution order is: explicit `Modality` fields -> `Modality.metadata["euler_loading"]` -> ds-crawler config `properties["euler_loading"]` -> heuristics.
 
+### Inline split loading
+
+If you created ds-crawler inline splits such as `.ds_crawler/split_train.json`, point a modality at that subset by setting `split`:
+
+```python
+dataset = MultiModalDataset(
+    modalities={
+        "rgb": Modality("/data/rgb", split="train"),
+        "depth": Modality("/data/depth", split="train"),
+    },
+)
+```
+
+This works for both directory-backed and zip-backed modalities. The split file only replaces the `dataset` payload; top-level metadata such as dataset type and euler-loading loader hints still come from the canonical ds-crawler index.
+
 ### `MultiModalDataset.modality_paths()`
 
-Returns a dict mapping each regular modality name to `{"path": ..., "origin_path": ...}`.
+Returns a dict mapping each regular modality name to `{"path": ..., "origin_path": ...}` and includes `split` when configured.
 
 ### `MultiModalDataset.hierarchical_modality_paths()`
 
-Returns a dict mapping each hierarchical modality name to `{"path": ..., "origin_path": ...}`.
+Returns a dict mapping each hierarchical modality name to `{"path": ..., "origin_path": ...}` and includes `split` when configured.
 
 ### `MultiModalDataset.get_modality_metadata(modality_name)`
 
