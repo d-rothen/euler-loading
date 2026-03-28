@@ -301,6 +301,74 @@ class TestInlineSplitLoading:
         assert buf.read() == b"fake-png-002"
 
 
+class TestPathWithColonSplit:
+    """Colon-separated path:split syntax."""
+
+    def test_split_extracted_from_path(self):
+        mod = Modality("/data/ds:train")
+        assert mod.path == "/data/ds"
+        assert mod.split == "train"
+
+    def test_split_extracted_from_zip_path(self):
+        mod = Modality("/data/ds.zip:val")
+        assert mod.path == "/data/ds.zip"
+        assert mod.split == "val"
+
+    def test_no_colon_leaves_split_none(self):
+        mod = Modality("/data/ds")
+        assert mod.path == "/data/ds"
+        assert mod.split is None
+
+    def test_explicit_split_without_colon_still_works(self):
+        mod = Modality("/data/ds", split="train")
+        assert mod.path == "/data/ds"
+        assert mod.split == "train"
+
+    def test_colon_and_explicit_split_raises(self):
+        with pytest.raises(ValueError, match="inline split"):
+            Modality("/data/ds:train", split="val")
+
+    def test_windows_drive_letter_not_treated_as_split(self):
+        mod = Modality("C:\\data\\ds")
+        assert mod.path == "C:\\data\\ds"
+        assert mod.split is None
+
+    def test_invalid_split_suffix_left_in_path(self):
+        # A colon followed by an invalid split name is left as-is
+        mod = Modality("/data/ds:bad/name")
+        assert mod.path == "/data/ds:bad/name"
+        assert mod.split is None
+
+    def test_colon_path_integration_with_dataset(self, tmp_path):
+        root = tmp_path / "rgb"
+        root.mkdir()
+        rgb_index = _flat_index("rgb", ["f001", "f002"])
+        rgb_split = _flat_index("rgb", ["f002"])["dataset"]
+        _write_inline_split(root, "train", rgb_split)
+
+        def mock_index(path, **kw):
+            return rgb_index
+
+        with patch(
+            "euler_loading.dataset.index_dataset_from_path",
+            side_effect=mock_index,
+        ):
+            ds = MultiModalDataset(
+                modalities={
+                    "rgb": Modality(
+                        f"{root}:train", loader=dummy_loader
+                    ),
+                },
+            )
+
+        assert len(ds) == 1
+        assert ds[0]["id"] == "f002"
+        assert ds.modality_paths()["rgb"] == {
+            "path": str(root),
+            "origin_path": None,
+            "split": "train",
+        }
+
 
 class TestTransforms:
     """Transform application and ordering."""

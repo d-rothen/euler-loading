@@ -23,7 +23,7 @@ from ds_crawler import (
 )
 from ds_crawler.zip_utils import get_zip_root_prefix, is_zip_path
 
-from ._ds_crawler_utils import load_index_output
+from ._ds_crawler_utils import load_index_output, parse_path_with_split
 from ._metadata import _build_runlog_entry, _get_ds_crawler_descriptor
 from ._resolution import (
     _resolve_loader,
@@ -66,7 +66,9 @@ class Modality:
     Attributes:
         path: Absolute path to the dataset root directory for this modality.
               Must contain a ``ds-crawler.config`` file (or a cached
-              ``output.json`` from a prior indexing run).
+              ``output.json`` from a prior indexing run).  A colon-separated
+              split suffix is also accepted (e.g. ``/data/ds.zip:train``);
+              the suffix is extracted and used as the ``split`` parameter.
         origin_path: Optional original path string before any copying or symlinking for i.e. slurm staging.  
                 This is not used by euler-loading itself but can be useful for experiment 
                 logging to retain references to the original dataset location.
@@ -112,6 +114,18 @@ class Modality:
     applies_to: list[str] | None = None
     split: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        parsed_path, path_split = parse_path_with_split(self.path)
+        if path_split is not None:
+            if self.split is not None:
+                raise ValueError(
+                    f"Modality path {self.path!r} contains an inline split "
+                    f"({path_split!r}) but an explicit split={self.split!r} "
+                    f"was also provided. Use one or the other, not both."
+                )
+            object.__setattr__(self, "path", parsed_path)
+            object.__setattr__(self, "split", path_split)
 
 
 class MultiModalDataset(_BaseDataset):

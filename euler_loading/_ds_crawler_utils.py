@@ -71,6 +71,29 @@ def extract_ds_crawler_properties(index_output: Mapping[str, Any]) -> dict[str, 
 _SPLIT_NAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
 
 
+def parse_path_with_split(path: str) -> tuple[str, str | None]:
+    """Extract an optional inline split suffix from a colon-separated path.
+
+    Supports paths like ``/data/ds.zip:train`` where the part after the
+    last colon is treated as the split name.
+
+    Returns a ``(path, split)`` tuple.  When no valid split suffix is
+    found, *split* is ``None`` and *path* is returned unchanged.
+    """
+    colon_pos = path.rfind(":")
+    # No colon, or colon at position 1 is a Windows drive letter (e.g. "C:\\")
+    if colon_pos <= 1:
+        return path, None
+
+    candidate_split = path[colon_pos + 1:]
+    candidate_path = path[:colon_pos]
+
+    if not candidate_split or not _SPLIT_NAME_PATTERN.match(candidate_split):
+        return path, None
+
+    return candidate_path, candidate_split
+
+
 def validate_split_name(split_name: str) -> str:
     """Validate and normalize an inline split name."""
     if not isinstance(split_name, str):
