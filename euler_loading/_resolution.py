@@ -6,6 +6,8 @@ from collections.abc import Mapping
 from types import ModuleType
 from typing import TYPE_CHECKING, Any, Callable
 
+from ds_crawler import get_dataset_contract
+
 from ._ds_crawler_utils import as_non_empty_str
 
 if TYPE_CHECKING:
@@ -61,7 +63,11 @@ def _resolve_loader(
     if modality.loader is not None:
         return modality.loader
 
-    euler_loading_meta = index.get("euler_loading")
+    try:
+        contract = get_dataset_contract(index)
+        euler_loading_meta = contract.get_addon("euler_loading")
+    except Exception:
+        euler_loading_meta = None
     if not isinstance(euler_loading_meta, Mapping):
         raise ValueError(
             f"Modality {modality_name!r}: no explicit loader provided and the "
@@ -126,7 +132,11 @@ def _resolve_writer(
     if modality.writer is not None:
         return modality.writer
 
-    euler_loading_meta = index.get("euler_loading")
+    try:
+        contract = get_dataset_contract(index)
+        euler_loading_meta = contract.get_addon("euler_loading")
+    except Exception:
+        euler_loading_meta = None
     if not isinstance(euler_loading_meta, Mapping):
         return None
 

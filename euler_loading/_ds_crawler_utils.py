@@ -5,25 +5,13 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
+from ds_crawler import get_dataset_contract
 from ds_crawler.zip_utils import read_metadata_json
 
 try:
     from ds_crawler import load_dataset_split as _load_dataset_split
 except ImportError:
     _load_dataset_split = None
-
-
-DS_CRAWLER_STRUCTURAL_KEYS = frozenset({
-    "name",
-    "type",
-    "id_regex",
-    "id_regex_join_char",
-    "euler_train",
-    "dataset",
-    "hierarchy_regex",
-    "named_capture_group_value_separator",
-    "sampled",
-})
 
 
 def as_non_empty_str(value: Any) -> str | None:
@@ -61,11 +49,7 @@ def first_non_empty_list(*candidates: list[str] | None) -> list[str]:
 
 
 def extract_ds_crawler_properties(index_output: Mapping[str, Any]) -> dict[str, Any]:
-    return {
-        str(key): value
-        for key, value in index_output.items()
-        if key not in DS_CRAWLER_STRUCTURAL_KEYS
-    }
+    return get_dataset_contract(dict(index_output)).to_properties_dict()
 
 
 _SPLIT_NAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
@@ -164,5 +148,6 @@ def load_index_output(
         )
 
     result = dict(base_output)
-    result["dataset"] = split_dataset
+    result["index"] = split_dataset
+    result.pop("dataset", None)
     return result

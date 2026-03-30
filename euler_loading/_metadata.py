@@ -4,6 +4,8 @@ import re
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, Callable
 
+from ds_crawler import get_dataset_contract
+
 from ._ds_crawler_utils import (
     as_non_empty_str,
     as_string_list,
@@ -44,6 +46,7 @@ def _build_runlog_entry(
         as_non_empty_str(
             _resolve_euler_loading_property(euler_loading_properties, "modality_type")
         ),
+        as_non_empty_str(descriptor.get("modality_key")),
         as_non_empty_str(descriptor.get("modality_type")),
         _infer_modality_type(name=name, path=modality.path),
     )
@@ -146,12 +149,19 @@ def _read_ds_crawler_descriptor(
 
     if isinstance(index_output, Mapping):
         properties.update(extract_ds_crawler_properties(index_output))
-        index_type = as_non_empty_str(index_output.get("type"))
-        if index_type is not None:
-            descriptor["modality_type"] = index_type
-        hierarchy_regex = as_non_empty_str(index_output.get("hierarchy_regex"))
-        if hierarchy_regex is not None:
-            descriptor["hierarchy_regex"] = hierarchy_regex
+        try:
+            contract = get_dataset_contract(dict(index_output))
+        except Exception:
+            contract = None
+        if contract is not None:
+            descriptor["modality_key"] = contract.modality_key
+        indexing = index_output.get("indexing")
+        if isinstance(indexing, Mapping):
+            hierarchy = indexing.get("hierarchy")
+            if isinstance(hierarchy, Mapping):
+                hierarchy_regex = as_non_empty_str(hierarchy.get("regex"))
+                if hierarchy_regex is not None:
+                    descriptor["hierarchy_regex"] = hierarchy_regex
 
     try:
         cfg = load_dataset_config_fn({"path": path})
@@ -164,7 +174,7 @@ def _read_ds_crawler_descriptor(
 
     cfg_type = as_non_empty_str(getattr(cfg, "type", None))
     if cfg_type is not None:
-        descriptor["modality_type"] = cfg_type
+        descriptor["modality_key"] = cfg_type
 
     cfg_hierarchy_regex = as_non_empty_str(getattr(cfg, "hierarchy_regex", None))
     if cfg_hierarchy_regex is not None:

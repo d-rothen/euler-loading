@@ -7,11 +7,10 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, Callable
 
-from ds_crawler import DatasetWriter, ZipDatasetWriter
+from ds_crawler import DatasetWriter, ZipDatasetWriter, get_dataset_contract
 
 from ._ds_crawler_utils import (
     as_non_empty_str,
-    extract_ds_crawler_properties,
     first_non_empty,
 )
 from .loaders._writer_utils import supports_stream_target
@@ -30,27 +29,20 @@ def create_dataset_writer_from_index(
     zip: bool = False,
 ) -> DatasetWriter | ZipDatasetWriter:
     """Create a ds-crawler writer that mirrors an existing index's metadata."""
-    name = as_non_empty_str(index_output.get("name")) or "dataset"
-    type_name = as_non_empty_str(index_output.get("type")) or "other"
-    euler_train = index_output.get("euler_train")
-    if not isinstance(euler_train, Mapping):
-        raise ValueError(
-            "index_output must contain an 'euler_train' mapping to build a writer."
-        )
+    contract = get_dataset_contract(dict(index_output))
 
+    indexing = index_output.get("indexing")
+    hierarchy = indexing.get("hierarchy") if isinstance(indexing, Mapping) else None
+    id_cfg = indexing.get("id") if isinstance(indexing, Mapping) else None
     separator = first_non_empty(
-        as_non_empty_str(index_output.get("named_capture_group_value_separator")),
-        as_non_empty_str(index_output.get("id_regex_join_char")),
+        as_non_empty_str(hierarchy.get("separator")) if isinstance(hierarchy, Mapping) else None,
+        as_non_empty_str(id_cfg.get("join_char")) if isinstance(id_cfg, Mapping) else None,
     )
-    properties = extract_ds_crawler_properties(index_output)
     writer_cls = ZipDatasetWriter if zip else DatasetWriter
     return writer_cls(
         root,
-        name=name,
-        type=type_name,
-        euler_train=dict(euler_train),
+        head=contract.to_mapping(),
         separator=separator,
-        **properties,
     )
 
 

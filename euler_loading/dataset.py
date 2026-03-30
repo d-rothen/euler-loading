@@ -18,6 +18,7 @@ except ImportError:
 from ds_crawler import (
     DatasetWriter,
     ZipDatasetWriter,
+    get_dataset_contract,
     index_dataset_from_path,
     load_dataset_config,
 )
@@ -319,7 +320,7 @@ class MultiModalDataset(_BaseDataset):
             self._resolved_writers[name] = _resolve_writer(
                 modality_name=name, modality=modality, index=index,
             )
-            records = collect_files(index["dataset"])
+            records = collect_files(index["index"])
             lookup = {
                 "/".join(rec.hierarchy_path + (rec.file_entry["id"],)): rec
                 for rec in records
@@ -351,7 +352,7 @@ class MultiModalDataset(_BaseDataset):
             self._resolved_writers[name] = _resolve_writer(
                 modality_name=name, modality=modality, index=index,
             )
-            files_by_level = collect_hierarchical_files(index["dataset"])
+            files_by_level = collect_hierarchical_files(index["index"])
             self._hierarchical_lookups[name] = files_by_level
             total_files = sum(len(f) for f in files_by_level.values())
             logger.info(
@@ -407,7 +408,11 @@ class MultiModalDataset(_BaseDataset):
 
     def get_modality_metadata(self, modality_name: str) -> dict[str, Any]:
         """Return the metadata dict for a given modality name."""
-        return self._index_outputs.get(modality_name, {}).get("meta", {})
+        index = self._index_outputs.get(modality_name, {})
+        try:
+            return get_dataset_contract(index).meta or {}
+        except Exception:
+            return {}
 
     def get_modality_index(self, modality_name: str) -> dict[str, Any]:
         """Return the cached ds-crawler index for a modality."""
@@ -505,7 +510,12 @@ class MultiModalDataset(_BaseDataset):
                 output_root=output_root, modality_name=modality_name
             )
             record = self._lookups[modality_name][sample_id]
-            modality_meta = self._index_outputs[modality_name].get("meta")
+            try:
+                modality_meta = get_dataset_contract(
+                    self._index_outputs[modality_name]
+                ).meta
+            except Exception:
+                modality_meta = None
             basename = Path(record.file_entry["path"]).name
             relative_path = record.file_entry["path"]
             full_id = _build_writer_full_id(
@@ -545,7 +555,10 @@ class MultiModalDataset(_BaseDataset):
         first_modality: str | None = None
 
         for modality_name, index in self._index_outputs.items():
-            name = index.get("name")
+            try:
+                name = get_dataset_contract(index).name
+            except Exception:
+                name = None
             if name is None:
                 continue
             if first_name is None:
@@ -604,7 +617,12 @@ class MultiModalDataset(_BaseDataset):
 
         for name, modality in self._modalities.items():
             record = self._lookups[name][sample_id]
-            modality_meta = self._index_outputs[name].get("meta")
+            try:
+                modality_meta = get_dataset_contract(
+                    self._index_outputs[name]
+                ).meta
+            except Exception:
+                modality_meta = None
 
             if name in self._zip_modalities:
                 file_or_path = self._open_from_zip(
@@ -625,7 +643,12 @@ class MultiModalDataset(_BaseDataset):
         for name, modality in self._hierarchical_modalities.items():
             files_by_level = self._hierarchical_lookups[name]
             matched = match_hierarchical_files(hierarchy_path, files_by_level)
-            modality_meta = self._hierarchical_index_outputs[name].get("meta")
+            try:
+                modality_meta = get_dataset_contract(
+                    self._hierarchical_index_outputs[name]
+                ).meta
+            except Exception:
+                modality_meta = None
             loaded: dict[str, Any] = {}
             for entry in matched:
                 cache_key = f"{modality.path}/{entry['path']}"
