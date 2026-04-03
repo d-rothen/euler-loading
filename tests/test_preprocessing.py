@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from unittest.mock import patch
 
 import numpy as np
@@ -183,3 +184,51 @@ class TestDatasetTransformBinding:
         sample = dataset[0]
         assert sample["rgb"].shape == (3, 2, 3)
         assert sample["metric_depth"].shape == (1, 2, 3)
+
+    def test_dataset_logs_transform_behaviour_once_on_init(self, caplog):
+        rgb_index = _flat_index("rgb", ["f001"])
+
+        def rgb_loader(path, meta=None):
+            return torch.ones((3, 4, 6), dtype=torch.float32)
+
+        def identity(sample):
+            return sample
+
+        preprocessor = SamplePreprocessor.from_config(
+            {
+                "resize": [2, 3],
+                "infer_fields": False,
+                "fields": {
+                    "valid_mask": {"kind": "mask"},
+                    "intrinsics": {"kind": "intrinsics", "reduce": "first"},
+                },
+            }
+        )
+
+        with patch(
+            "euler_loading.dataset.index_dataset_from_path",
+            return_value=rgb_index,
+        ), caplog.at_level(logging.INFO, logger="euler_loading.dataset"):
+            MultiModalDataset(
+                modalities={
+                    "rgb": Modality(
+                        "/data/rgb",
+                        loader=rgb_loader,
+                        modality_type="rgb",
+                    ),
+                },
+                transforms=[preprocessor, identity],
+            )
+
+        messages = [record.message for record in caplog.records]
+        assert messages.count("Configured 2 sample transform(s):") == 1
+
+        joined = "\n".join(messages)
+        assert "SamplePreprocessor(" in joined
+        assert "resize(2x3)" in joined
+        assert "rgb: kind=image" in joined
+        assert "valid_mask: kind=mask" in joined
+        assert "interpolation=nearest" in joined
+        assert "intrinsics: kind=intrinsics" in joined
+        assert "reduce=first" in joined
+        assert "identity" in joined

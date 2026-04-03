@@ -59,6 +59,32 @@ __all__ = [
 ]
 
 
+def _callable_name(value: Any) -> str:
+    module = getattr(value, "__module__", None)
+    qualname = getattr(value, "__qualname__", None)
+    if module and qualname:
+        return f"{module}.{qualname}"
+    name = getattr(value, "__name__", None)
+    if module and name:
+        return f"{module}.{name}"
+    cls = value.__class__
+    return f"{cls.__module__}.{cls.__qualname__}"
+
+
+def _describe_transform(transform: Any) -> str:
+    describe = getattr(transform, "describe", None)
+    if callable(describe):
+        try:
+            return str(describe())
+        except Exception:
+            logger.debug(
+                "Failed to describe transform %s; falling back to callable name.",
+                _callable_name(transform),
+                exc_info=True,
+            )
+    return _callable_name(transform)
+
+
 def _get_index_tree(index_output: Mapping[str, Any]) -> dict[str, Any]:
     """Return the dataset tree from a ds-crawler output payload."""
     index_tree = index_output.get("index")
@@ -444,6 +470,17 @@ class MultiModalDataset(_BaseDataset):
             bind = getattr(transform, "bind_to_dataset", None)
             if callable(bind):
                 bind(self)
+        if self._transforms:
+            logger.info("Configured %d sample transform(s):", len(self._transforms))
+            for idx, transform in enumerate(self._transforms, start=1):
+                logger.info(
+                    "Transform %d/%d: %s",
+                    idx,
+                    len(self._transforms),
+                    _describe_transform(transform),
+                )
+        else:
+            logger.info("Configured 0 sample transforms.")
 
     def get_modality_metadata(self, modality_name: str) -> dict[str, Any]:
         """Return the metadata dict for a given modality name."""

@@ -186,6 +186,30 @@ class FieldSpec:
     def is_passthrough(self) -> bool:
         return self.kind == "passthrough"
 
+    def describe(self, *, include_defaults: bool = True) -> str:
+        """Return a concise human-readable description of this field policy."""
+        parts = [f"kind={self.kind}"]
+        if self.layout is not None:
+            parts.append(f"layout={self.layout}")
+
+        interpolation = self.interpolation
+        if include_defaults and interpolation is None:
+            interpolation = _DEFAULT_INTERPOLATION[self.kind]
+        if interpolation is not None:
+            parts.append(f"interpolation={interpolation}")
+
+        normalize_vectors = self.normalize_vectors
+        if include_defaults and normalize_vectors is None:
+            normalize_vectors = self.kind == "ray_map"
+        if normalize_vectors is not None:
+            parts.append(f"normalize_vectors={bool(normalize_vectors)}")
+
+        if self.kind == "mask" or self.threshold != 0.5:
+            parts.append(f"threshold={self.threshold:g}")
+        if self.reduce is not None:
+            parts.append(f"reduce={self.reduce}")
+        return ", ".join(parts)
+
 
 @dataclass(frozen=True)
 class Resize:
@@ -201,6 +225,10 @@ class Resize:
     @classmethod
     def from_config(cls, cfg: Any) -> "Resize":
         return cls(size=_parse_size(cfg, context="Resize"))
+
+    def describe(self) -> str:
+        height, width = self.size
+        return f"resize({height}x{width})"
 
 
 @dataclass(frozen=True)
@@ -245,6 +273,13 @@ class Crop:
                 offset=offset,
             )
         return cls(size=_parse_size(cfg, context="Crop"))
+
+    def describe(self) -> str:
+        height, width = self.size
+        parts = [f"crop({height}x{width})", f"anchor={self.anchor}"]
+        if self.offset is not None:
+            parts.append(f"offset={self.offset}")
+        return ", ".join(parts)
 
     def resolve_box(self, source_size: tuple[int, int]) -> tuple[int, int, int, int]:
         source_h, source_w = source_size
@@ -686,6 +721,34 @@ class SamplePreprocessor:
         bind_group(getattr(dataset, "_modalities", {}))
         bind_group(getattr(dataset, "_hierarchical_modalities", {}))
         self._bound_field_specs = bound_specs
+
+    def describe(self) -> str:
+        """Return a concise summary suitable for initialization logging."""
+        operations = ", ".join(
+            operation.describe() if hasattr(operation, "describe") else repr(operation)
+            for operation in self.operations
+        ) or "none"
+
+        active_specs = self._bound_field_specs or self.field_specs
+        if active_specs:
+            field_parts = [
+                f"{name}: {spec.describe()}"
+                for name, spec in sorted(active_specs.items())
+            ]
+            fields_text = "; ".join(field_parts)
+        elif self.infer_fields:
+            fields_text = "inferred from modality_type/name heuristics"
+        else:
+            fields_text = "none"
+
+        reference = self.reference_field or "auto"
+        return (
+            "SamplePreprocessor("
+            f"operations=[{operations}], "
+            f"reference_field={reference}, "
+            f"infer_fields={self.infer_fields}, "
+            f"fields={fields_text})"
+        )
 
     def _resolve_field_spec(self, key: str, value: Any) -> FieldSpec | None:
         if key in self._bound_field_specs:
