@@ -218,6 +218,44 @@ def mask_sky_in_depth(sample: dict) -> dict:
     return sample
 ```
 
+### Built-in spatial preprocessing
+
+`euler_loading.SamplePreprocessor` applies shared spatial ops such as resize and crop
+consistently across sample fields, including calibration-sensitive fields such as
+camera intrinsics and ray maps.
+
+```python
+from euler_loading import FieldSpec, SamplePreprocessor
+
+preprocessor = SamplePreprocessor.from_config(
+    {
+        "resize": [384, 768],
+        "crop": {"size": [320, 640], "anchor": "center"},
+        "fields": {
+            "rgb": {"kind": "image"},
+            "depth": {"kind": "depth"},
+            "valid_mask": {"kind": "mask"},
+            "intrinsics": {"kind": "intrinsics", "reduce": "first"},
+            "ray_map": {"kind": "ray_map"},
+        },
+    }
+)
+
+dataset = MultiModalDataset(
+    modalities={...},
+    hierarchical_modalities={...},
+    transforms=[preprocessor],
+)
+```
+
+- `kind="image"` and `kind="depth"` default to bilinear interpolation.
+- `kind="mask"` defaults to nearest-neighbour interpolation and preserves mask dtype.
+- `kind="ray_map"` bilinearly resizes and renormalizes vectors to unit length.
+- `kind="intrinsics"` rescales the camera matrix for resize and shifts the principal point for crop.
+- `reduce="first"` is useful for hierarchical modalities such as one intrinsics file per scene/camera.
+
+If you already set `modality_type` on your `Modality(...)` definitions, the preprocessor can bind to the dataset and reuse those hints automatically.
+
 ## Zip archive support
 
 Modality paths can point to `.zip` files instead of directories. euler-loading detects zip paths automatically and reads files directly from the archive without extraction:

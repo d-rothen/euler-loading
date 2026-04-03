@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import json
 import logging
 import os
 import tempfile
+import zipfile
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, Callable
@@ -18,8 +20,91 @@ from .loaders._writer_utils import supports_stream_target
 
 logger = logging.getLogger(__name__)
 
+_DEFAULT_WRITER_INDEX_FILENAME = "output.json"
+
 
 OutputDestination = str | os.PathLike[str] | DatasetWriter | ZipDatasetWriter
+
+
+def _wrap_writer_save_index(
+    writer: DatasetWriter | ZipDatasetWriter,
+) -> DatasetWriter | ZipDatasetWriter:
+    original_save_index = writer.save_index
+
+    def _build_legacy_fields() -> dict[str, Any]:
+        output = writer.build_output()
+        result: dict[str, Any] = {}
+
+        head = output.get("head")
+        if isinstance(head, Mapping):
+            dataset = head.get("dataset")
+            modality = head.get("modality")
+            addons = head.get("addons")
+
+            if isinstance(dataset, Mapping):
+                name = as_non_empty_str(dataset.get("name"))
+                if name is not None:
+                    result["name"] = name
+
+            if isinstance(modality, Mapping):
+                modality_key = as_non_empty_str(modality.get("key"))
+                if modality_key is not None:
+                    result["type"] = modality_key
+                meta = modality.get("meta")
+                if isinstance(meta, Mapping):
+                    result["meta"] = dict(meta)
+
+            if isinstance(addons, Mapping):
+                for addon_name in ("euler_train", "euler_loading"):
+                    addon = addons.get(addon_name)
+                    if isinstance(addon, Mapping):
+                        result[addon_name] = dict(addon)
+
+        index_tree = output.get("index")
+        if isinstance(index_tree, Mapping):
+            result["dataset"] = dict(index_tree)
+
+        return result
+
+    def save_index(filename: str = _DEFAULT_WRITER_INDEX_FILENAME):
+        legacy_fields = _build_legacy_fields()
+        path = original_save_index(filename=filename)
+
+        if isinstance(writer, ZipDatasetWriter):
+            entry_name = f".ds_crawler/{filename}"
+            archive_path = Path(writer.root)
+            with zipfile.ZipFile(archive_path, "r") as source_zip:
+                output_index = json.loads(source_zip.read(entry_name).decode("utf-8"))
+                output_index.update(legacy_fields)
+
+                replacement_name = archive_path.with_suffix(archive_path.suffix + ".tmp")
+                with zipfile.ZipFile(replacement_name, "w") as target_zip:
+                    replaced = False
+                    for info in source_zip.infolist():
+                        data = source_zip.read(info.filename)
+                        if info.filename == entry_name and not replaced:
+                            data = json.dumps(output_index, indent=2).encode("utf-8")
+                            replaced = True
+                        target_zip.writestr(info, data)
+
+                    if not replaced:
+                        target_zip.writestr(
+                            entry_name,
+                            json.dumps(output_index, indent=2),
+                            compress_type=zipfile.ZIP_DEFLATED,
+                        )
+
+            replacement_name.replace(archive_path)
+            return path
+
+        output_path = Path(path)
+        output_index = json.loads(output_path.read_text(encoding="utf-8"))
+        output_index.update(legacy_fields)
+        output_path.write_text(json.dumps(output_index, indent=2), encoding="utf-8")
+        return path
+
+    setattr(writer, "save_index", save_index)
+    return writer
 
 
 def create_dataset_writer_from_index(
@@ -29,8 +114,6 @@ def create_dataset_writer_from_index(
     zip: bool = False,
 ) -> DatasetWriter | ZipDatasetWriter:
     """Create a ds-crawler writer that mirrors an existing index's metadata."""
-    contract = get_dataset_contract(dict(index_output))
-
     indexing = index_output.get("indexing")
     hierarchy = indexing.get("hierarchy") if isinstance(indexing, Mapping) else None
     id_cfg = indexing.get("id") if isinstance(indexing, Mapping) else None
@@ -39,11 +122,46 @@ def create_dataset_writer_from_index(
         as_non_empty_str(id_cfg.get("join_char")) if isinstance(id_cfg, Mapping) else None,
     )
     writer_cls = ZipDatasetWriter if zip else DatasetWriter
-    return writer_cls(
+    try:
+        contract = get_dataset_contract(dict(index_output))
+    except Exception:
+        contract = None
+
+    if contract is not None:
+        writer = writer_cls(
+            root,
+            head=contract.to_mapping(),
+            separator=separator,
+        )
+        return _wrap_writer_save_index(writer)
+
+    name = as_non_empty_str(index_output.get("name"))
+    type_name = as_non_empty_str(index_output.get("type"))
+    if name is None or type_name is None:
+        raise ValueError(
+            "Cannot create a dataset writer without ds-crawler head metadata. "
+            "Expected either a dataset contract or top-level 'name' and 'type'."
+        )
+
+    euler_train = index_output.get("euler_train")
+    euler_loading = index_output.get("euler_loading")
+    meta = index_output.get("meta")
+
+    properties: dict[str, Any] = {}
+    if isinstance(euler_loading, Mapping):
+        properties["euler_loading"] = dict(euler_loading)
+    if isinstance(meta, Mapping):
+        properties["meta"] = dict(meta)
+
+    writer = writer_cls(
         root,
-        head=contract.to_mapping(),
+        name=name,
+        type=type_name,
+        euler_train=dict(euler_train) if isinstance(euler_train, Mapping) else None,
         separator=separator,
+        **properties,
     )
+    return _wrap_writer_save_index(writer)
 
 
 def _resolve_output_destination(

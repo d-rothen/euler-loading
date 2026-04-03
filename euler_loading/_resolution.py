@@ -25,6 +25,21 @@ _LOADER_MODULES: dict[str, str] = {
 }
 
 
+def _get_euler_loading_meta(index: Mapping[str, Any]) -> Mapping[str, Any] | None:
+    try:
+        contract = get_dataset_contract(dict(index))
+        euler_loading_meta = contract.get_addon("euler_loading")
+    except Exception:
+        euler_loading_meta = None
+    if isinstance(euler_loading_meta, Mapping):
+        return euler_loading_meta
+
+    raw_meta = index.get("euler_loading")
+    if isinstance(raw_meta, Mapping):
+        return raw_meta
+    return None
+
+
 def resolve_loader_module(name: str) -> ModuleType:
     """Import and return the GPU loader module for *name*.
 
@@ -63,11 +78,7 @@ def _resolve_loader(
     if modality.loader is not None:
         return modality.loader
 
-    try:
-        contract = get_dataset_contract(index)
-        euler_loading_meta = contract.get_addon("euler_loading")
-    except Exception:
-        euler_loading_meta = None
+    euler_loading_meta = _get_euler_loading_meta(index)
     if not isinstance(euler_loading_meta, Mapping):
         raise ValueError(
             f"Modality {modality_name!r}: no explicit loader provided and the "
@@ -132,11 +143,7 @@ def _resolve_writer(
     if modality.writer is not None:
         return modality.writer
 
-    try:
-        contract = get_dataset_contract(index)
-        euler_loading_meta = contract.get_addon("euler_loading")
-    except Exception:
-        euler_loading_meta = None
+    euler_loading_meta = _get_euler_loading_meta(index)
     if not isinstance(euler_loading_meta, Mapping):
         return None
 

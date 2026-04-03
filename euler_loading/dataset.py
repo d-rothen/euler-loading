@@ -59,6 +59,39 @@ __all__ = [
 ]
 
 
+def _get_index_tree(index_output: Mapping[str, Any]) -> dict[str, Any]:
+    """Return the dataset tree from a ds-crawler output payload."""
+    index_tree = index_output.get("index")
+    if isinstance(index_tree, Mapping):
+        dataset_tree = index_tree.get("dataset")
+        if isinstance(dataset_tree, Mapping):
+            return dict(dataset_tree)
+        return dict(index_tree)
+
+    dataset_tree = index_output.get("dataset")
+    if isinstance(dataset_tree, Mapping):
+        return dict(dataset_tree)
+
+    raise KeyError(
+        "ds-crawler output must contain either an 'index' tree or a 'dataset' tree."
+    )
+
+
+def _get_index_meta(index_output: Mapping[str, Any]) -> dict[str, Any] | None:
+    """Return modality meta from a ds-crawler output payload when available."""
+    try:
+        meta = get_dataset_contract(dict(index_output)).meta
+    except Exception:
+        meta = None
+    if isinstance(meta, Mapping):
+        return dict(meta)
+
+    raw_meta = index_output.get("meta")
+    if isinstance(raw_meta, Mapping):
+        return dict(raw_meta)
+    return None
+
+
 #TODO: might want to add slots=True in a 3.10+ only codebase
 @dataclass(frozen=True)
 class Modality:
@@ -320,7 +353,7 @@ class MultiModalDataset(_BaseDataset):
             self._resolved_writers[name] = _resolve_writer(
                 modality_name=name, modality=modality, index=index,
             )
-            records = collect_files(index["index"])
+            records = collect_files(_get_index_tree(index))
             lookup = {
                 "/".join(rec.hierarchy_path + (rec.file_entry["id"],)): rec
                 for rec in records
@@ -352,7 +385,7 @@ class MultiModalDataset(_BaseDataset):
             self._resolved_writers[name] = _resolve_writer(
                 modality_name=name, modality=modality, index=index,
             )
-            files_by_level = collect_hierarchical_files(index["index"])
+            files_by_level = collect_hierarchical_files(_get_index_tree(index))
             self._hierarchical_lookups[name] = files_by_level
             total_files = sum(len(f) for f in files_by_level.values())
             logger.info(
@@ -406,13 +439,17 @@ class MultiModalDataset(_BaseDataset):
         # -- Caches ----------------------------------------------------------
         self._hierarchical_cache: dict[str, Any] = {}
 
+        # -- Optional transform binding -------------------------------------
+        for transform in self._transforms:
+            bind = getattr(transform, "bind_to_dataset", None)
+            if callable(bind):
+                bind(self)
+
     def get_modality_metadata(self, modality_name: str) -> dict[str, Any]:
         """Return the metadata dict for a given modality name."""
         index = self._index_outputs.get(modality_name, {})
-        try:
-            return get_dataset_contract(index).meta or {}
-        except Exception:
-            return {}
+        meta = _get_index_meta(index)
+        return meta or {}
 
     def get_modality_index(self, modality_name: str) -> dict[str, Any]:
         """Return the cached ds-crawler index for a modality."""
@@ -510,12 +547,7 @@ class MultiModalDataset(_BaseDataset):
                 output_root=output_root, modality_name=modality_name
             )
             record = self._lookups[modality_name][sample_id]
-            try:
-                modality_meta = get_dataset_contract(
-                    self._index_outputs[modality_name]
-                ).meta
-            except Exception:
-                modality_meta = None
+            modality_meta = _get_index_meta(self._index_outputs[modality_name])
             basename = Path(record.file_entry["path"]).name
             relative_path = record.file_entry["path"]
             full_id = _build_writer_full_id(
@@ -558,7 +590,8 @@ class MultiModalDataset(_BaseDataset):
             try:
                 name = get_dataset_contract(index).name
             except Exception:
-                name = None
+                raw_name = index.get("name")
+                name = str(raw_name) if raw_name is not None else None
             if name is None:
                 continue
             if first_name is None:
@@ -617,12 +650,7 @@ class MultiModalDataset(_BaseDataset):
 
         for name, modality in self._modalities.items():
             record = self._lookups[name][sample_id]
-            try:
-                modality_meta = get_dataset_contract(
-                    self._index_outputs[name]
-                ).meta
-            except Exception:
-                modality_meta = None
+            modality_meta = _get_index_meta(self._index_outputs[name])
 
             if name in self._zip_modalities:
                 file_or_path = self._open_from_zip(
@@ -643,12 +671,7 @@ class MultiModalDataset(_BaseDataset):
         for name, modality in self._hierarchical_modalities.items():
             files_by_level = self._hierarchical_lookups[name]
             matched = match_hierarchical_files(hierarchy_path, files_by_level)
-            try:
-                modality_meta = get_dataset_contract(
-                    self._hierarchical_index_outputs[name]
-                ).meta
-            except Exception:
-                modality_meta = None
+            modality_meta = _get_index_meta(self._hierarchical_index_outputs[name])
             loaded: dict[str, Any] = {}
             for entry in matched:
                 cache_key = f"{modality.path}/{entry['path']}"
