@@ -208,7 +208,7 @@ class TestDatasetTransformBinding:
         with patch(
             "euler_loading.dataset.index_dataset_from_path",
             return_value=rgb_index,
-        ), caplog.at_level(logging.INFO, logger="euler_loading.dataset"):
+        ), caplog.at_level(logging.WARNING, logger="euler_loading.dataset"):
             MultiModalDataset(
                 modalities={
                     "rgb": Modality(
@@ -222,6 +222,7 @@ class TestDatasetTransformBinding:
 
         messages = [record.message for record in caplog.records]
         assert messages.count("Configured 2 sample transform(s):") == 1
+        assert all(record.levelno == logging.WARNING for record in caplog.records)
 
         joined = "\n".join(messages)
         assert "SamplePreprocessor(" in joined

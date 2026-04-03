@@ -471,16 +471,16 @@ class MultiModalDataset(_BaseDataset):
             if callable(bind):
                 bind(self)
         if self._transforms:
-            logger.info("Configured %d sample transform(s):", len(self._transforms))
+            logger.warning("Configured %d sample transform(s):", len(self._transforms))
             for idx, transform in enumerate(self._transforms, start=1):
-                logger.info(
+                logger.warning(
                     "Transform %d/%d: %s",
                     idx,
                     len(self._transforms),
                     _describe_transform(transform),
                 )
         else:
-            logger.info("Configured 0 sample transforms.")
+            logger.warning("Configured 0 sample transforms.")
 
     def get_modality_metadata(self, modality_name: str) -> dict[str, Any]:
         """Return the metadata dict for a given modality name."""
