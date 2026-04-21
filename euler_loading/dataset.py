@@ -118,6 +118,36 @@ def _get_index_meta(index_output: Mapping[str, Any]) -> dict[str, Any] | None:
     return None
 
 
+def _extract_id_schema(index_output: Mapping[str, Any]) -> dict[str, Any]:
+    """Pull id/hierarchy separators from a ds-crawler output payload.
+
+    Supports both modern (``indexing.id.join_char``) and legacy
+    (top-level ``id_regex_join_char``) layouts. Missing keys fall back to
+    ds-crawler defaults so the returned dict is always usable.
+    """
+    indexing = index_output.get("indexing")
+    indexing_map = indexing if isinstance(indexing, Mapping) else {}
+    id_cfg = indexing_map.get("id")
+    id_map = id_cfg if isinstance(id_cfg, Mapping) else {}
+    hierarchy_cfg = indexing_map.get("hierarchy")
+    hierarchy_map = hierarchy_cfg if isinstance(hierarchy_cfg, Mapping) else {}
+
+    id_join_char = id_map.get("join_char") or index_output.get("id_regex_join_char") or "+"
+    hierarchy_separator = hierarchy_map.get("separator") or "-"
+    id_regex = id_map.get("regex") or index_output.get("id_regex")
+    hierarchy_regex = hierarchy_map.get("regex") or index_output.get("hierarchy_regex")
+
+    schema: dict[str, Any] = {
+        "hierarchy_separator": hierarchy_separator,
+        "id_join_char": id_join_char,
+    }
+    if id_regex:
+        schema["id_regex"] = id_regex
+    if hierarchy_regex:
+        schema["hierarchy_regex"] = hierarchy_regex
+    return schema
+
+
 #TODO: might want to add slots=True in a 3.10+ only codebase
 @dataclass(frozen=True)
 class Modality:
@@ -487,6 +517,58 @@ class MultiModalDataset(_BaseDataset):
         index = self._index_outputs.get(modality_name, {})
         meta = _get_index_meta(index)
         return meta or {}
+
+    def describe_id_schema(self) -> dict[str, Any]:
+        """Return the id-construction schema used by this dataset.
+
+        Downstream consumers that want to split or match ``sample["full_id"]``
+        / ``sample["id"]`` values back to ds-crawler fields need to know the
+        separators used to build them. This method exposes that schema so it
+        can be embedded in experiment manifests.
+
+        Schema keys:
+            - ``hierarchy_separator``: the character between the named
+              capture group *name* and its *value* within a single id part
+              (ds-crawler ``indexing.hierarchy.separator``, typically ``"-"``).
+            - ``id_join_char``: the character between id parts (ds-crawler
+              ``indexing.id.join_char`` or legacy ``id_regex_join_char``,
+              default ``"+"``).
+            - ``full_id_separator``: the character between hierarchy levels
+              and the file id in ``sample["full_id"]`` (currently ``"/"``).
+            - ``id_regex`` / ``hierarchy_regex``: the raw regexes, when
+              recorded in the ds-crawler output.
+            - ``modalities``: per-modality overrides populated only when
+              modalities disagree on the above.
+
+        Example::
+
+            {
+              "hierarchy_separator": "-",
+              "id_join_char": "+",
+              "full_id_separator": "/",
+              "id_regex": "...",
+            }
+        """
+        per_modality: dict[str, dict[str, Any]] = {}
+        for name, index in self._index_outputs.items():
+            per_modality[name] = _extract_id_schema(index)
+
+        if not per_modality:
+            return {}
+
+        base = dict(next(iter(per_modality.values())))
+        base["full_id_separator"] = "/"
+
+        overrides: dict[str, dict[str, Any]] = {}
+        for mod_name, mod_schema in per_modality.items():
+            mod_with_separator = dict(mod_schema)
+            mod_with_separator["full_id_separator"] = "/"
+            if mod_with_separator != base:
+                overrides[mod_name] = mod_with_separator
+
+        if overrides:
+            base["modalities"] = overrides
+        return base
 
     def get_modality_index(self, modality_name: str) -> dict[str, Any]:
         """Return the cached ds-crawler index for a modality."""
