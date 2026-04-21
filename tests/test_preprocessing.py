@@ -9,7 +9,7 @@ import numpy as np
 import pytest
 import torch
 
-from euler_loading import Modality, MultiModalDataset
+from euler_loading import MaskedValueOverride, Modality, MultiModalDataset
 from euler_loading.preprocessing import SamplePreprocessor
 
 
@@ -141,6 +141,63 @@ class TestSamplePreprocessorNumpy:
             dtype=np.float32,
         )
         assert np.allclose(processed["intrinsics"], expected_intrinsics)
+
+
+class TestMaskedValueOverride:
+    def test_overrides_torch_target_with_broadcast_mask(self):
+        depth = torch.tensor(
+            [
+                [[1.0, 2.0], [3.0, 4.0]],
+                [[5.0, 6.0], [7.0, 8.0]],
+            ],
+            dtype=torch.float32,
+        )
+        sky_mask = torch.tensor([[[True, False], [False, True]]])
+
+        transform = MaskedValueOverride(
+            target_key="depth",
+            mask_key="sky_mask",
+            value=0.5,
+        )
+        processed = transform({"depth": depth, "sky_mask": sky_mask})
+
+        expected = torch.tensor(
+            [
+                [[0.5, 2.0], [3.0, 0.5]],
+                [[0.5, 6.0], [7.0, 0.5]],
+            ],
+            dtype=torch.float32,
+        )
+        assert torch.equal(processed["depth"], expected)
+        assert torch.equal(
+            depth,
+            torch.tensor(
+                [
+                    [[1.0, 2.0], [3.0, 4.0]],
+                    [[5.0, 6.0], [7.0, 8.0]],
+                ],
+                dtype=torch.float32,
+            ),
+        )
+
+    def test_overrides_numpy_target_with_inverted_mask(self):
+        depth = np.array([[1.0, 2.0], [3.0, 4.0]], dtype=np.float32)
+        valid_mask = np.array([[True, False], [False, True]], dtype=np.bool_)
+
+        transform = MaskedValueOverride(
+            target_key="depth",
+            mask_key="valid_mask",
+            value=9.0,
+            invert_mask=True,
+        )
+        processed = transform({"depth": depth, "valid_mask": valid_mask})
+
+        expected = np.array([[1.0, 9.0], [9.0, 4.0]], dtype=np.float32)
+        assert np.array_equal(processed["depth"], expected)
+        assert np.array_equal(
+            depth,
+            np.array([[1.0, 2.0], [3.0, 4.0]], dtype=np.float32),
+        )
 
 
 class TestDatasetTransformBinding:

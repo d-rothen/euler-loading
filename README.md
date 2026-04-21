@@ -218,6 +218,19 @@ def mask_sky_in_depth(sample: dict) -> dict:
     return sample
 ```
 
+For common mask-driven replacements, `MaskedValueOverride` can do the same
+without writing a custom callable:
+
+```python
+from euler_loading import MaskedValueOverride
+
+replace_sky_depth = MaskedValueOverride(
+    target_key="depth",
+    mask_key="sky_mask",
+    value=300.0,
+)
+```
+
 ### Built-in spatial preprocessing
 
 `euler_loading.SamplePreprocessor` applies shared spatial ops such as resize and crop

@@ -9,6 +9,7 @@ from .loaders.contracts import DenseDepthCodec, DenseDepthLoader, DenseDepthWrit
 from .preprocessing import (
     Crop,
     FieldSpec,
+    MaskedValueOverride,
     Resize,
     SamplePreprocessor,
     crop_intrinsics,
@@ -23,6 +24,7 @@ __all__ = [
     "FileRecord",
     "Crop",
     "FieldSpec",
+    "MaskedValueOverride",
     "Modality",
     "MultiModalDataset",
     "Resize",

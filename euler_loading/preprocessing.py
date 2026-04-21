@@ -17,6 +17,7 @@ except ImportError:  # pragma: no cover - exercised in CPU-only environments
 
 __all__ = [
     "FieldSpec",
+    "MaskedValueOverride",
     "Resize",
     "Crop",
     "SamplePreprocessor",
@@ -308,6 +309,111 @@ class Crop:
                 f"Crop box {(top, left, target_h, target_w)} is outside source size {source_size}."
             )
         return top, left, target_h, target_w
+
+
+@dataclass(frozen=True)
+class MaskedValueOverride:
+    """Set values in one sample field wherever a boolean mask field is true."""
+
+    target_key: str
+    mask_key: str
+    value: Any
+    invert_mask: bool = False
+    copy: bool = True
+    ignore_missing: bool = False
+
+    @classmethod
+    def from_config(cls, cfg: Mapping[str, Any]) -> "MaskedValueOverride":
+        if not isinstance(cfg, Mapping):
+            raise TypeError(
+                "MaskedValueOverride config must be a mapping, "
+                f"got {type(cfg).__name__}."
+            )
+        return cls(
+            target_key=str(cfg.get("target_key", cfg.get("target", ""))),
+            mask_key=str(cfg.get("mask_key", cfg.get("mask", ""))),
+            value=cfg.get("value"),
+            invert_mask=bool(cfg.get("invert_mask", False)),
+            copy=bool(cfg.get("copy", True)),
+            ignore_missing=bool(cfg.get("ignore_missing", False)),
+        )
+
+    def __post_init__(self) -> None:
+        if not self.target_key:
+            raise ValueError("MaskedValueOverride requires target_key.")
+        if not self.mask_key:
+            raise ValueError("MaskedValueOverride requires mask_key.")
+
+    def describe(self) -> str:
+        parts = [
+            f"masked_value_override(target={self.target_key}",
+            f"mask={self.mask_key}",
+            f"value={self.value!r}",
+        ]
+        if self.invert_mask:
+            parts.append("invert_mask=True")
+        if not self.copy:
+            parts.append("copy=False")
+        if self.ignore_missing:
+            parts.append("ignore_missing=True")
+        return ", ".join(parts) + ")"
+
+    def _missing(self, key: str) -> None:
+        if self.ignore_missing:
+            return
+        raise KeyError(f"MaskedValueOverride missing sample key: {key!r}")
+
+    def __call__(self, sample: dict[str, Any]) -> dict[str, Any]:
+        if self.target_key not in sample:
+            self._missing(self.target_key)
+            return sample
+        if self.mask_key not in sample:
+            self._missing(self.mask_key)
+            return sample
+
+        target = sample[self.target_key]
+        mask = sample[self.mask_key]
+
+        processed = dict(sample) if self.copy else sample
+
+        if _is_torch_tensor(target):
+            if _is_torch_tensor(mask):
+                mask_tensor = mask.to(device=target.device, dtype=torch.bool)
+            else:
+                mask_tensor = torch.as_tensor(
+                    mask,
+                    device=target.device,
+                    dtype=torch.bool,
+                )
+            if self.invert_mask:
+                mask_tensor = ~mask_tensor
+            if tuple(mask_tensor.shape) != tuple(target.shape):
+                mask_tensor = torch.broadcast_to(mask_tensor, target.shape)
+            value_tensor = torch.as_tensor(
+                self.value,
+                device=target.device,
+                dtype=target.dtype,
+            )
+            result = target.clone() if self.copy else target
+            result[mask_tensor] = value_tensor
+            processed[self.target_key] = result
+            return processed
+
+        if isinstance(target, np.ndarray):
+            mask_array = np.asarray(mask, dtype=np.bool_)
+            if self.invert_mask:
+                mask_array = ~mask_array
+            if tuple(mask_array.shape) != tuple(target.shape):
+                mask_array = np.broadcast_to(mask_array, target.shape)
+            result = np.array(target, copy=self.copy)
+            result[mask_array] = self.value
+            processed[self.target_key] = result
+            return processed
+
+        raise TypeError(
+            f"MaskedValueOverride target {self.target_key!r} must be a torch.Tensor "
+            f"or numpy.ndarray, got {type(target).__name__}."
+        )
 
 
 def infer_field_spec(name: str, value: Any | None = None) -> FieldSpec | None:
