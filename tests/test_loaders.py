@@ -485,8 +485,8 @@ class TestRDSWriters:
 # Generic spherical_map loader tests
 # ---------------------------------------------------------------------------
 
-GENERIC_LOADER_NAMES = ["spherical_map"]
-GENERIC_WRITER_NAMES = ["write_spherical_map"]
+GENERIC_LOADER_NAMES = ["map_2d", "map_3d", "spherical_map"]
+GENERIC_WRITER_NAMES = ["write_map_2d", "write_map_3d", "write_spherical_map"]
 
 
 @pytest.fixture()
@@ -638,3 +638,187 @@ class TestGenericBackwardCompat:
         top = generic_top.spherical_map(path)
         gpu = gpu_generic.spherical_map(path)
         assert torch.equal(top, gpu)
+
+
+# ---------------------------------------------------------------------------
+# Generic map_2d / map_3d loader tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture()
+def map_2d_npy_path(tmp_path):
+    """Write a small (4, 5) float32 .npy file."""
+    arr = np.random.default_rng(0).random((4, 5), dtype=np.float32)
+    p = tmp_path / "map_2d.npy"
+    np.save(str(p), arr)
+    return str(p), arr
+
+
+@pytest.fixture()
+def map_2d_npz_path(tmp_path):
+    """Write a small (4, 5) float32 .npz file."""
+    arr = np.random.default_rng(1).random((4, 5), dtype=np.float32)
+    p = tmp_path / "map_2d.npz"
+    np.savez_compressed(str(p), data=arr)
+    return str(p), arr
+
+
+@pytest.fixture()
+def map_3d_npy_path(tmp_path):
+    """Write a small (2, 4, 5) float32 .npy file in CHW layout."""
+    arr = np.random.default_rng(2).random((2, 4, 5), dtype=np.float32)
+    p = tmp_path / "map_3d.npy"
+    np.save(str(p), arr)
+    return str(p), arr
+
+
+@pytest.fixture()
+def map_3d_npz_path(tmp_path):
+    """Write a small (2, 4, 5) float32 .npz file in CHW layout."""
+    arr = np.random.default_rng(3).random((2, 4, 5), dtype=np.float32)
+    p = tmp_path / "map_3d.npz"
+    np.savez_compressed(str(p), data=arr)
+    return str(p), arr
+
+
+class TestGPUMap2DLoader:
+    """GPU ``map_2d`` loads a 2D map as an ``(H, W)`` float32 tensor."""
+
+    def test_npy_dtype_and_shape(self, map_2d_npy_path):
+        path, _ = map_2d_npy_path
+        result = gpu_generic.map_2d(path)
+        assert isinstance(result, torch.Tensor)
+        assert result.dtype == torch.float32
+        assert result.shape == (4, 5)
+
+    def test_npy_values_match(self, map_2d_npy_path):
+        path, expected = map_2d_npy_path
+        result = gpu_generic.map_2d(path)
+        assert torch.allclose(result, torch.from_numpy(expected))
+
+    def test_npz_dtype_and_shape(self, map_2d_npz_path):
+        path, _ = map_2d_npz_path
+        result = gpu_generic.map_2d(path)
+        assert result.dtype == torch.float32
+        assert result.shape == (4, 5)
+
+
+class TestCPUMap2DLoader:
+    """CPU ``map_2d`` loads a 2D map as an ``(H, W)`` float32 array."""
+
+    def test_npy_dtype_and_shape(self, map_2d_npy_path):
+        path, _ = map_2d_npy_path
+        result = cpu_generic.map_2d(path)
+        assert isinstance(result, np.ndarray)
+        assert result.dtype == np.float32
+        assert result.shape == (4, 5)
+
+    def test_npy_values_match(self, map_2d_npy_path):
+        path, expected = map_2d_npy_path
+        result = cpu_generic.map_2d(path)
+        assert np.allclose(result, expected)
+
+    def test_npz_dtype_and_shape(self, map_2d_npz_path):
+        path, _ = map_2d_npz_path
+        result = cpu_generic.map_2d(path)
+        assert result.dtype == np.float32
+        assert result.shape == (4, 5)
+
+
+class TestGPUMap3DLoader:
+    """GPU ``map_3d`` loads a 3D map as a ``(C, H, W)`` float32 tensor."""
+
+    def test_npy_dtype_and_shape(self, map_3d_npy_path):
+        path, _ = map_3d_npy_path
+        result = gpu_generic.map_3d(path)
+        assert isinstance(result, torch.Tensor)
+        assert result.dtype == torch.float32
+        assert result.shape == (2, 4, 5)
+
+    def test_npy_values_match(self, map_3d_npy_path):
+        path, expected = map_3d_npy_path
+        result = gpu_generic.map_3d(path)
+        assert torch.allclose(result, torch.from_numpy(expected))
+
+    def test_npz_dtype_and_shape(self, map_3d_npz_path):
+        path, _ = map_3d_npz_path
+        result = gpu_generic.map_3d(path)
+        assert result.shape == (2, 4, 5)
+
+
+class TestCPUMap3DLoader:
+    """CPU ``map_3d`` transposes CHW-on-disk to ``(H, W, C)``."""
+
+    def test_npy_dtype_and_shape(self, map_3d_npy_path):
+        path, _ = map_3d_npy_path
+        result = cpu_generic.map_3d(path)
+        assert isinstance(result, np.ndarray)
+        assert result.dtype == np.float32
+        assert result.shape == (4, 5, 2)
+
+    def test_npy_values_match(self, map_3d_npy_path):
+        path, expected = map_3d_npy_path
+        result = cpu_generic.map_3d(path)
+        assert np.allclose(result, np.transpose(expected, (1, 2, 0)))
+
+
+class TestMapWriters:
+    """Writer round-trip tests for ``map_2d`` / ``map_3d``."""
+
+    def test_gpu_write_map_2d_npy_roundtrip(self, tmp_path):
+        data = torch.rand(4, 5, dtype=torch.float32)
+        path = tmp_path / "m.npy"
+        gpu_generic.write_map_2d(str(path), data)
+        loaded = gpu_generic.map_2d(str(path))
+        assert torch.allclose(loaded, data)
+
+    def test_gpu_write_map_2d_accepts_1hw(self, tmp_path):
+        data = torch.rand(1, 4, 5, dtype=torch.float32)
+        path = tmp_path / "m.npy"
+        gpu_generic.write_map_2d(str(path), data)
+        loaded = gpu_generic.map_2d(str(path))
+        assert loaded.shape == (4, 5)
+        assert torch.allclose(loaded, data.squeeze(0))
+
+    def test_gpu_write_map_2d_npz_roundtrip(self, tmp_path):
+        data = torch.rand(4, 5, dtype=torch.float32)
+        path = tmp_path / "m.npz"
+        gpu_generic.write_map_2d(str(path), data)
+        loaded = gpu_generic.map_2d(str(path))
+        assert torch.allclose(loaded, data)
+
+    def test_cpu_write_map_2d_npy_roundtrip(self, tmp_path):
+        data = np.random.default_rng(0).random((4, 5)).astype(np.float32)
+        path = tmp_path / "m.npy"
+        cpu_generic.write_map_2d(str(path), data)
+        loaded = cpu_generic.map_2d(str(path))
+        assert np.allclose(loaded, data)
+
+    def test_gpu_write_map_3d_npy_roundtrip(self, tmp_path):
+        data = torch.rand(2, 4, 5, dtype=torch.float32)
+        path = tmp_path / "m.npy"
+        gpu_generic.write_map_3d(str(path), data)
+        loaded = gpu_generic.map_3d(str(path))
+        assert torch.allclose(loaded, data)
+
+    def test_cpu_write_map_3d_npy_roundtrip(self, tmp_path):
+        data = np.random.default_rng(0).random((4, 5, 2)).astype(np.float32)
+        path = tmp_path / "m.npy"
+        cpu_generic.write_map_3d(str(path), data)
+        loaded = cpu_generic.map_3d(str(path))
+        assert np.allclose(loaded, data)
+
+    def test_cpu_write_map_3d_npz_roundtrip(self, tmp_path):
+        data = np.random.default_rng(0).random((4, 5, 2)).astype(np.float32)
+        path = tmp_path / "m.npz"
+        cpu_generic.write_map_3d(str(path), data)
+        loaded = cpu_generic.map_3d(str(path))
+        assert np.allclose(loaded, data)
+
+    def test_gpu_to_cpu_map_3d_matches_transpose(self, tmp_path):
+        """A GPU-written map_3d reads back on CPU as the HWC transpose."""
+        data = torch.rand(2, 4, 5, dtype=torch.float32)
+        path = tmp_path / "m.npy"
+        gpu_generic.write_map_3d(str(path), data)
+        loaded = cpu_generic.map_3d(str(path))
+        assert np.allclose(loaded, data.permute(1, 2, 0).numpy())

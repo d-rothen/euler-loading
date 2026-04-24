@@ -10,6 +10,8 @@ Supported file extensions:
 
 Return types
 ------------
+- **map_2d** -- ``torch.FloatTensor`` of shape ``(H, W)``.
+- **map_3d** -- ``torch.FloatTensor`` of shape ``(C, H, W)``.
 - **spherical_map** -- ``torch.FloatTensor`` of shape ``(C, H, W)``.
 - **intrinsics** -- ``torch.FloatTensor`` of shape ``(3, 3)``.
 - **sh_coeffs** -- ``torch.FloatTensor`` of shape ``(N, 3)``.
@@ -19,6 +21,8 @@ Usage::
     from euler_loading.loaders.gpu import generic
     from euler_loading import Modality
 
+    Modality("/data/my_dataset/scattering_coefficient", loader=generic.map_2d)
+    Modality("/data/my_dataset/atmospheric_light", loader=generic.map_3d)
     Modality("/data/my_dataset/spherical_map", loader=generic.spherical_map)
     Modality("/data/my_dataset/intrinsics", loader=generic.intrinsics)
     Modality("/data/my_dataset/sh_coeffs", loader=generic.sh_coeffs)
@@ -37,6 +41,7 @@ from euler_loading.loaders._writer_utils import (
     ensure_parent,
     get_target_name,
     mark_stream_supported,
+    to_hw,
     to_numpy,
 )
 
@@ -84,6 +89,40 @@ def _write_numpy(path: Union[str, BinaryIO], value: Any) -> None:
 # ---------------------------------------------------------------------------
 # Public loaders
 # ---------------------------------------------------------------------------
+
+
+@modality_meta(
+    modality_type="map_2d",
+    dtype="float32",
+    shape="HW",
+    file_formats=[".npy", ".npz"],
+)
+def map_2d(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None) -> torch.Tensor:
+    """Load an arbitrary 2D map as an ``(H, W)`` float32 tensor.
+
+    Suitable for any single-channel dense quantity (e.g. scattering
+    coefficient, attenuation, opacity) where no dataset-specific decoding
+    is required.
+    """
+    arr = _load_numpy(path)
+    return torch.from_numpy(arr).contiguous()
+
+
+@modality_meta(
+    modality_type="map_3d",
+    dtype="float32",
+    shape="CHW",
+    file_formats=[".npy", ".npz"],
+)
+def map_3d(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None) -> torch.Tensor:
+    """Load an arbitrary 3D map as a ``(C, H, W)`` float32 tensor.
+
+    The file is expected to already be stored in ``(C, H, W)`` layout,
+    matching the torch convention.  Suitable for any per-pixel vector
+    quantity (e.g. atmospheric light, surface normals, flow).
+    """
+    arr = _load_numpy(path)
+    return torch.from_numpy(arr).contiguous()
 
 
 @modality_meta(
@@ -145,6 +184,27 @@ def sh_coeffs(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None) ->
 # ---------------------------------------------------------------------------
 # Writers
 # ---------------------------------------------------------------------------
+
+
+@mark_stream_supported
+def write_map_2d(path: Union[str, BinaryIO], value: Any, meta: dict[str, Any] | None = None) -> None:
+    """Write a 2D map to NumPy formats based on extension.
+
+    Accepts ``(H, W)``, ``(1, H, W)``, or ``(H, W, 1)`` input and stores
+    the array in ``(H, W)`` layout.
+    """
+    arr = to_hw(value, name="map_2d")
+    _write_numpy(path, arr)
+
+
+@mark_stream_supported
+def write_map_3d(path: Union[str, BinaryIO], value: Any, meta: dict[str, Any] | None = None) -> None:
+    """Write a 3D map to NumPy formats based on extension.
+
+    Input is expected in ``(C, H, W)`` layout (torch convention) and is
+    stored as-is.
+    """
+    _write_numpy(path, value)
 
 
 @mark_stream_supported

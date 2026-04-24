@@ -10,6 +10,8 @@ Supported file extensions:
 
 Return types
 ------------
+- **map_2d** -- ``np.ndarray`` of shape ``(H, W)`` float32.
+- **map_3d** -- ``np.ndarray`` of shape ``(H, W, C)`` float32.
 - **spherical_map** -- ``np.ndarray`` of shape ``(H, W, C)`` float32.
 - **intrinsics** -- ``np.ndarray`` of shape ``(3, 3)`` float32.
 - **sh_coeffs** -- ``np.ndarray`` of shape ``(N, 3)`` float32.
@@ -19,6 +21,8 @@ Usage::
     from euler_loading.loaders.cpu import generic
     from euler_loading import Modality
 
+    Modality("/data/my_dataset/scattering_coefficient", loader=generic.map_2d)
+    Modality("/data/my_dataset/atmospheric_light", loader=generic.map_3d)
     Modality("/data/my_dataset/spherical_map", loader=generic.spherical_map)
     Modality("/data/my_dataset/intrinsics", loader=generic.intrinsics)
     Modality("/data/my_dataset/sh_coeffs", loader=generic.sh_coeffs)
@@ -36,6 +40,7 @@ from euler_loading.loaders._writer_utils import (
     ensure_parent,
     get_target_name,
     mark_stream_supported,
+    to_hw,
     to_numpy,
 )
 
@@ -83,6 +88,40 @@ def _write_numpy(path: Union[str, BinaryIO], value: Any) -> None:
 # ---------------------------------------------------------------------------
 # Public loaders
 # ---------------------------------------------------------------------------
+
+
+@modality_meta(
+    modality_type="map_2d",
+    dtype="float32",
+    shape="HW",
+    file_formats=[".npy", ".npz"],
+)
+def map_2d(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None) -> np.ndarray:
+    """Load an arbitrary 2D map as an ``(H, W)`` float32 array.
+
+    Suitable for any single-channel dense quantity (e.g. scattering
+    coefficient, attenuation, opacity) where no dataset-specific decoding
+    is required.
+    """
+    return _load_numpy(path)
+
+
+@modality_meta(
+    modality_type="map_3d",
+    dtype="float32",
+    shape="HWC",
+    file_formats=[".npy", ".npz"],
+)
+def map_3d(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None) -> np.ndarray:
+    """Load an arbitrary 3D map as an ``(H, W, C)`` float32 array.
+
+    The file is expected to be stored in ``(C, H, W)`` layout and is
+    transposed to ``(H, W, C)`` for CPU-oriented processing.  Suitable
+    for any per-pixel vector quantity (e.g. atmospheric light, surface
+    normals, flow).
+    """
+    arr = _load_numpy(path)
+    return np.transpose(arr, (1, 2, 0))
 
 
 @modality_meta(
@@ -143,6 +182,39 @@ def sh_coeffs(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None) ->
 # ---------------------------------------------------------------------------
 # Writers
 # ---------------------------------------------------------------------------
+
+
+@mark_stream_supported
+def write_map_2d(path: Union[str, BinaryIO], value: Any, meta: dict[str, Any] | None = None) -> None:
+    """Write a 2D map to NumPy formats based on extension.
+
+    Accepts ``(H, W)``, ``(1, H, W)``, or ``(H, W, 1)`` input and stores
+    the array in ``(H, W)`` layout.
+    """
+    arr = to_hw(value, name="map_2d")
+    _write_numpy(path, arr)
+
+
+@mark_stream_supported
+def write_map_3d(path: Union[str, BinaryIO], value: Any, meta: dict[str, Any] | None = None) -> None:
+    """Write a 3D map to NumPy formats based on extension.
+
+    Input is expected in ``(H, W, C)`` layout and is transposed to
+    ``(C, H, W)`` for storage.
+    """
+    ensure_parent(path)
+    ext = os.path.splitext(_get_name(path))[1].lower()
+    arr = to_numpy(value).astype(np.float32)
+    arr = np.transpose(arr, (2, 0, 1))
+
+    if ext == _NPY_EXTENSION:
+        np.save(path, arr)
+        return
+    if ext == _NPZ_EXTENSION:
+        np.savez_compressed(path, data=arr)
+        return
+
+    raise ValueError(f"Unsupported map_3d output extension: {ext}")
 
 
 @mark_stream_supported

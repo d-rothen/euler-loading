@@ -4,6 +4,74 @@
             "name": "generic",
             "modalities": [
                 {
+                    "type": "intrinsics",
+                    "function": "intrinsics",
+                    "hierarchical": false,
+                    "dtype": "float32",
+                    "access": "key",
+                    "file_formats": [
+                        ".npy",
+                        ".npz"
+                    ],
+                    "cpu": {
+                        "shape": "3x3"
+                    },
+                    "gpu": {
+                        "shape": "3x3"
+                    }
+                },
+                {
+                    "type": "map_2d",
+                    "function": "map_2d",
+                    "hierarchical": false,
+                    "dtype": "float32",
+                    "access": "key",
+                    "file_formats": [
+                        ".npy",
+                        ".npz"
+                    ],
+                    "cpu": {
+                        "shape": "HW"
+                    },
+                    "gpu": {
+                        "shape": "HW"
+                    }
+                },
+                {
+                    "type": "map_3d",
+                    "function": "map_3d",
+                    "hierarchical": false,
+                    "dtype": "float32",
+                    "access": "key",
+                    "file_formats": [
+                        ".npy",
+                        ".npz"
+                    ],
+                    "cpu": {
+                        "shape": "HWC"
+                    },
+                    "gpu": {
+                        "shape": "CHW"
+                    }
+                },
+                {
+                    "type": "sh_coeffs",
+                    "function": "sh_coeffs",
+                    "hierarchical": false,
+                    "dtype": "float32",
+                    "access": "key",
+                    "file_formats": [
+                        ".npy",
+                        ".npz"
+                    ],
+                    "cpu": {
+                        "shape": "NC"
+                    },
+                    "gpu": {
+                        "shape": "NC"
+                    }
+                },
+                {
                     "type": "spherical_map",
                     "function": "spherical_map",
                     "hierarchical": false,
