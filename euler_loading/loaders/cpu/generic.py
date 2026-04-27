@@ -10,8 +10,8 @@ Supported file extensions:
 
 Return types
 ------------
-- **map_2d** -- ``np.ndarray`` of shape ``(H, W)`` float32.
-- **map_3d** -- ``np.ndarray`` of shape ``(H, W, C)`` float32.
+- **map_2d** / **scattering_coefficient** -- ``np.ndarray`` of shape ``(H, W)`` float32.
+- **map_3d** / **atmospheric_light** -- ``np.ndarray`` of shape ``(H, W, C)`` float32.
 - **spherical_map** -- ``np.ndarray`` of shape ``(H, W, C)`` float32.
 - **intrinsics** -- ``np.ndarray`` of shape ``(3, 3)`` float32.
 - **sh_coeffs** -- ``np.ndarray`` of shape ``(N, 3)`` float32.
@@ -21,11 +21,11 @@ Usage::
     from euler_loading.loaders.cpu import generic
     from euler_loading import Modality
 
-    Modality("/data/my_dataset/scattering_coefficient", loader=generic.map_2d)
-    Modality("/data/my_dataset/atmospheric_light", loader=generic.map_3d)
-    Modality("/data/my_dataset/spherical_map", loader=generic.spherical_map)
-    Modality("/data/my_dataset/intrinsics", loader=generic.intrinsics)
-    Modality("/data/my_dataset/sh_coeffs", loader=generic.sh_coeffs)
+    Modality("/data/my_dataset/scattering_coefficient", loader=generic.scattering_coefficient)
+    Modality("/data/my_dataset/atmospheric_light",      loader=generic.atmospheric_light)
+    Modality("/data/my_dataset/spherical_map",          loader=generic.spherical_map)
+    Modality("/data/my_dataset/intrinsics",             loader=generic.intrinsics)
+    Modality("/data/my_dataset/sh_coeffs",              loader=generic.sh_coeffs)
 """
 
 from __future__ import annotations
@@ -125,6 +125,28 @@ def map_3d(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None) -> np
 
 
 @modality_meta(
+    modality_type="scattering_coefficient",
+    dtype="float32",
+    shape="HW",
+    file_formats=[".npy", ".npz"],
+)
+def scattering_coefficient(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None) -> np.ndarray:
+    """Load a scattering-coefficient map as an ``(H, W)`` float32 array."""
+    return map_2d(path, meta)
+
+
+@modality_meta(
+    modality_type="atmospheric_light",
+    dtype="float32",
+    shape="HWC",
+    file_formats=[".npy", ".npz"],
+)
+def atmospheric_light(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None) -> np.ndarray:
+    """Load an atmospheric-light map as an ``(H, W, C)`` float32 array."""
+    return map_3d(path, meta)
+
+
+@modality_meta(
     modality_type="spherical_map",
     dtype="float32",
     shape="HWC",
@@ -215,6 +237,18 @@ def write_map_3d(path: Union[str, BinaryIO], value: Any, meta: dict[str, Any] | 
         return
 
     raise ValueError(f"Unsupported map_3d output extension: {ext}")
+
+
+@mark_stream_supported
+def write_scattering_coefficient(path: Union[str, BinaryIO], value: Any, meta: dict[str, Any] | None = None) -> None:
+    """Write a scattering-coefficient map (delegates to :func:`write_map_2d`)."""
+    write_map_2d(path, value, meta)
+
+
+@mark_stream_supported
+def write_atmospheric_light(path: Union[str, BinaryIO], value: Any, meta: dict[str, Any] | None = None) -> None:
+    """Write an atmospheric-light map (delegates to :func:`write_map_3d`)."""
+    write_map_3d(path, value, meta)
 
 
 @mark_stream_supported
