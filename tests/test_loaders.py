@@ -485,8 +485,20 @@ class TestRDSWriters:
 # Generic spherical_map loader tests
 # ---------------------------------------------------------------------------
 
-GENERIC_LOADER_NAMES = ["map_2d", "map_3d", "spherical_map"]
-GENERIC_WRITER_NAMES = ["write_map_2d", "write_map_3d", "write_spherical_map"]
+GENERIC_LOADER_NAMES = [
+    "map_2d",
+    "map_3d",
+    "scattering_coefficient",
+    "atmospheric_light",
+    "spherical_map",
+]
+GENERIC_WRITER_NAMES = [
+    "write_map_2d",
+    "write_map_3d",
+    "write_scattering_coefficient",
+    "write_atmospheric_light",
+    "write_spherical_map",
+]
 
 
 @pytest.fixture()
@@ -822,3 +834,72 @@ class TestMapWriters:
         gpu_generic.write_map_3d(str(path), data)
         loaded = cpu_generic.map_3d(str(path))
         assert np.allclose(loaded, data.permute(1, 2, 0).numpy())
+
+
+class TestSpecificMapAliases:
+    """``scattering_coefficient`` / ``atmospheric_light`` mirror map_2d/map_3d."""
+
+    def test_gpu_scattering_coefficient_matches_map_2d(self, map_2d_npy_path):
+        path, _ = map_2d_npy_path
+        assert torch.equal(
+            gpu_generic.scattering_coefficient(path),
+            gpu_generic.map_2d(path),
+        )
+
+    def test_cpu_scattering_coefficient_matches_map_2d(self, map_2d_npy_path):
+        path, _ = map_2d_npy_path
+        assert np.array_equal(
+            cpu_generic.scattering_coefficient(path),
+            cpu_generic.map_2d(path),
+        )
+
+    def test_gpu_atmospheric_light_matches_map_3d(self, map_3d_npy_path):
+        path, _ = map_3d_npy_path
+        assert torch.equal(
+            gpu_generic.atmospheric_light(path),
+            gpu_generic.map_3d(path),
+        )
+
+    def test_cpu_atmospheric_light_matches_map_3d(self, map_3d_npy_path):
+        path, _ = map_3d_npy_path
+        assert np.array_equal(
+            cpu_generic.atmospheric_light(path),
+            cpu_generic.map_3d(path),
+        )
+
+    def test_modality_meta_distinct_types(self):
+        """Each alias carries its own modality_type even though logic is shared."""
+        assert (
+            gpu_generic.scattering_coefficient._modality_meta["type"]
+            == "scattering_coefficient"
+        )
+        assert (
+            gpu_generic.atmospheric_light._modality_meta["type"]
+            == "atmospheric_light"
+        )
+        assert (
+            cpu_generic.scattering_coefficient._modality_meta["type"]
+            == "scattering_coefficient"
+        )
+        assert (
+            cpu_generic.atmospheric_light._modality_meta["type"]
+            == "atmospheric_light"
+        )
+
+    def test_gpu_write_scattering_coefficient_roundtrip(self, tmp_path):
+        data = torch.rand(4, 5, dtype=torch.float32)
+        path = tmp_path / "sc.npy"
+        gpu_generic.write_scattering_coefficient(str(path), data)
+        assert torch.allclose(gpu_generic.scattering_coefficient(str(path)), data)
+
+    def test_gpu_write_atmospheric_light_roundtrip(self, tmp_path):
+        data = torch.rand(2, 4, 5, dtype=torch.float32)
+        path = tmp_path / "al.npy"
+        gpu_generic.write_atmospheric_light(str(path), data)
+        assert torch.allclose(gpu_generic.atmospheric_light(str(path)), data)
+
+    def test_cpu_write_atmospheric_light_roundtrip(self, tmp_path):
+        data = np.random.default_rng(0).random((4, 5, 2)).astype(np.float32)
+        path = tmp_path / "al.npy"
+        cpu_generic.write_atmospheric_light(str(path), data)
+        assert np.allclose(cpu_generic.atmospheric_light(str(path)), data)

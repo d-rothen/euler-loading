@@ -4,6 +4,23 @@
             "name": "generic",
             "modalities": [
                 {
+                    "type": "atmospheric_light",
+                    "function": "atmospheric_light",
+                    "hierarchical": false,
+                    "dtype": "float32",
+                    "access": "key",
+                    "file_formats": [
+                        ".npy",
+                        ".npz"
+                    ],
+                    "cpu": {
+                        "shape": "HWC"
+                    },
+                    "gpu": {
+                        "shape": "CHW"
+                    }
+                },
+                {
                     "type": "intrinsics",
                     "function": "intrinsics",
                     "hierarchical": false,
@@ -52,6 +69,23 @@
                     },
                     "gpu": {
                         "shape": "CHW"
+                    }
+                },
+                {
+                    "type": "scattering_coefficient",
+                    "function": "scattering_coefficient",
+                    "hierarchical": false,
+                    "dtype": "float32",
+                    "access": "key",
+                    "file_formats": [
+                        ".npy",
+                        ".npz"
+                    ],
+                    "cpu": {
+                        "shape": "HW"
+                    },
+                    "gpu": {
+                        "shape": "HW"
                     }
                 },
                 {
