@@ -623,6 +623,7 @@ class MultiModalDataset(_BaseDataset):
         *,
         create_dirs: bool = True,
         overwrite: bool = True,
+        attributes: Mapping[str, Mapping[str, Any]] | None = None,
     ) -> dict[str, str]:
         """Write model outputs for one sample to disk or a dataset writer.
 
@@ -640,6 +641,13 @@ class MultiModalDataset(_BaseDataset):
                 filesystem destinations.
             overwrite: If false, raise when a target file already exists or a
                 duplicate writer entry would be created.
+            attributes: Optional per-modality ``{modality: {key: value}}``
+                mapping recorded on the destination's ds-crawler file
+                entry under the ``"attributes"`` field.  Only applies when
+                the destination is a :class:`DatasetWriter` /
+                :class:`ZipDatasetWriter`; ignored for plain filesystem
+                paths.  When omitted, any ``attributes`` carried on the
+                source file entry is inherited.
 
         Returns:
             Mapping ``{modality_name: written_location}``. For filesystem
@@ -677,6 +685,9 @@ class MultiModalDataset(_BaseDataset):
             if _destination_rel_exists(destination, relative_path) and not overwrite:
                 raise FileExistsError(_destination_location(destination, relative_path))
 
+            per_modality_attrs = (
+                attributes.get(modality_name) if attributes is not None else None
+            )
             written_paths[modality_name] = _write_value_to_destination(
                 destination=destination,
                 writer=writer,
@@ -685,7 +696,8 @@ class MultiModalDataset(_BaseDataset):
                 full_id=full_id,
                 basename=basename,
                 relative_path=relative_path,
-                source_meta=record.file_entry,
+                source_entry=record.file_entry,
+                entry_attributes=per_modality_attrs,
                 create_dirs=create_dirs,
             )
 
@@ -764,6 +776,7 @@ class MultiModalDataset(_BaseDataset):
         sample: dict[str, Any] = {}
 
         meta: dict[str, dict[str, Any]] = {}
+        attributes: dict[str, dict[str, Any]] = {}
         file_id: str = ""
         hierarchy_path: tuple[str, ...] = ()
 
@@ -780,6 +793,7 @@ class MultiModalDataset(_BaseDataset):
 
             sample[name] = self._resolved_loaders[name](file_or_path, modality_meta)
             meta[name] = record.file_entry
+            attributes[name] = dict(record.file_entry.get("attributes") or {})
 
             # Hierarchy path from the first modality that has one.
             if not hierarchy_path:
@@ -792,6 +806,7 @@ class MultiModalDataset(_BaseDataset):
             matched = match_hierarchical_files(hierarchy_path, files_by_level)
             modality_meta = _get_index_meta(self._hierarchical_index_outputs[name])
             loaded: dict[str, Any] = {}
+            attrs_for_modality: dict[str, dict[str, Any]] = {}
             for entry in matched:
                 cache_key = f"{modality.path}/{entry['path']}"
                 if cache_key not in self._hierarchical_cache:
@@ -805,11 +820,15 @@ class MultiModalDataset(_BaseDataset):
                         file_or_path, modality_meta
                     )
                 loaded[entry["id"]] = self._hierarchical_cache[cache_key]
+                if entry.get("attributes"):
+                    attrs_for_modality[entry["id"]] = dict(entry["attributes"])
             sample[name] = loaded
+            attributes[name] = attrs_for_modality
 
         sample["id"] = file_id
         sample["full_id"] = "/" + "/".join(hierarchy_path + (file_id,))
         sample["meta"] = meta
+        sample["attributes"] = attributes
 
         for transform in self._transforms:
             sample = transform(sample)

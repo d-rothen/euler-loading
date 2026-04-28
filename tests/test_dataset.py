@@ -888,6 +888,138 @@ class TestAugmentedRgbWithHierarchicalDepth:
 
 
 # ---------------------------------------------------------------------------
+# Per-file ``attributes`` field exposed on samples
+# ---------------------------------------------------------------------------
+
+
+class TestSampleAttributes:
+    """Sample dict surfaces per-file ``attributes`` two ways:
+
+    1. Top-level convenience: ``sample["attributes"][modality_name]``.
+    2. Nested via the existing meta dict:
+       ``sample["meta"][modality_name].get("attributes")``.
+    """
+
+    def _index_with_attrs(self) -> dict[str, Any]:
+        return {
+            "dataset": {
+                "files": [
+                    {
+                        "id": "f001",
+                        "path": "f001.rgb",
+                        "path_properties": {},
+                        "basename_properties": {},
+                        "attributes": {"weight": 0.42, "src": "blender"},
+                    },
+                    {
+                        "id": "f002",
+                        "path": "f002.rgb",
+                        "path_properties": {},
+                        "basename_properties": {},
+                        # No attributes on this entry.
+                    },
+                ]
+            }
+        }
+
+    def _make(self):
+        rgb_index = self._index_with_attrs()
+        with patch(
+            "euler_loading.dataset.index_dataset_from_path",
+            return_value=rgb_index,
+        ):
+            return MultiModalDataset(
+                modalities={"rgb": Modality("/data/rgb", loader=dummy_loader)},
+            )
+
+    def test_sample_has_top_level_attributes_key(self):
+        ds = self._make()
+        sample = ds[0]
+        assert "attributes" in sample
+        assert isinstance(sample["attributes"], dict)
+
+    def test_top_level_attributes_keyed_by_modality(self):
+        ds = self._make()
+        sample = ds[0]
+        assert sample["attributes"]["rgb"] == {"weight": 0.42, "src": "blender"}
+
+    def test_attributes_also_nested_under_meta(self):
+        ds = self._make()
+        sample = ds[0]
+        assert sample["meta"]["rgb"]["attributes"] == {
+            "weight": 0.42, "src": "blender",
+        }
+
+    def test_missing_attributes_yields_empty_dict_at_top_level(self):
+        ds = self._make()
+        # f002 has no attributes.
+        by_id = {ds[i]["id"]: ds[i] for i in range(len(ds))}
+        assert by_id["f002"]["attributes"]["rgb"] == {}
+
+    def test_top_level_attributes_does_not_alias_nested_dict(self):
+        """Mutating sample['attributes'][name] must not corrupt the index."""
+        ds = self._make()
+        sample = ds[0]
+        sample["attributes"]["rgb"]["weight"] = 999.0
+        # Re-fetch — the index should still hold the original.
+        fresh = ds[0]
+        assert fresh["attributes"]["rgb"]["weight"] == 0.42
+
+
+class TestHierarchicalModalityAttributes:
+    """Hierarchical-modality attributes appear as ``{file_id: {...}}`` per modality."""
+
+    def _make(self):
+        rgb_index = _deep_regular_index(["f001"])
+        hier_index: dict[str, Any] = {
+            "dataset": {
+                "children": {
+                    "Scene01": {
+                        "children": {
+                            "sunset": {
+                                "files": [
+                                    {
+                                        "id": "intrinsic",
+                                        "path": "Scene01/sunset/intrinsic.txt",
+                                        "path_properties": {},
+                                        "basename_properties": {},
+                                        "attributes": {"sensor": "FLIR"},
+                                    }
+                                ]
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        def mock_index(path, **kw):
+            return rgb_index if "rgb" in path else hier_index
+
+        with patch(
+            "euler_loading.dataset.index_dataset_from_path",
+            side_effect=mock_index,
+        ):
+            return MultiModalDataset(
+                modalities={
+                    "rgb": Modality("/data/rgb", loader=dummy_loader),
+                },
+                hierarchical_modalities={
+                    "cam_intrinsics": Modality(
+                        "/data/intrinsics", loader=dummy_loader
+                    ),
+                },
+            )
+
+    def test_hierarchical_attributes_keyed_by_file_id(self):
+        ds = self._make()
+        sample = ds[0]
+        assert sample["attributes"]["cam_intrinsics"] == {
+            "intrinsic": {"sensor": "FLIR"},
+        }
+
+
+# ---------------------------------------------------------------------------
 # Multi-scene with duplicate bare IDs
 # ---------------------------------------------------------------------------
 

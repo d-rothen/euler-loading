@@ -240,6 +240,94 @@ class TestWriteSample:
                 output_index = json.load(io.TextIOWrapper(entry, encoding="utf-8"))
         assert output_index["type"] == "txt"
 
+    def test_write_sample_records_attributes_on_dataset_writer_entry(self, tmp_path):
+        """write_sample(attributes={modality: {...}}) lands on the output entry."""
+        def writer(path: str, value: Any, meta: dict[str, Any] | None = None) -> None:
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(str(value))
+
+        index = _flat_index("txt", ["f001"])
+        with patch(
+            "euler_loading.dataset.index_dataset_from_path",
+            return_value=index,
+        ):
+            ds = MultiModalDataset(
+                modalities={
+                    "depth": Modality(
+                        "/data/depth", loader=dummy_loader, writer=writer
+                    )
+                }
+            )
+
+        output_writer = ds.create_output_writer("depth", tmp_path / "out")
+        ds.write_sample(
+            0, {"depth": "prediction"}, output_writer,
+            attributes={"depth": {"checkpoint": "v3.2", "noise_sigma": 0.1}},
+        )
+        output_writer.save_index()
+
+        with open(tmp_path / "out" / ".ds_crawler" / "output.json") as f:
+            written_index = json.load(f)
+        entry = written_index["index"]["children"]["scene"]["files"][0]
+        assert entry["attributes"] == {"checkpoint": "v3.2", "noise_sigma": 0.1}
+
+    def test_write_sample_inherits_attributes_from_source_entry(self, tmp_path):
+        """Source entry's ``attributes`` propagate when no override is given."""
+        def writer(path: str, value: Any, meta: dict[str, Any] | None = None) -> None:
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(str(value))
+
+        index = _flat_index("txt", ["f001"])
+        # Decorate the source entry with attributes.
+        index["dataset"]["files"][0]["attributes"] = {"src": "blender"}
+
+        with patch(
+            "euler_loading.dataset.index_dataset_from_path",
+            return_value=index,
+        ):
+            ds = MultiModalDataset(
+                modalities={
+                    "depth": Modality(
+                        "/data/depth", loader=dummy_loader, writer=writer
+                    )
+                }
+            )
+
+        output_writer = ds.create_output_writer("depth", tmp_path / "out")
+        ds.write_sample(0, {"depth": "prediction"}, output_writer)
+        output_writer.save_index()
+
+        with open(tmp_path / "out" / ".ds_crawler" / "output.json") as f:
+            written_index = json.load(f)
+        entry = written_index["index"]["children"]["scene"]["files"][0]
+        assert entry["attributes"] == {"src": "blender"}
+
+    def test_write_sample_attributes_ignored_for_filesystem_destination(self, tmp_path):
+        """Plain filesystem path has no index — attributes are silently dropped."""
+        def writer(path: str, value: Any, meta: dict[str, Any] | None = None) -> None:
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(str(value))
+
+        index = _flat_index("depth", ["f001"])
+        with patch(
+            "euler_loading.dataset.index_dataset_from_path",
+            return_value=index,
+        ):
+            ds = MultiModalDataset(
+                modalities={
+                    "depth": Modality(
+                        "/data/depth", loader=dummy_loader, writer=writer
+                    )
+                }
+            )
+
+        # Should not raise.
+        ds.write_sample(
+            0, {"depth": "prediction"}, str(tmp_path),
+            attributes={"depth": {"k": "v"}},
+        )
+        assert (tmp_path / "scene" / "f001.depth").is_file()
+
     def test_write_sample_with_stream_writer_to_zip_destination(self, tmp_path):
         def writer(target: Any, value: Any, meta: dict[str, Any] | None = None) -> None:
             assert not isinstance(target, str)

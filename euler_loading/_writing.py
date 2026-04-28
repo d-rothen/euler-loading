@@ -244,15 +244,29 @@ def _write_value_to_destination(
     full_id: str,
     basename: str,
     relative_path: str,
-    source_meta: Mapping[str, Any] | None,
+    source_entry: Mapping[str, Any] | None,
+    entry_attributes: Mapping[str, Any] | None = None,
     create_dirs: bool,
 ) -> str:
+    """Write *value* to the destination and (when applicable) record a
+    ds-crawler file entry.
+
+    ``meta`` is the modality-level metadata passed to the loader/writer
+    callable.  ``entry_attributes`` is the per-file ``attributes`` dict
+    written onto the ds-crawler file entry; it is a no-op for plain
+    filesystem destinations (no index to record into).
+    """
+    entry_attributes_dict = (
+        dict(entry_attributes) if entry_attributes is not None else None
+    )
+
     if isinstance(destination, ZipDatasetWriter):
         if supports_stream_target(writer):
             with destination.open(
                 full_id,
                 basename,
-                source_meta=dict(source_meta or {}),
+                source_entry=dict(source_entry or {}),
+                attributes=entry_attributes_dict,
             ) as stream:
                 _set_stream_name(stream, basename)
                 writer(stream, value, meta)
@@ -264,7 +278,8 @@ def _write_value_to_destination(
                     full_id,
                     basename,
                     temp_path.read_bytes(),
-                    source_meta=dict(source_meta or {}),
+                    source_entry=dict(source_entry or {}),
+                    attributes=entry_attributes_dict,
                 )
         _register_destination_rel_path(destination, relative_path)
         return _destination_location(destination, relative_path)
@@ -273,11 +288,20 @@ def _write_value_to_destination(
         target_path = destination.get_path(
             full_id,
             basename,
-            source_meta=dict(source_meta or {}),
+            source_entry=dict(source_entry or {}),
+            attributes=entry_attributes_dict,
         )
         writer(str(target_path), value, meta)
         _register_destination_rel_path(destination, relative_path)
         return str(target_path)
+
+    if entry_attributes_dict:
+        logger.debug(
+            "Filesystem destination %s has no index — entry attributes "
+            "for %s will not be persisted.",
+            destination,
+            relative_path,
+        )
 
     target_path = Path(destination) / relative_path
     if create_dirs:
