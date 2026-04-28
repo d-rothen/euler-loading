@@ -13,9 +13,11 @@ from euler_loading.loaders import generic as generic_top
 from euler_loading.loaders.gpu import vkitti2 as gpu_vkitti2
 from euler_loading.loaders.gpu import real_drive_sim as gpu_rds
 from euler_loading.loaders.gpu import generic as gpu_generic
+from euler_loading.loaders.gpu import generic_dense_depth as gpu_generic_dense_depth
 from euler_loading.loaders.cpu import vkitti2 as cpu_vkitti2
 from euler_loading.loaders.cpu import real_drive_sim as cpu_rds
 from euler_loading.loaders.cpu import generic as cpu_generic
+from euler_loading.loaders.cpu import generic_dense_depth as cpu_generic_dense_depth
 
 # ---------------------------------------------------------------------------
 # Shared fixtures
@@ -117,6 +119,28 @@ class TestVKITTI2ModuleContents:
     @pytest.mark.parametrize("name", WRITER_NAMES)
     def test_cpu_has_writer_callable(self, name):
         assert callable(getattr(cpu_vkitti2, name))
+
+
+class TestGenericDenseDepthAttributes:
+    """Representative built-in loader consumption of per-file attributes."""
+
+    def test_gpu_depth_uses_scale_to_meters_override(self, depth_path):
+        result = gpu_generic_dense_depth.depth(
+            depth_path,
+            attributes={"scale_to_meters_override": 0.01},
+        )
+
+        expected = torch.tensor([[[1.0, 2.0], [3.0, 4.0]]], dtype=torch.float32)
+        assert torch.allclose(result, expected)
+
+    def test_cpu_depth_uses_scale_to_meters_override(self, depth_path):
+        result = cpu_generic_dense_depth.depth(
+            depth_path,
+            attributes={"scale_to_meters_override": 0.01},
+        )
+
+        expected = np.array([[1.0, 2.0], [3.0, 4.0]], dtype=np.float32)
+        np.testing.assert_allclose(result, expected)
 
 
 # ---------------------------------------------------------------------------

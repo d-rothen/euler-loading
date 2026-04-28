@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import json
 import logging
 import os
 from pathlib import Path
@@ -29,6 +30,7 @@ from ._metadata import _build_runlog_entry, _get_ds_crawler_descriptor
 from ._resolution import (
     _resolve_loader,
     _resolve_writer,
+    loader_accepts_attributes,
     resolve_loader_module,
     resolve_writer_module,
 )
@@ -116,6 +118,33 @@ def _get_index_meta(index_output: Mapping[str, Any]) -> dict[str, Any] | None:
     if isinstance(raw_meta, Mapping):
         return dict(raw_meta)
     return None
+
+
+def _get_file_attributes(file_entry: Mapping[str, Any]) -> dict[str, Any] | None:
+    attributes = file_entry.get("attributes")
+    if isinstance(attributes, Mapping):
+        return dict(attributes)
+    return None
+
+
+def _attributes_cache_key(attributes: Mapping[str, Any] | None) -> str:
+    if attributes is None:
+        return "null"
+    return json.dumps(attributes, sort_keys=True, separators=(",", ":"), default=repr)
+
+
+def _load_with_optional_attributes(
+    loader: Callable[..., Any],
+    file_or_path: Any,
+    meta: dict[str, Any] | None,
+    attributes: dict[str, Any] | None,
+    *,
+    accepts_attributes: bool,
+) -> Any:
+    if accepts_attributes:
+        loader_attributes = dict(attributes) if attributes is not None else None
+        return loader(file_or_path, meta, attributes=loader_attributes)
+    return loader(file_or_path, meta)
 
 
 def _extract_id_schema(index_output: Mapping[str, Any]) -> dict[str, Any]:
@@ -394,6 +423,7 @@ class MultiModalDataset(_BaseDataset):
         # -- Index each modality and build ID → FileRecord lookups -----------
         self._lookups: dict[str, dict[str, FileRecord]] = {}
         self._resolved_loaders: dict[str, Callable[..., Any]] = {}
+        self._loaders_accept_attributes: dict[str, bool] = {}
         self._resolved_writers: dict[str, Callable[..., Any] | None] = {}
 
         for name, modality in modalities.items():
@@ -405,6 +435,9 @@ class MultiModalDataset(_BaseDataset):
             self._index_outputs[name] = index
             self._resolved_loaders[name] = _resolve_loader(
                 modality_name=name, modality=modality, index=index,
+            )
+            self._loaders_accept_attributes[name] = loader_accepts_attributes(
+                self._resolved_loaders[name]
             )
             self._resolved_writers[name] = _resolve_writer(
                 modality_name=name, modality=modality, index=index,
@@ -437,6 +470,9 @@ class MultiModalDataset(_BaseDataset):
             self._hierarchical_index_outputs[name] = index
             self._resolved_loaders[name] = _resolve_loader(
                 modality_name=name, modality=modality, index=index,
+            )
+            self._loaders_accept_attributes[name] = loader_accepts_attributes(
+                self._resolved_loaders[name]
             )
             self._resolved_writers[name] = _resolve_writer(
                 modality_name=name, modality=modality, index=index,
@@ -791,9 +827,16 @@ class MultiModalDataset(_BaseDataset):
             else:
                 file_or_path = f"{modality.path}/{record.file_entry['path']}"
 
-            sample[name] = self._resolved_loaders[name](file_or_path, modality_meta)
+            entry_attributes = _get_file_attributes(record.file_entry)
+            sample[name] = _load_with_optional_attributes(
+                self._resolved_loaders[name],
+                file_or_path,
+                modality_meta,
+                entry_attributes,
+                accepts_attributes=self._loaders_accept_attributes[name],
+            )
             meta[name] = record.file_entry
-            attributes[name] = dict(record.file_entry.get("attributes") or {})
+            attributes[name] = entry_attributes or {}
 
             # Hierarchy path from the first modality that has one.
             if not hierarchy_path:
@@ -808,20 +851,31 @@ class MultiModalDataset(_BaseDataset):
             loaded: dict[str, Any] = {}
             attrs_for_modality: dict[str, dict[str, Any]] = {}
             for entry in matched:
+                entry_attributes = _get_file_attributes(entry)
                 cache_key = f"{modality.path}/{entry['path']}"
+                accepts_attributes = self._loaders_accept_attributes[name]
+                if accepts_attributes:
+                    cache_key = (
+                        f"{cache_key}::attributes="
+                        f"{_attributes_cache_key(entry_attributes)}"
+                    )
                 if cache_key not in self._hierarchical_cache:
                     if name in self._zip_modalities:
                         file_or_path = self._open_from_zip(
                             name, modality.path, entry["path"],
                         )
                     else:
-                        file_or_path = cache_key
-                    self._hierarchical_cache[cache_key] = self._resolved_loaders[name](
-                        file_or_path, modality_meta
+                        file_or_path = f"{modality.path}/{entry['path']}"
+                    self._hierarchical_cache[cache_key] = _load_with_optional_attributes(
+                        self._resolved_loaders[name],
+                        file_or_path,
+                        modality_meta,
+                        entry_attributes,
+                        accepts_attributes=accepts_attributes,
                     )
                 loaded[entry["id"]] = self._hierarchical_cache[cache_key]
-                if entry.get("attributes"):
-                    attrs_for_modality[entry["id"]] = dict(entry["attributes"])
+                if entry_attributes:
+                    attrs_for_modality[entry["id"]] = entry_attributes
             sample[name] = loaded
             attributes[name] = attrs_for_modality
 

@@ -6,7 +6,7 @@ requires-python = ">=3.9"
 dependencies = [
     "numpy",
     "Pillow",
-    "ds-crawler",
+    "ds-crawler>=2.3.0",
     "euler-dataset-contract",
 ]
 
@@ -22,6 +22,7 @@ build-backend = "hatchling.build"
 allow-direct-references = true
 
 [tool.pytest.ini_options]
+addopts = "-m 'not real'"
 markers = ["real: tests that require real on-disk datasets (deselected by default)"]
 
 [tool.hatch.build.targets.wheel]

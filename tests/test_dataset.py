@@ -12,6 +12,7 @@ from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
+from ds_crawler import DatasetWriter
 
 from euler_loading import Modality, MultiModalDataset
 
@@ -965,6 +966,153 @@ class TestSampleAttributes:
         fresh = ds[0]
         assert fresh["attributes"]["rgb"]["weight"] == 0.42
 
+    def test_attributes_round_trip_from_ds_crawler_writer(self, tmp_path):
+        """Pin ds-crawler writer output to euler-loading sample exposure."""
+        root = tmp_path / "txt"
+        writer = DatasetWriter(
+            root,
+            name="RoundTrip",
+            type="txt",
+            euler_train={"used_as": "input", "modality_type": "txt"},
+        )
+        path = writer.get_path(
+            "/scene:Scene01/f001",
+            "f001.txt",
+            attributes={"weight": 0.42, "src": "ds-crawler"},
+        )
+        path.write_text("payload", encoding="utf-8")
+        writer.save_index()
+
+        def load_text(path: str, meta: dict[str, Any] | None = None) -> str:
+            del meta
+            with open(path, encoding="utf-8") as f:
+                return f.read()
+
+        ds = MultiModalDataset(
+            modalities={"txt": Modality(str(root), loader=load_text)},
+        )
+        sample = ds[0]
+
+        assert sample["txt"] == "payload"
+        assert sample["attributes"]["txt"] == {"weight": 0.42, "src": "ds-crawler"}
+        assert sample["meta"]["txt"]["attributes"] == {
+            "weight": 0.42,
+            "src": "ds-crawler",
+        }
+
+
+class TestLoaderAttributes:
+    """Per-file attributes are passed only to loaders that opt in."""
+
+    def _index_with_attrs(self, attributes: dict[str, Any] | None) -> dict[str, Any]:
+        entry = {
+            "id": "f001",
+            "path": "f001.rgb",
+            "path_properties": {},
+            "basename_properties": {},
+        }
+        if attributes is not None:
+            entry["attributes"] = attributes
+        return {"dataset": {"files": [entry]}}
+
+    def test_loader_with_attributes_kwarg_receives_file_attributes(self):
+        received: list[dict[str, Any] | None] = []
+
+        def loader(
+            path: str,
+            meta: dict[str, Any] | None = None,
+            *,
+            attributes: dict[str, Any] | None = None,
+        ) -> str:
+            del path, meta
+            received.append(attributes)
+            if attributes is not None:
+                attributes["weight"] = 999.0
+            return "loaded"
+
+        index = self._index_with_attrs({"weight": 0.42, "src": "blender"})
+        with patch(
+            "euler_loading.dataset.index_dataset_from_path",
+            return_value=index,
+        ):
+            ds = MultiModalDataset(
+                modalities={"rgb": Modality("/data/rgb", loader=loader)},
+            )
+
+        sample = ds[0]
+
+        assert received == [{"weight": 999.0, "src": "blender"}]
+        assert sample["attributes"]["rgb"] == {"weight": 0.42, "src": "blender"}
+        assert ds[0]["attributes"]["rgb"] == {"weight": 0.42, "src": "blender"}
+
+    def test_legacy_loader_does_not_receive_attributes_kwarg(self):
+        calls: list[tuple[str, dict[str, Any] | None]] = []
+
+        def loader(path: str, meta: dict[str, Any] | None = None) -> str:
+            calls.append((path, meta))
+            return "loaded"
+
+        index = self._index_with_attrs({"weight": 0.42})
+        with patch(
+            "euler_loading.dataset.index_dataset_from_path",
+            return_value=index,
+        ):
+            ds = MultiModalDataset(
+                modalities={"rgb": Modality("/data/rgb", loader=loader)},
+            )
+
+        assert ds[0]["rgb"] == "loaded"
+        assert calls == [("/data/rgb/f001.rgb", None)]
+
+    def test_loader_with_kwargs_receives_attributes(self):
+        received: list[dict[str, Any] | None] = []
+
+        def loader(
+            path: str,
+            meta: dict[str, Any] | None = None,
+            **kwargs: Any,
+        ) -> str:
+            del path, meta
+            received.append(kwargs.get("attributes"))
+            return "loaded"
+
+        index = self._index_with_attrs({"weight": 0.42})
+        with patch(
+            "euler_loading.dataset.index_dataset_from_path",
+            return_value=index,
+        ):
+            ds = MultiModalDataset(
+                modalities={"rgb": Modality("/data/rgb", loader=loader)},
+            )
+
+        assert ds[0]["rgb"] == "loaded"
+        assert received == [{"weight": 0.42}]
+
+    def test_loader_with_attributes_kwarg_receives_none_when_missing(self):
+        received: list[dict[str, Any] | None] = []
+
+        def loader(
+            path: str,
+            meta: dict[str, Any] | None = None,
+            *,
+            attributes: dict[str, Any] | None = None,
+        ) -> str:
+            del path, meta
+            received.append(attributes)
+            return "loaded"
+
+        index = self._index_with_attrs(None)
+        with patch(
+            "euler_loading.dataset.index_dataset_from_path",
+            return_value=index,
+        ):
+            ds = MultiModalDataset(
+                modalities={"rgb": Modality("/data/rgb", loader=loader)},
+            )
+
+        assert ds[0]["rgb"] == "loaded"
+        assert received == [None]
+
 
 class TestHierarchicalModalityAttributes:
     """Hierarchical-modality attributes appear as ``{file_id: {...}}`` per modality."""
@@ -1017,6 +1165,98 @@ class TestHierarchicalModalityAttributes:
         assert sample["attributes"]["cam_intrinsics"] == {
             "intrinsic": {"sensor": "FLIR"},
         }
+
+    def test_hierarchical_cache_key_includes_attributes_for_opted_in_loader(self):
+        rgb_index: dict[str, Any] = {
+            "dataset": {
+                "children": {
+                    "Scene01": {
+                        "children": {
+                            "day": {
+                                "files": [
+                                    _make_file("f001", "Scene01/day/f001.rgb"),
+                                ],
+                            },
+                            "night": {
+                                "files": [
+                                    _make_file("f002", "Scene01/night/f002.rgb"),
+                                ],
+                            },
+                        }
+                    }
+                }
+            }
+        }
+        hier_index: dict[str, Any] = {
+            "dataset": {
+                "children": {
+                    "Scene01": {
+                        "children": {
+                            "day": {
+                                "files": [
+                                    {
+                                        "id": "intrinsic",
+                                        "path": "Scene01/intrinsic.txt",
+                                        "path_properties": {},
+                                        "basename_properties": {},
+                                        "attributes": {"variant": "day"},
+                                    }
+                                ],
+                            },
+                            "night": {
+                                "files": [
+                                    {
+                                        "id": "intrinsic",
+                                        "path": "Scene01/intrinsic.txt",
+                                        "path_properties": {},
+                                        "basename_properties": {},
+                                        "attributes": {"variant": "night"},
+                                    }
+                                ],
+                            },
+                        }
+                    }
+                }
+            }
+        }
+        calls: list[dict[str, Any] | None] = []
+
+        def hier_loader(
+            path: str,
+            meta: dict[str, Any] | None = None,
+            *,
+            attributes: dict[str, Any] | None = None,
+        ) -> str:
+            del path, meta
+            calls.append(attributes)
+            assert attributes is not None
+            return attributes["variant"]
+
+        def mock_index(path, **kw):
+            return rgb_index if "rgb" in path else hier_index
+
+        with patch(
+            "euler_loading.dataset.index_dataset_from_path",
+            side_effect=mock_index,
+        ):
+            ds = MultiModalDataset(
+                modalities={
+                    "rgb": Modality("/data/rgb", loader=dummy_loader),
+                },
+                hierarchical_modalities={
+                    "cam_intrinsics": Modality(
+                        "/data/intrinsics", loader=hier_loader
+                    ),
+                },
+            )
+
+        samples = [ds[i] for i in range(len(ds))]
+
+        assert {sample["cam_intrinsics"]["intrinsic"] for sample in samples} == {
+            "day",
+            "night",
+        }
+        assert calls == [{"variant": "day"}, {"variant": "night"}]
 
 
 # ---------------------------------------------------------------------------

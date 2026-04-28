@@ -96,7 +96,7 @@ def _write_numpy(path: Union[str, BinaryIO], value: Any) -> None:
     shape="HW",
     file_formats=[".npy", ".npz"],
 )
-def map_2d(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None) -> np.ndarray:
+def map_2d(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None, *, attributes: dict[str, Any] | None = None) -> np.ndarray:
     """Load an arbitrary 2D map as an ``(H, W)`` float32 array.
 
     Suitable for any single-channel dense quantity (e.g. scattering
@@ -112,7 +112,7 @@ def map_2d(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None) -> np
     shape="HWC",
     file_formats=[".npy", ".npz"],
 )
-def map_3d(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None) -> np.ndarray:
+def map_3d(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None, *, attributes: dict[str, Any] | None = None) -> np.ndarray:
     """Load an arbitrary 3D map as an ``(H, W, C)`` float32 array.
 
     The file is expected to be stored in ``(C, H, W)`` layout and is
@@ -130,7 +130,7 @@ def map_3d(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None) -> np
     shape="HW",
     file_formats=[".npy", ".npz"],
 )
-def scattering_coefficient(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None) -> np.ndarray:
+def scattering_coefficient(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None, *, attributes: dict[str, Any] | None = None) -> np.ndarray:
     """Load a scattering-coefficient map as an ``(H, W)`` float32 array."""
     return map_2d(path, meta)
 
@@ -141,7 +141,7 @@ def scattering_coefficient(path: Union[str, BinaryIO], meta: dict[str, Any] | No
     shape="HWC",
     file_formats=[".npy", ".npz"],
 )
-def atmospheric_light(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None) -> np.ndarray:
+def atmospheric_light(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None, *, attributes: dict[str, Any] | None = None) -> np.ndarray:
     """Load an atmospheric-light map as an ``(H, W, C)`` float32 array."""
     return map_3d(path, meta)
 
@@ -152,7 +152,7 @@ def atmospheric_light(path: Union[str, BinaryIO], meta: dict[str, Any] | None = 
     shape="HWC",
     file_formats=[".npy", ".npz"],
 )
-def spherical_map(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None) -> np.ndarray:
+def spherical_map(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None, *, attributes: dict[str, Any] | None = None) -> np.ndarray:
     """Load a spherical map as an ``(H, W, C)`` float32 array.
 
     The file is expected to be stored in ``(C, H, W)`` layout and is
@@ -173,7 +173,7 @@ def spherical_map(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None
     shape="3x3",
     file_formats=[".npy", ".npz"],
 )
-def intrinsics(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None) -> np.ndarray:
+def intrinsics(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None, *, attributes: dict[str, Any] | None = None) -> np.ndarray:
     """Load a camera intrinsics matrix as a ``(3, 3)`` float32 array.
 
     The file is expected to contain a ``(3, 3)`` array::
@@ -191,7 +191,7 @@ def intrinsics(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None) -
     shape="NC",
     file_formats=[".npy", ".npz"],
 )
-def sh_coeffs(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None) -> np.ndarray:
+def sh_coeffs(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None, *, attributes: dict[str, Any] | None = None) -> np.ndarray:
     """Load spherical-harmonic coefficients as an ``(N, 3)`` float32 array.
 
     *N* is the number of SH basis functions (e.g. 15 for degree-3 SH with

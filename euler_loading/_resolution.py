@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+import inspect
 import logging
 from collections.abc import Mapping
 from types import ModuleType
@@ -66,6 +67,32 @@ def resolve_writer_module(name: str) -> ModuleType:
     Writers live next to loader functions in the same modules.
     """
     return resolve_loader_module(name)
+
+
+def loader_accepts_attributes(loader: Callable[..., Any]) -> bool:
+    """Return whether *loader* can accept an ``attributes=`` keyword.
+
+    Loaders historically accepted ``(path, meta=None)``.  Per-file
+    attributes are opt-in so legacy loaders keep receiving the old call
+    shape, while loaders declaring ``attributes`` or ``**kwargs`` receive
+    the new context.
+    """
+    try:
+        signature = inspect.signature(loader)
+    except (TypeError, ValueError):
+        return False
+
+    attributes_param = signature.parameters.get("attributes")
+    if (
+        attributes_param is not None
+        and attributes_param.kind is not inspect.Parameter.POSITIONAL_ONLY
+    ):
+        return True
+
+    return any(
+        param.kind is inspect.Parameter.VAR_KEYWORD
+        for param in signature.parameters.values()
+    )
 
 
 def _resolve_loader(

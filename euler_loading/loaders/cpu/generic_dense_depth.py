@@ -96,7 +96,7 @@ def _load_numpy(path: Union[str, BinaryIO]) -> np.ndarray:
     file_formats=[".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff", ".npy", ".npz"],
     output_range=[0.0, 1.0],
 )
-def rgb(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None) -> np.ndarray:
+def rgb(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None, *, attributes: dict[str, Any] | None = None) -> np.ndarray:
     """Load an RGB sample as an ``(H, W, 3)`` float32 array in ``[0, 1]``.
 
     - **Image files** are loaded via PIL and normalised to ``[0, 1]``.
@@ -115,18 +115,25 @@ def rgb(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None) -> np.nd
     shape="HW",
     file_formats=[".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff", ".npy", ".npz"],
 )
-def depth(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None) -> np.ndarray:
+def depth(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None, *, attributes: dict[str, Any] | None = None) -> np.ndarray:
     """Load a depth map as an ``(H, W)`` float32 array.
 
     - **Image files** are loaded as single-channel greyscale.
     - **NumPy files** are loaded directly.
 
-    No unit conversion is applied; values are returned as-is.
+    Values are returned as-is unless per-file ``attributes`` contains
+    ``"scale_to_meters_override"``, in which case values are multiplied
+    by that scale.
     """
     ext = os.path.splitext(_get_name(path))[1].lower()
     if ext in _IMAGE_EXTENSIONS:
-        return np.array(Image.open(path), dtype=np.float32)
-    return _load_numpy(path)
+        arr = np.array(Image.open(path), dtype=np.float32)
+    else:
+        arr = _load_numpy(path)
+    scale = (attributes or {}).get("scale_to_meters_override")
+    if scale is not None:
+        arr = arr * float(scale)
+    return arr
 
 
 @modality_meta(
@@ -136,7 +143,7 @@ def depth(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None) -> np.
     file_formats=[".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff"],
     requires_meta=["sky_mask"],
 )
-def sky_mask(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None) -> np.ndarray:
+def sky_mask(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None, *, attributes: dict[str, Any] | None = None) -> np.ndarray:
     """Load a sky mask as an ``(H, W)`` bool array.
 
     Reads the file as an RGB image and compares each pixel against the sky
@@ -162,7 +169,7 @@ def sky_mask(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None) -> 
     shape="3x3",
     requires_meta=["intrinsics"],
 )
-def read_intrinsics(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None) -> np.ndarray:
+def read_intrinsics(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None, *, attributes: dict[str, Any] | None = None) -> np.ndarray:
     """Return the ``(3, 3)`` camera intrinsics matrix from *meta*.
 
     The *path* argument is ignored.  The intrinsics are expected under

@@ -97,7 +97,7 @@ def _write_numpy(path: Union[str, BinaryIO], value: Any) -> None:
     shape="HW",
     file_formats=[".npy", ".npz"],
 )
-def map_2d(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None) -> torch.Tensor:
+def map_2d(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None, *, attributes: dict[str, Any] | None = None) -> torch.Tensor:
     """Load an arbitrary 2D map as an ``(H, W)`` float32 tensor.
 
     Suitable for any single-channel dense quantity (e.g. scattering
@@ -114,7 +114,7 @@ def map_2d(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None) -> to
     shape="CHW",
     file_formats=[".npy", ".npz"],
 )
-def map_3d(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None) -> torch.Tensor:
+def map_3d(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None, *, attributes: dict[str, Any] | None = None) -> torch.Tensor:
     """Load an arbitrary 3D map as a ``(C, H, W)`` float32 tensor.
 
     The file is expected to already be stored in ``(C, H, W)`` layout,
@@ -131,7 +131,7 @@ def map_3d(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None) -> to
     shape="HW",
     file_formats=[".npy", ".npz"],
 )
-def scattering_coefficient(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None) -> torch.Tensor:
+def scattering_coefficient(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None, *, attributes: dict[str, Any] | None = None) -> torch.Tensor:
     """Load a scattering-coefficient map as an ``(H, W)`` float32 tensor."""
     return map_2d(path, meta)
 
@@ -142,7 +142,7 @@ def scattering_coefficient(path: Union[str, BinaryIO], meta: dict[str, Any] | No
     shape="CHW",
     file_formats=[".npy", ".npz"],
 )
-def atmospheric_light(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None) -> torch.Tensor:
+def atmospheric_light(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None, *, attributes: dict[str, Any] | None = None) -> torch.Tensor:
     """Load an atmospheric-light map as a ``(C, H, W)`` float32 tensor."""
     return map_3d(path, meta)
 
@@ -153,7 +153,7 @@ def atmospheric_light(path: Union[str, BinaryIO], meta: dict[str, Any] | None = 
     shape="CHW",
     file_formats=[".npy", ".npz"],
 )
-def spherical_map(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None) -> torch.Tensor:
+def spherical_map(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None, *, attributes: dict[str, Any] | None = None) -> torch.Tensor:
     """Load a spherical map as a ``(C, H, W)`` float32 tensor.
 
     The file is expected to already be stored in ``(C, H, W)`` layout.
@@ -173,7 +173,7 @@ def spherical_map(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None
     shape="3x3",
     file_formats=[".npy", ".npz"],
 )
-def intrinsics(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None) -> torch.Tensor:
+def intrinsics(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None, *, attributes: dict[str, Any] | None = None) -> torch.Tensor:
     """Load a camera intrinsics matrix as a ``(3, 3)`` float32 tensor.
 
     The file is expected to contain a ``(3, 3)`` array::
@@ -192,7 +192,7 @@ def intrinsics(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None) -
     shape="NC",
     file_formats=[".npy", ".npz"],
 )
-def sh_coeffs(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None) -> torch.Tensor:
+def sh_coeffs(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None, *, attributes: dict[str, Any] | None = None) -> torch.Tensor:
     """Load spherical-harmonic coefficients as an ``(N, 3)`` float32 tensor.
 
     *N* is the number of SH basis functions (e.g. 15 for degree-3 SH with

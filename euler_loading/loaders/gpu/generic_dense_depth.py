@@ -97,7 +97,7 @@ def _load_numpy(path: Union[str, BinaryIO]) -> np.ndarray:
     file_formats=[".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff", ".npy", ".npz"],
     output_range=[0.0, 1.0],
 )
-def rgb(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None) -> torch.Tensor:
+def rgb(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None, *, attributes: dict[str, Any] | None = None) -> torch.Tensor:
     """Load an RGB sample as a ``(3, H, W)`` float32 tensor in ``[0, 1]``.
 
     - **Image files** are loaded via PIL and normalised to ``[0, 1]``.
@@ -118,19 +118,24 @@ def rgb(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None) -> torch
     shape="1HW",
     file_formats=[".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff", ".npy", ".npz"],
 )
-def depth(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None) -> torch.Tensor:
+def depth(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None, *, attributes: dict[str, Any] | None = None) -> torch.Tensor:
     """Load a depth map as a ``(1, H, W)`` float32 tensor.
 
     - **Image files** are loaded as single-channel greyscale.
     - **NumPy files** are loaded directly.
 
-    No unit conversion is applied; values are returned as-is.
+    Values are returned as-is unless per-file ``attributes`` contains
+    ``"scale_to_meters_override"``, in which case values are multiplied
+    by that scale.
     """
     ext = os.path.splitext(_get_name(path))[1].lower()
     if ext in _IMAGE_EXTENSIONS:
         arr = np.array(Image.open(path), dtype=np.float32)
     else:
         arr = _load_numpy(path)
+    scale = (attributes or {}).get("scale_to_meters_override")
+    if scale is not None:
+        arr = arr * float(scale)
     return torch.from_numpy(arr).unsqueeze(0).contiguous()
 
 
@@ -141,7 +146,7 @@ def depth(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None) -> tor
     file_formats=[".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff"],
     requires_meta=["sky_mask"],
 )
-def sky_mask(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None) -> torch.Tensor:
+def sky_mask(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None, *, attributes: dict[str, Any] | None = None) -> torch.Tensor:
     """Load a sky mask as a ``(1, H, W)`` bool tensor.
 
     Reads the file as an RGB image and compares each pixel against the sky
@@ -168,7 +173,7 @@ def sky_mask(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None) -> 
     shape="3x3",
     requires_meta=["intrinsics"],
 )
-def read_intrinsics(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None) -> torch.Tensor:
+def read_intrinsics(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None, *, attributes: dict[str, Any] | None = None) -> torch.Tensor:
     """Return the ``(3, 3)`` camera intrinsics matrix from *meta*.
 
     The *path* argument is ignored.  The intrinsics are expected under
