@@ -709,6 +709,185 @@ class TestHierarchicalModalities:
 
 
 # ---------------------------------------------------------------------------
+# Augmented RGB folder + per-id GT depth via hierarchical modality
+# ---------------------------------------------------------------------------
+#
+# Layout produced by ds-crawler for this case
+# (see ds-crawler examples/augmented_rgb_example.py)::
+#
+#     RGB tree
+#       children["file_id:abc"].files = [
+#         {id: "aug-aug_1", path: "abc/aug_1.png"},
+#         {id: "aug-aug_2", path: "abc/aug_2.png"},
+#       ]
+#       children["file_id:xyz"].files = [
+#         {id: "aug-aug_1", path: "xyz/aug_1.png"},
+#         {id: "aug-aug_2", path: "xyz/aug_2.png"},
+#       ]
+#
+#     Depth tree
+#       children["file_id:abc"].files = [{id: "file_id-abc", path: "abc.png"}]
+#       children["file_id:xyz"].files = [{id: "file_id-xyz", path: "xyz.png"}]
+#
+# Wiring depth as a hierarchical modality means each per-aug RGB sample
+# at hierarchy_path=("file_id:<id>",) finds the matching depth file at the
+# same prefix.
+
+
+def _augmented_rgb_index() -> dict[str, Any]:
+    return {
+        "dataset": {
+            "children": {
+                "file_id:abc": {
+                    "files": [
+                        _make_file("aug-aug_1", "abc/aug_1.png"),
+                        _make_file("aug-aug_2", "abc/aug_2.png"),
+                    ]
+                },
+                "file_id:xyz": {
+                    "files": [
+                        _make_file("aug-aug_1", "xyz/aug_1.png"),
+                        _make_file("aug-aug_2", "xyz/aug_2.png"),
+                    ]
+                },
+            }
+        }
+    }
+
+
+def _per_id_depth_hierarchical_index() -> dict[str, Any]:
+    return {
+        "dataset": {
+            "children": {
+                "file_id:abc": {
+                    "files": [_make_file("file_id-abc", "abc.png")]
+                },
+                "file_id:xyz": {
+                    "files": [_make_file("file_id-xyz", "xyz.png")]
+                },
+            }
+        }
+    }
+
+
+class TestAugmentedRgbWithHierarchicalDepth:
+    """End-to-end check that a file-id-as-folder augmented RGB modality joins
+    correctly to a per-id GT depth modality via ``hierarchical_modalities``.
+    """
+
+    def _make(self):
+        rgb_index = _augmented_rgb_index()
+        depth_index = _per_id_depth_hierarchical_index()
+
+        def mock_index(path, **kw):
+            return rgb_index if "rgb" in path else depth_index
+
+        with patch(
+            "euler_loading.dataset.index_dataset_from_path",
+            side_effect=mock_index,
+        ):
+            return MultiModalDataset(
+                modalities={
+                    "rgb": Modality("/data/rgb", loader=dummy_loader),
+                },
+                hierarchical_modalities={
+                    "depth": Modality("/data/depth", loader=dummy_loader),
+                },
+            )
+
+    def test_one_sample_per_aug(self):
+        ds = self._make()
+        # 2 file-ids x 2 augs per file-id
+        assert len(ds) == 4
+
+    def test_each_sample_has_depth_keyed_by_file_id(self):
+        ds = self._make()
+        for i in range(len(ds)):
+            sample = ds[i]
+            assert "depth" in sample
+            assert isinstance(sample["depth"], dict)
+            assert len(sample["depth"]) == 1
+
+    def test_depth_shared_within_file_id(self):
+        """Both augs of the same file-id receive the same depth file."""
+        ds = self._make()
+        by_full_id = {ds[i]["full_id"]: ds[i] for i in range(len(ds))}
+
+        abc_aug_1 = by_full_id["/file_id:abc/aug-aug_1"]["depth"]
+        abc_aug_2 = by_full_id["/file_id:abc/aug-aug_2"]["depth"]
+        assert abc_aug_1 == abc_aug_2
+
+        xyz_aug_1 = by_full_id["/file_id:xyz/aug-aug_1"]["depth"]
+        xyz_aug_2 = by_full_id["/file_id:xyz/aug-aug_2"]["depth"]
+        assert xyz_aug_1 == xyz_aug_2
+
+    def test_depth_differs_across_file_ids(self):
+        ds = self._make()
+        by_full_id = {ds[i]["full_id"]: ds[i] for i in range(len(ds))}
+        abc = by_full_id["/file_id:abc/aug-aug_1"]["depth"]
+        xyz = by_full_id["/file_id:xyz/aug-aug_1"]["depth"]
+        assert abc != xyz
+
+    def test_depth_loader_called_with_correct_path(self):
+        ds = self._make()
+        by_full_id = {ds[i]["full_id"]: ds[i] for i in range(len(ds))}
+        depth_for_abc = by_full_id["/file_id:abc/aug-aug_1"]["depth"]
+        depth_for_xyz = by_full_id["/file_id:xyz/aug-aug_1"]["depth"]
+        assert depth_for_abc == {"file_id-abc": "loaded:/data/depth/abc.png"}
+        assert depth_for_xyz == {"file_id-xyz": "loaded:/data/depth/xyz.png"}
+
+    def test_rgb_loader_receives_per_aug_path(self):
+        ds = self._make()
+        rgb_paths = {ds[i]["rgb"] for i in range(len(ds))}
+        assert rgb_paths == {
+            "loaded:/data/rgb/abc/aug_1.png",
+            "loaded:/data/rgb/abc/aug_2.png",
+            "loaded:/data/rgb/xyz/aug_1.png",
+            "loaded:/data/rgb/xyz/aug_2.png",
+        }
+
+    def test_full_id_encodes_file_id_and_aug(self):
+        ds = self._make()
+        full_ids = {ds[i]["full_id"] for i in range(len(ds))}
+        assert full_ids == {
+            "/file_id:abc/aug-aug_1",
+            "/file_id:abc/aug-aug_2",
+            "/file_id:xyz/aug-aug_1",
+            "/file_id:xyz/aug-aug_2",
+        }
+
+    def test_depth_loaded_once_per_file_id(self):
+        """Hierarchical-modality cache: depth file loaded once per file-id,
+        not once per augmentation.
+        """
+        loader = MagicMock(return_value="loaded-depth")
+        rgb_index = _augmented_rgb_index()
+        depth_index = _per_id_depth_hierarchical_index()
+
+        def mock_index(path, **kw):
+            return rgb_index if "rgb" in path else depth_index
+
+        with patch(
+            "euler_loading.dataset.index_dataset_from_path",
+            side_effect=mock_index,
+        ):
+            ds = MultiModalDataset(
+                modalities={
+                    "rgb": Modality("/data/rgb", loader=dummy_loader),
+                },
+                hierarchical_modalities={
+                    "depth": Modality("/data/depth", loader=loader),
+                },
+            )
+
+        for i in range(len(ds)):
+            _ = ds[i]
+
+        # 2 file-ids × 4 sample accesses → still only 2 depth loads.
+        assert loader.call_count == 2
+
+
+# ---------------------------------------------------------------------------
 # Multi-scene with duplicate bare IDs
 # ---------------------------------------------------------------------------
 
