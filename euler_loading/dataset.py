@@ -234,6 +234,21 @@ class Modality:
 
                   ``keyed_by`` itself may be omitted entirely (or set to
                   ``{}`` / ``None``) to use both auto-detection paths.
+        cache: Optional opt-in/out for in-memory caching of loaded values.
+               Only meaningful for hierarchical and keyed modalities;
+               regular modalities load once per sample and never cache.
+
+               - ``True``: every distinct file is decoded at most once
+                 per dataset lifetime, then served from memory.
+               - ``False``: every access re-reads and re-decodes the
+                 file.  Use this for large per-sample tensors where the
+                 cache would balloon (e.g. multi-hundred-GB GT depth
+                 keyed modalities).
+               - ``None`` (default): hierarchical modalities default to
+                 ``True`` (small calibration files benefit), keyed
+                 modalities default to ``False`` (safe for the
+                 augmentation use case where the keyed modality is
+                 typically the same size as a regular sample).
         metadata: Optional arbitrary metadata. Keys under
                   ``metadata["euler_loading"]`` are treated as
                   euler-loading-specific defaults.
@@ -250,6 +265,7 @@ class Modality:
     applies_to: list[str] | None = None
     split: str | None = None
     keyed_by: Mapping[str, str] | None = None
+    cache: bool | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -665,8 +681,18 @@ class MultiModalDataset(_BaseDataset):
                 )
 
         # -- Caches ----------------------------------------------------------
-        self._hierarchical_cache: dict[str, Any] = {}
-        self._keyed_cache: dict[str, Any] = {}
+        # Per-modality caches; ``None`` disables caching for that modality.
+        # Hierarchical default: enabled (calibration-style small files).
+        # Keyed default: disabled (per-sample-size files, OOM risk).
+        self._caches: dict[str, dict[str, Any] | None] = {}
+        for name, modality in self._hierarchical_modalities.items():
+            self._caches[name] = {} if (
+                modality.cache if modality.cache is not None else True
+            ) else None
+        for name, modality in self._keyed_modalities.items():
+            self._caches[name] = {} if (
+                modality.cache if modality.cache is not None else False
+            ) else None
 
         # -- Optional transform binding -------------------------------------
         for transform in self._transforms:
@@ -1255,32 +1281,37 @@ class MultiModalDataset(_BaseDataset):
             files_by_level = self._hierarchical_lookups[name]
             matched = match_hierarchical_files(hierarchy_path, files_by_level)
             modality_meta = _get_index_meta(self._hierarchical_index_outputs[name])
+            cache = self._caches[name]
             loaded: dict[str, Any] = {}
             attrs_for_modality: dict[str, dict[str, Any]] = {}
             for entry in matched:
                 entry_attributes = _get_file_attributes(entry)
-                cache_key = f"{modality.path}/{entry['path']}"
                 accepts_attributes = self._loaders_accept_attributes[name]
+                cache_key = f"{modality.path}/{entry['path']}"
                 if accepts_attributes:
                     cache_key = (
                         f"{cache_key}::attributes="
                         f"{_attributes_cache_key(entry_attributes)}"
                     )
-                if cache_key not in self._hierarchical_cache:
+                if cache is not None and cache_key in cache:
+                    value = cache[cache_key]
+                else:
                     if name in self._zip_modalities:
                         file_or_path = self._open_from_zip(
                             name, modality.path, entry["path"],
                         )
                     else:
                         file_or_path = f"{modality.path}/{entry['path']}"
-                    self._hierarchical_cache[cache_key] = _load_with_optional_attributes(
+                    value = _load_with_optional_attributes(
                         self._resolved_loaders[name],
                         file_or_path,
                         modality_meta,
                         entry_attributes,
                         accepts_attributes=accepts_attributes,
                     )
-                loaded[entry["id"]] = self._hierarchical_cache[cache_key]
+                    if cache is not None:
+                        cache[cache_key] = value
+                loaded[entry["id"]] = value
                 if entry_attributes:
                     attrs_for_modality[entry["id"]] = entry_attributes
             sample[name] = loaded
@@ -1297,27 +1328,32 @@ class MultiModalDataset(_BaseDataset):
             modality_meta = _get_index_meta(self._keyed_index_outputs[name])
             entry_attributes = _get_file_attributes(record.file_entry)
             accepts_attributes = self._loaders_accept_attributes[name]
+            cache = self._caches[name]
             cache_key = f"{modality.path}/{record.file_entry['path']}"
             if accepts_attributes:
                 cache_key = (
                     f"{cache_key}::attributes="
                     f"{_attributes_cache_key(entry_attributes)}"
                 )
-            if cache_key not in self._keyed_cache:
+            if cache is not None and cache_key in cache:
+                value = cache[cache_key]
+            else:
                 if name in self._zip_modalities:
                     file_or_path = self._open_from_zip(
                         name, modality.path, record.file_entry["path"],
                     )
                 else:
                     file_or_path = f"{modality.path}/{record.file_entry['path']}"
-                self._keyed_cache[cache_key] = _load_with_optional_attributes(
+                value = _load_with_optional_attributes(
                     self._resolved_loaders[name],
                     file_or_path,
                     modality_meta,
                     entry_attributes,
                     accepts_attributes=accepts_attributes,
                 )
-            sample[name] = self._keyed_cache[cache_key]
+                if cache is not None:
+                    cache[cache_key] = value
+            sample[name] = value
             meta[name] = record.file_entry
             attributes[name] = entry_attributes or {}
 

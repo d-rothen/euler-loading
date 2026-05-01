@@ -66,6 +66,7 @@ Frozen dataclass describing one data modality.
 | `applies_to` | `list[str] \| None` | Optional list of regular modality names a hierarchical modality applies to. |
 | `split` | `str \| None` | Optional inline split name. Loads `.ds_crawler/split_<name>.json` from the modality root (directory or zip) and overlays it on the normal ds-crawler metadata. |
 | `keyed_by` | `Mapping[str, str] \| None` | Optional join configuration used only when this modality is passed under `MultiModalDataset(keyed_modalities=...)`. Recognised keys: `key_name` (named-group prefix at the regular modality's deepest hierarchy key, e.g. `"file_id"`; auto-detected from the anchor's data when omitted) and `modality` (anchor regular-modality name; auto-inferred when there's exactly one regular). Both keys are optional — the kwarg can be left unset entirely. |
+| `cache` | `bool \| None` | Opt-in/out for in-memory caching of decoded values (only meaningful for hierarchical and keyed modalities; regular modalities are never cached). `True` keeps every distinct loaded file in a process-lifetime dict. `False` re-reads on every access. `None` (default): hierarchical → `True` (small calibration files benefit), keyed → `False` (safe for the augmentation case where the keyed modality holds full per-sample tensors and unbounded caching would OOM). |
 | `metadata` | `dict[str, Any]` | Optional arbitrary metadata. Keys under `metadata["euler_loading"]` are treated as euler-loading defaults. |
 
 The loader is the **only** place where domain-specific I/O happens.
@@ -157,7 +158,7 @@ PyTorch `Dataset`. On construction it:
 |-----------|------|-------------|
 | `modalities` | `dict[str, Modality]` | At least one entry required. Keys become the sample dict keys. These modalities participate in ID intersection. |
 | `hierarchical_modalities` | `dict[str, Modality] \| None` | Optional modalities whose files live at intermediate hierarchy levels (e.g. per-scene intrinsics). These do **not** participate in ID intersection. Each sample will contain a dict `{file_id: loaded_result}` with all files at or above the sample's hierarchy level. Results are cached so shared files are parsed only once. |
-| `keyed_modalities` | `dict[str, Modality] \| None` | Optional modalities joined to a regular sample by the value of the regular sample's deepest hierarchy key. See [Keyed modalities](#keyed-modalities) below. Contributes a single loaded value per sample (not a dict). Results are cached, so a GT shared by N augmented samples is loaded once. |
+| `keyed_modalities` | `dict[str, Modality] \| None` | Optional modalities joined to a regular sample by the value of the regular sample's deepest hierarchy key. See [Keyed modalities](#keyed-modalities) below. Contributes a single loaded value per sample (not a dict). Caching is **off by default** for keyed modalities (per-sample tensors can be large); set `Modality(..., cache=True)` to opt in when the keyed dataset is small enough to fit in memory. |
 | `transforms` | `list[Callable[[dict], dict]] \| None` | Applied in order after loading. Each receives and returns the full sample dict. |
 | `strict_keyed` | `bool` | When `True`, missing or mis-decoded keyed-modality joins raise immediately at construction instead of warning + dropping the affected samples. Default `False`. |
 
@@ -193,7 +194,7 @@ PyTorch `Dataset`. On construction it:
 }
 ```
 
-Hierarchical and keyed modality results are cached so shared files are parsed only once.
+Hierarchical modality results are cached by default; keyed modality results are not. Both can be flipped via `Modality(..., cache=True|False)` — see the [`cache` row in the `Modality` table](#modalitypath--loadernone-metadatanone) and [Keyed modalities](#keyed-modalities) for details on when each default is the right choice.
 
 ### `FileRecord`
 
@@ -394,7 +395,23 @@ For each common id in the regular modalities, euler-loading:
 3. Verifies the key name matches the configured (or auto-detected) `key_name`.
 4. Looks up the keyed modality's record at hierarchy `(scene_000000, CS_FRONT)` with `id == "000…025"`.
 
-Loaded values are cached: the GT for `file_id:000…025` is decoded once and reused across every augmentation that points at it.
+### Caching
+
+Caching for keyed modalities is **off by default**, which differs from hierarchical modalities (default on). The reason is workload shape: hierarchical files are usually tiny calibration / metadata blobs that you'd happily keep in memory forever, whereas a keyed modality typically holds the same kind of full per-sample tensor as a regular modality. Caching every decoded GT depth tensor in a 500 GB dataset would OOM the process.
+
+Override per modality:
+
+```python
+keyed_modalities={
+    # Small GT (a few hundred MB total): worth caching to avoid re-reads
+    # across augmentations of the same file_id.
+    "depth": Modality("/data/gt_depth", loader=load_depth, cache=True),
+    # Large GT (multi-hundred-GB total): keep it off, re-read each access.
+    "lidar": Modality("/data/gt_lidar", loader=load_lidar),  # cache=False default
+}
+```
+
+When `cache=True`, the GT for `file_id:000…025` is decoded once and reused across every augmentation that points at it. When `cache=False` (the default), every sample access re-reads and re-decodes the file.
 
 ### Validation and missing joins
 

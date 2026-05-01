@@ -586,7 +586,7 @@ class TestHierarchicalModalities:
         assert s0 == s1
 
     def test_hierarchical_cached(self):
-        """Shared hierarchical files are loaded only once."""
+        """Shared hierarchical files are loaded only once (default behavior)."""
         loader = MagicMock(return_value="parsed")
         rgb_index = _deep_regular_index(["f001", "f002", "f003"])
         hier_index = _hierarchical_intrinsics_index()
@@ -613,6 +613,36 @@ class TestHierarchicalModalities:
 
         # The intrinsics file should have been loaded exactly once.
         loader.assert_called_once()
+
+    def test_hierarchical_cache_false_reloads_every_access(self):
+        """Opt-out via cache=False reloads even shared hierarchical files."""
+        loader = MagicMock(return_value="parsed")
+        rgb_index = _deep_regular_index(["f001", "f002", "f003"])
+        hier_index = _hierarchical_intrinsics_index()
+
+        def mock_index(path, **kw):
+            return rgb_index if "rgb" in path else hier_index
+
+        with patch(
+            "euler_loading.dataset.index_dataset_from_path",
+            side_effect=mock_index,
+        ):
+            ds = MultiModalDataset(
+                modalities={
+                    "rgb": Modality("/data/rgb", loader=dummy_loader),
+                },
+                hierarchical_modalities={
+                    "cam_intrinsics": Modality(
+                        "/data/intrinsics", loader=loader, cache=False,
+                    ),
+                },
+            )
+
+        for i in range(3):
+            _ = ds[i]
+
+        # 3 accesses with caching disabled → 3 loads of the same file.
+        assert loader.call_count == 3
 
     def test_no_hierarchy_overlap_returns_empty_dict(self):
         """When hierarchical modality has no matching ancestors, result is {}."""
@@ -1019,13 +1049,20 @@ class TestKeyedModalities:
 
 
 class TestKeyedModalityCaching:
-    def test_gt_loaded_once_per_file_id(self):
+    def _make_ds(self, *, cache: bool | None) -> tuple[Any, Any]:
         rgb_index = _keyed_aug_index()
         gt_index = _keyed_gt_index()
         loader = MagicMock(return_value="loaded-depth")
 
         def mock_index(path, **kw):
             return rgb_index if "rgb" in path else gt_index
+
+        depth_kwargs: dict[str, Any] = {
+            "loader": loader,
+            "keyed_by": {"key_name": "file_id"},
+        }
+        if cache is not None:
+            depth_kwargs["cache"] = cache
 
         with patch(
             "euler_loading.dataset.index_dataset_from_path",
@@ -1036,19 +1073,32 @@ class TestKeyedModalityCaching:
                     "rgb_aug": Modality("/data/rgb_aug", loader=dummy_loader),
                 },
                 keyed_modalities={
-                    "depth": Modality(
-                        "/data/gt_depth",
-                        loader=loader,
-                        keyed_by={"key_name": "file_id"},
-                    ),
+                    "depth": Modality("/data/gt_depth", **depth_kwargs),
                 },
             )
+        return ds, loader
 
+    def test_keyed_default_does_not_cache(self):
+        """Default for keyed modalities is no cache (avoids OOM on large
+        per-sample files like GT depth)."""
+        ds, loader = self._make_ds(cache=None)
         for i in range(len(ds)):
             _ = ds[i]
+        # 4 augs total → 4 loads, no reuse.
+        assert loader.call_count == 4
 
-        # 2 file-ids × 4 sample accesses → still only 2 loads.
+    def test_keyed_cache_true_loads_each_gt_once(self):
+        ds, loader = self._make_ds(cache=True)
+        for i in range(len(ds)):
+            _ = ds[i]
+        # 2 distinct file-ids × 2 augs each → still only 2 loads.
         assert loader.call_count == 2
+
+    def test_keyed_cache_false_reloads_every_access(self):
+        ds, loader = self._make_ds(cache=False)
+        for i in range(len(ds)):
+            _ = ds[i]
+        assert loader.call_count == 4
 
 
 class TestKeyedModalityValidation:
