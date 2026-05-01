@@ -1519,6 +1519,112 @@ class TestKeyedModalityWriteSample:
         assert "file_id" not in str(produced[0])
 
 
+def _with_layout(
+    index: dict[str, Any],
+    *,
+    variant: bool,
+    family: str = "demo",
+) -> dict[str, Any]:
+    result = json.loads(json.dumps(index))
+    layout: dict[str, Any] = {
+        "version": "1.0",
+        "family": family,
+        "sample_axis": {"name": "file_id", "location": "hierarchy"},
+    }
+    if variant:
+        layout["variant_axis"] = {
+            "name": "fog_augmentation",
+            "location": "file_id",
+        }
+    result["head"] = {
+        "contract": {"kind": "dataset_head", "version": "1.0"},
+        "dataset": {"id": "demo", "name": "Demo"},
+        "modality": {"key": "rgb" if variant else "depth", "meta": {}},
+        "addons": {"euler_layout": layout},
+    }
+    result.setdefault(
+        "indexing",
+        {"hierarchy": {"separator": ":"}, "id": {"join_char": "+"}},
+    )
+    return result
+
+
+class TestLayoutAwareDatasetPlanning:
+    def test_from_layout_collapses_shared_hierarchical_modality(self):
+        rgb_index = _with_layout(_keyed_aug_index(), variant=True)
+        depth_index = _with_layout(
+            _per_id_depth_hierarchical_index(), variant=False,
+        )
+
+        def mock_index(path, **kw):
+            return rgb_index if "rgb" in path else depth_index
+
+        with patch(
+            "euler_loading.dataset.index_dataset_from_path",
+            side_effect=mock_index,
+        ):
+            ds = MultiModalDataset.from_layout(
+                {
+                    "rgb_aug": Modality("/data/rgb_aug", loader=dummy_loader),
+                    "depth": Modality("/data/depth", loader=dummy_loader),
+                },
+                primary="rgb_aug",
+            )
+
+        sample = ds[0]
+
+        assert len(ds) == 4
+        assert isinstance(sample["depth"], str)
+        assert sample["depth"].startswith("loaded:/data/depth/")
+        assert isinstance(sample["meta"]["depth"], dict)
+
+    def test_from_layout_uses_keyed_fallback_for_flat_shared_modality(self):
+        rgb_index = _with_layout(_keyed_aug_index(), variant=True)
+        depth_index = _with_layout(_keyed_gt_index(), variant=False)
+
+        def mock_index(path, **kw):
+            return rgb_index if "rgb" in path else depth_index
+
+        with patch(
+            "euler_loading.dataset.index_dataset_from_path",
+            side_effect=mock_index,
+        ):
+            ds = MultiModalDataset.from_layout(
+                {
+                    "rgb_aug": Modality("/data/rgb_aug", loader=dummy_loader),
+                    "depth": Modality("/data/depth", loader=dummy_loader),
+                },
+                primary="rgb_aug",
+            )
+
+        sample = ds[0]
+
+        assert len(ds) == 4
+        assert isinstance(sample["depth"], str)
+        assert sample["depth"].startswith("loaded:/data/depth/")
+
+    def test_from_layout_strict_rejects_flat_shared_modality(self):
+        rgb_index = _with_layout(_keyed_aug_index(), variant=True)
+        depth_index = _with_layout(_keyed_gt_index(), variant=False)
+
+        def mock_index(path, **kw):
+            return rgb_index if "rgb" in path else depth_index
+
+        with patch(
+            "euler_loading.dataset.index_dataset_from_path",
+            side_effect=mock_index,
+        ):
+            with pytest.raises(ValueError, match="no matching hierarchy axis"):
+                MultiModalDataset.from_layout(
+                    {
+                        "rgb_aug": Modality("/data/rgb_aug", loader=dummy_loader),
+                        "depth": Modality("/data/depth", loader=dummy_loader),
+                    },
+                    primary="rgb_aug",
+                    strict_layout=True,
+                )
+
+
 # ---------------------------------------------------------------------------
 # Per-file ``attributes`` field exposed on samples
 # ---------------------------------------------------------------------------

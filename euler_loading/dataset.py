@@ -7,7 +7,7 @@ import os
 from pathlib import Path
 import zipfile
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Callable
 
 try:
@@ -24,6 +24,11 @@ from ds_crawler import (
     load_dataset_config,
 )
 from ds_crawler.zip_utils import get_zip_root_prefix, is_zip_path
+
+try:
+    from ds_crawler import get_layout_addon as _ds_crawler_get_layout_addon
+except ImportError:  # pragma: no cover - compatibility with older ds-crawler
+    _ds_crawler_get_layout_addon = None
 
 from ._ds_crawler_utils import load_index_output, parse_path_with_split
 from ._metadata import _build_runlog_entry, _get_ds_crawler_descriptor
@@ -118,6 +123,112 @@ def _get_index_meta(index_output: Mapping[str, Any]) -> dict[str, Any] | None:
     if isinstance(raw_meta, Mapping):
         return dict(raw_meta)
     return None
+
+
+def _get_index_layout(index_output: Mapping[str, Any]) -> dict[str, Any] | None:
+    """Return the optional ``euler_layout`` addon from an index payload."""
+    if _ds_crawler_get_layout_addon is not None:
+        try:
+            return _ds_crawler_get_layout_addon(dict(index_output))
+        except Exception:
+            logger.debug("Failed to parse euler_layout addon.", exc_info=True)
+
+    head = index_output.get("head")
+    if isinstance(head, Mapping):
+        addons = head.get("addons")
+        if isinstance(addons, Mapping):
+            layout = addons.get("euler_layout")
+            if isinstance(layout, Mapping):
+                return dict(layout)
+
+    layout = index_output.get("euler_layout")
+    if isinstance(layout, Mapping):
+        return dict(layout)
+    return None
+
+
+def _layout_axis(layout: Mapping[str, Any] | None, axis: str) -> dict[str, Any] | None:
+    if not isinstance(layout, Mapping):
+        return None
+    value = layout.get(axis)
+    return dict(value) if isinstance(value, Mapping) else None
+
+
+def _layout_axis_name(layout: Mapping[str, Any] | None, axis: str) -> str | None:
+    value = _layout_axis(layout, axis)
+    name = value.get("name") if value else None
+    return name if isinstance(name, str) and name else None
+
+
+def _layout_has_variant_axis(layout: Mapping[str, Any] | None) -> bool:
+    return _layout_axis(layout, "variant_axis") is not None
+
+
+def _layout_family(layout: Mapping[str, Any] | None) -> str | None:
+    if not isinstance(layout, Mapping):
+        return None
+    family = layout.get("family")
+    return family if isinstance(family, str) and family else None
+
+
+def _layout_families_compatible(
+    left: Mapping[str, Any] | None,
+    right: Mapping[str, Any] | None,
+) -> bool:
+    left_family = _layout_family(left)
+    right_family = _layout_family(right)
+    return (
+        left_family is None
+        or right_family is None
+        or left_family == right_family
+    )
+
+
+def _index_hierarchy_separator(index_output: Mapping[str, Any]) -> str | None:
+    indexing = index_output.get("indexing")
+    hierarchy = indexing.get("hierarchy") if isinstance(indexing, Mapping) else None
+    if isinstance(hierarchy, Mapping):
+        separator = hierarchy.get("separator")
+        if isinstance(separator, str) and separator:
+            return separator
+    return None
+
+
+def _tree_has_hierarchy_axis(
+    node: Mapping[str, Any],
+    *,
+    axis_name: str,
+    separator: str,
+) -> bool:
+    prefix = f"{axis_name}{separator}"
+    children = node.get("children")
+    if not isinstance(children, Mapping):
+        return False
+    for key, child in children.items():
+        if isinstance(key, str) and key.startswith(prefix):
+            return True
+        if isinstance(child, Mapping) and _tree_has_hierarchy_axis(
+            child, axis_name=axis_name, separator=separator,
+        ):
+            return True
+    return False
+
+
+def _index_has_hierarchy_axis(
+    index_output: Mapping[str, Any],
+    *,
+    axis_name: str,
+) -> bool:
+    separator = _index_hierarchy_separator(index_output)
+    if not separator:
+        return False
+    try:
+        tree = _get_index_tree(index_output)
+    except KeyError:
+        return False
+    return _tree_has_hierarchy_axis(
+        tree, axis_name=axis_name, separator=separator,
+    )
 
 
 def _get_file_attributes(file_entry: Mapping[str, Any]) -> dict[str, Any] | None:
@@ -249,6 +360,11 @@ class Modality:
                  modalities default to ``False`` (safe for the
                  augmentation use case where the keyed modality is
                  typically the same size as a regular sample).
+        collapse_single: When ``True`` for a hierarchical modality, return the
+                 single matched hierarchical value directly instead of a
+                 ``{file_id: value}`` dict.  This is useful for shared GT
+                 tensors loaded once per source sample across augmentations.
+                 A sample with more than one matched file raises.
         metadata: Optional arbitrary metadata. Keys under
                   ``metadata["euler_loading"]`` are treated as
                   euler-loading-specific defaults.
@@ -266,6 +382,7 @@ class Modality:
     split: str | None = None
     keyed_by: Mapping[str, str] | None = None
     cache: bool | None = None
+    collapse_single: bool = False
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -496,6 +613,110 @@ class MultiModalDataset(_BaseDataset):
             "hierarchical_modalities": hierarchical_modalities,
             "keyed_modalities": keyed_modalities,
         }
+
+    @classmethod
+    def from_layout(
+        cls,
+        modalities: dict[str, Modality],
+        *,
+        primary: str | None = None,
+        transforms: list[Callable[[dict[str, Any]], dict[str, Any]]] | None = None,
+        strict_layout: bool = False,
+    ) -> "MultiModalDataset":
+        """Create a dataset by planning modality roles from ``euler_layout``.
+
+        When the primary modality has a variant axis (for example fog
+        augmentations grouped under ``file_id:<source>``) and an auxiliary
+        modality has the same sample axis but no variant axis, the auxiliary is
+        loaded as shared per-source data.  If the auxiliary index already
+        exposes that sample axis as a hierarchy key, it is wired as a collapsed
+        hierarchical modality.  Otherwise it falls back to a keyed join.
+
+        Existing constructor semantics remain unchanged; this helper is the
+        opt-in path for layout-aware loading.
+        """
+        if not modalities:
+            raise ValueError("At least one modality must be provided.")
+
+        indexed: dict[str, dict[str, Any]] = {}
+        layouts: dict[str, dict[str, Any] | None] = {}
+        for name, modality in modalities.items():
+            index = load_index_output(
+                modality.path,
+                split=modality.split,
+                index_dataset_from_path_fn=index_dataset_from_path,
+            )
+            indexed[name] = index
+            layouts[name] = _get_index_layout(index)
+
+        if primary is None:
+            primary = next(
+                (
+                    name for name, layout in layouts.items()
+                    if _layout_has_variant_axis(layout)
+                ),
+                next(iter(modalities)),
+            )
+        if primary not in modalities:
+            raise ValueError(
+                f"primary modality {primary!r} is not in modalities; "
+                f"known: {sorted(modalities)}"
+            )
+
+        primary_layout = layouts[primary]
+        primary_sample_axis = _layout_axis_name(primary_layout, "sample_axis")
+        primary_has_variants = _layout_has_variant_axis(primary_layout)
+
+        regular_modalities: dict[str, Modality] = {primary: modalities[primary]}
+        hierarchical_modalities: dict[str, Modality] = {}
+        keyed_modalities: dict[str, Modality] = {}
+
+        for name, modality in modalities.items():
+            if name == primary:
+                continue
+
+            layout = layouts[name]
+            sample_axis = _layout_axis_name(layout, "sample_axis")
+            shared_with_primary = (
+                primary_has_variants
+                and primary_sample_axis is not None
+                and sample_axis == primary_sample_axis
+                and not _layout_has_variant_axis(layout)
+                and _layout_families_compatible(primary_layout, layout)
+            )
+
+            if not shared_with_primary:
+                regular_modalities[name] = modality
+                continue
+
+            if _index_has_hierarchy_axis(indexed[name], axis_name=sample_axis):
+                hierarchical_modalities[name] = replace(
+                    modality, collapse_single=True,
+                )
+                continue
+
+            if strict_layout:
+                raise ValueError(
+                    f"Modality {name!r} shares sample_axis={sample_axis!r} with "
+                    f"variant primary {primary!r}, but its ds-crawler index has "
+                    "no matching hierarchy axis. Re-index it with that axis as "
+                    "hierarchy, or call from_layout(..., strict_layout=False) "
+                    "to use a keyed fallback."
+                )
+
+            keyed_by = {
+                **dict(modality.keyed_by or {}),
+                "modality": primary,
+                "key_name": sample_axis,
+            }
+            keyed_modalities[name] = replace(modality, keyed_by=keyed_by)
+
+        return cls(
+            modalities=regular_modalities,
+            hierarchical_modalities=hierarchical_modalities or None,
+            keyed_modalities=keyed_modalities or None,
+            transforms=transforms,
+        )
 
     def __init__(
         self,
@@ -1284,6 +1505,7 @@ class MultiModalDataset(_BaseDataset):
             cache = self._caches[name]
             loaded: dict[str, Any] = {}
             attrs_for_modality: dict[str, dict[str, Any]] = {}
+            entries_by_id: dict[str, dict[str, Any]] = {}
             for entry in matched:
                 entry_attributes = _get_file_attributes(entry)
                 accepts_attributes = self._loaders_accept_attributes[name]
@@ -1312,10 +1534,27 @@ class MultiModalDataset(_BaseDataset):
                     if cache is not None:
                         cache[cache_key] = value
                 loaded[entry["id"]] = value
+                entries_by_id[entry["id"]] = entry
                 if entry_attributes:
                     attrs_for_modality[entry["id"]] = entry_attributes
-            sample[name] = loaded
-            attributes[name] = attrs_for_modality
+            if modality.collapse_single:
+                if len(loaded) > 1:
+                    raise ValueError(
+                        f"Hierarchical modality {name!r} was configured with "
+                        f"collapse_single=True, but sample {sample_id!r} "
+                        f"matched {len(loaded)} files."
+                    )
+                if loaded:
+                    only_id, only_value = next(iter(loaded.items()))
+                    sample[name] = only_value
+                    meta[name] = entries_by_id[only_id]
+                    attributes[name] = attrs_for_modality.get(only_id, {})
+                else:
+                    sample[name] = None
+                    attributes[name] = {}
+            else:
+                sample[name] = loaded
+                attributes[name] = attrs_for_modality
 
         # -- Load keyed modalities -------------------------------------------
         for name, modality in self._keyed_modalities.items():

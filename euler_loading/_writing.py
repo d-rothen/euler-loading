@@ -55,10 +55,11 @@ def _wrap_writer_save_index(
                     result["meta"] = dict(meta)
 
             if isinstance(addons, Mapping):
-                for addon_name in ("euler_train", "euler_loading"):
-                    addon = addons.get(addon_name)
+                for addon_name, addon in addons.items():
+                    if not str(addon_name).startswith("euler_"):
+                        continue
                     if isinstance(addon, Mapping):
-                        result[addon_name] = dict(addon)
+                        result[str(addon_name)] = dict(addon)
 
         index_tree = output.get("index")
         if isinstance(index_tree, Mapping):
