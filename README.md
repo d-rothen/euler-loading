@@ -395,6 +395,8 @@ For each common id in the regular modalities, euler-loading:
 3. Verifies the key name matches the configured (or auto-detected) `key_name`.
 4. Looks up the keyed modality's record at hierarchy `(scene_000000, CS_FRONT)` with `id == "000…025"`.
 
+The lookup is hierarchical: **both** the parent prefix `(scene_000000, CS_FRONT)` *and* the extracted key value `000…025` participate in the match. Two GT files that share an `id` at different parents are not interchangeable — each augmented sample picks the GT under its own parent. One footgun to watch: both modalities must use the same hierarchy-key convention for the parent prefix. If the augmented modality emits named-group keys like `scene:scene_000000` while the GT emits bare `scene_000000`, the prefixes won't match and the join silently drops every sample. Either both modalities use named groups or neither does.
+
 ### Caching
 
 Caching for keyed modalities is **off by default**, which differs from hierarchical modalities (default on). The reason is workload shape: hierarchical files are usually tiny calibration / metadata blobs that you'd happily keep in memory forever, whereas a keyed modality typically holds the same kind of full per-sample tensor as a regular modality. Caching every decoded GT depth tensor in a 500 GB dataset would OOM the process.

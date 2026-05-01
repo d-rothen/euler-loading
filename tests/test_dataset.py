@@ -1047,6 +1047,79 @@ class TestKeyedModalities:
         ids = {ds[i]["id"] for i in range(len(ds))}
         assert ids == {"aug-aug_1", "aug-aug_2"}
 
+    def test_parent_prefix_disambiguates_same_key_value(self):
+        """Two GT files share the same id at different parent prefixes;
+        each augmented sample must pick the GT under its own parent.
+        """
+        rgb_index = {
+            "indexing": {
+                "hierarchy": {"separator": ":"},
+                "id": {"join_char": "+"},
+            },
+            "dataset": {
+                "children": {
+                    "scene_A": {
+                        "children": {
+                            "file_id:000": {
+                                "files": [_make_file("aug-1", "scene_A/000/aug_1.png")]
+                            }
+                        }
+                    },
+                    "scene_B": {
+                        "children": {
+                            "file_id:000": {
+                                "files": [_make_file("aug-1", "scene_B/000/aug_1.png")]
+                            }
+                        }
+                    },
+                }
+            },
+        }
+        gt_index = {
+            "indexing": {
+                "hierarchy": {"separator": ":"},
+                "id": {"join_char": "+"},
+            },
+            "dataset": {
+                "children": {
+                    "scene_A": {
+                        "files": [_make_file("000", "scene_A/000.png")]
+                    },
+                    "scene_B": {
+                        "files": [_make_file("000", "scene_B/000.png")]
+                    },
+                }
+            },
+        }
+
+        def mock_index(path, **kw):
+            return rgb_index if "rgb" in path else gt_index
+
+        with patch(
+            "euler_loading.dataset.index_dataset_from_path",
+            side_effect=mock_index,
+        ):
+            ds = MultiModalDataset(
+                modalities={
+                    "rgb_aug": Modality("/data/rgb_aug", loader=dummy_loader),
+                },
+                keyed_modalities={
+                    "depth": Modality(
+                        "/data/gt_depth",
+                        loader=dummy_loader,
+                    ),
+                },
+            )
+
+        by_full_id = {ds[i]["full_id"]: ds[i] for i in range(len(ds))}
+        a_sample = by_full_id["/scene_A/file_id:000/aug-1"]
+        b_sample = by_full_id["/scene_B/file_id:000/aug-1"]
+
+        # Same key value (000), different parent prefix → different GT files.
+        assert a_sample["depth"] == "loaded:/data/gt_depth/scene_A/000.png"
+        assert b_sample["depth"] == "loaded:/data/gt_depth/scene_B/000.png"
+        assert a_sample["depth"] != b_sample["depth"]
+
 
 class TestKeyedModalityCaching:
     def _make_ds(self, *, cache: bool | None) -> tuple[Any, Any]:
