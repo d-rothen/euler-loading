@@ -889,6 +889,514 @@ class TestAugmentedRgbWithHierarchicalDepth:
 
 
 # ---------------------------------------------------------------------------
+# Keyed modalities (parent-prefix join via deepest-key value)
+# ---------------------------------------------------------------------------
+
+
+def _keyed_aug_index(*, separator: str = ":") -> dict[str, Any]:
+    """Augmented index with ``children[file_id:<id>]`` deepest level.
+
+    Two file-ids each with two augmentations. The ``indexing.hierarchy``
+    block carries the separator so the keyed-join code can decode the
+    deepest hierarchy key.
+    """
+    return {
+        "indexing": {
+            "hierarchy": {"separator": separator},
+            "id": {"join_char": "+"},
+        },
+        "dataset": {
+            "children": {
+                f"file_id{separator}abc": {
+                    "files": [
+                        _make_file("aug-aug_1", "abc/aug_1.png"),
+                        _make_file("aug-aug_2", "abc/aug_2.png"),
+                    ]
+                },
+                f"file_id{separator}xyz": {
+                    "files": [
+                        _make_file("aug-aug_1", "xyz/aug_1.png"),
+                        _make_file("aug-aug_2", "xyz/aug_2.png"),
+                    ]
+                },
+            }
+        },
+    }
+
+
+def _keyed_gt_index() -> dict[str, Any]:
+    """GT index where files live at the parent prefix with ``id`` == file_id."""
+    return {
+        "indexing": {
+            "hierarchy": {"separator": ":"},
+            "id": {"join_char": "+"},
+        },
+        "dataset": {
+            "files": [
+                _make_file("abc", "abc.png"),
+                _make_file("xyz", "xyz.png"),
+            ]
+        },
+    }
+
+
+class TestKeyedModalities:
+    """Per-aug regular sample joined to a single GT via deepest-key value."""
+
+    def _make(self, **kwargs):
+        rgb_index = _keyed_aug_index()
+        gt_index = _keyed_gt_index()
+
+        def mock_index(path, **kw):
+            return rgb_index if "rgb" in path else gt_index
+
+        with patch(
+            "euler_loading.dataset.index_dataset_from_path",
+            side_effect=mock_index,
+        ):
+            return MultiModalDataset(
+                modalities={
+                    "rgb_aug": Modality("/data/rgb_aug", loader=dummy_loader),
+                },
+                keyed_modalities={
+                    "depth": Modality(
+                        "/data/gt_depth",
+                        loader=dummy_loader,
+                        keyed_by={"key_name": "file_id"},
+                    ),
+                },
+                **kwargs,
+            )
+
+    def test_one_sample_per_aug(self):
+        ds = self._make()
+        assert len(ds) == 4  # 2 file_ids × 2 augs
+
+    def test_each_sample_has_a_single_keyed_value(self):
+        ds = self._make()
+        sample = ds[0]
+        assert "depth" in sample
+        # Keyed modality returns a single value, not a {file_id: ...} dict.
+        assert isinstance(sample["depth"], str)
+
+    def test_depth_shared_within_file_id(self):
+        """Both augs of the same file-id receive the same loaded GT."""
+        ds = self._make()
+        by_full_id = {ds[i]["full_id"]: ds[i] for i in range(len(ds))}
+        abc_aug_1 = by_full_id["/file_id:abc/aug-aug_1"]["depth"]
+        abc_aug_2 = by_full_id["/file_id:abc/aug-aug_2"]["depth"]
+        assert abc_aug_1 == abc_aug_2
+
+    def test_different_file_ids_yield_different_gts(self):
+        ds = self._make()
+        by_full_id = {ds[i]["full_id"]: ds[i] for i in range(len(ds))}
+        assert (
+            by_full_id["/file_id:abc/aug-aug_1"]["depth"]
+            != by_full_id["/file_id:xyz/aug-aug_1"]["depth"]
+        )
+
+    def test_loader_receives_correct_gt_path(self):
+        ds = self._make()
+        by_full_id = {ds[i]["full_id"]: ds[i] for i in range(len(ds))}
+        assert by_full_id["/file_id:abc/aug-aug_1"]["depth"] == (
+            "loaded:/data/gt_depth/abc.png"
+        )
+        assert by_full_id["/file_id:xyz/aug-aug_1"]["depth"] == (
+            "loaded:/data/gt_depth/xyz.png"
+        )
+
+    def test_meta_records_gt_file_entry(self):
+        ds = self._make()
+        sample = ds[0]
+        assert sample["meta"]["depth"]["id"] in ("abc", "xyz")
+        assert sample["meta"]["depth"]["path"].endswith(".png")
+
+    def test_keyed_does_not_affect_id_intersection(self):
+        """The 4-aug count comes from the regular modality alone."""
+        ds = self._make()
+        ids = {ds[i]["id"] for i in range(len(ds))}
+        assert ids == {"aug-aug_1", "aug-aug_2"}
+
+
+class TestKeyedModalityCaching:
+    def test_gt_loaded_once_per_file_id(self):
+        rgb_index = _keyed_aug_index()
+        gt_index = _keyed_gt_index()
+        loader = MagicMock(return_value="loaded-depth")
+
+        def mock_index(path, **kw):
+            return rgb_index if "rgb" in path else gt_index
+
+        with patch(
+            "euler_loading.dataset.index_dataset_from_path",
+            side_effect=mock_index,
+        ):
+            ds = MultiModalDataset(
+                modalities={
+                    "rgb_aug": Modality("/data/rgb_aug", loader=dummy_loader),
+                },
+                keyed_modalities={
+                    "depth": Modality(
+                        "/data/gt_depth",
+                        loader=loader,
+                        keyed_by={"key_name": "file_id"},
+                    ),
+                },
+            )
+
+        for i in range(len(ds)):
+            _ = ds[i]
+
+        # 2 file-ids × 4 sample accesses → still only 2 loads.
+        assert loader.call_count == 2
+
+
+class TestKeyedModalityValidation:
+    def _make_with(
+        self,
+        *,
+        regulars: dict[str, Modality],
+        keyed: dict[str, Modality],
+        rgb_index: dict | None = None,
+        strict_keyed: bool = False,
+    ):
+        rgb_index = rgb_index if rgb_index is not None else _keyed_aug_index()
+        gt_index = _keyed_gt_index()
+
+        def mock_index(path, **kw):
+            return rgb_index if any(rk in path for rk in regulars) else gt_index
+
+        with patch(
+            "euler_loading.dataset.index_dataset_from_path",
+            side_effect=mock_index,
+        ):
+            return MultiModalDataset(
+                modalities=regulars,
+                keyed_modalities=keyed,
+                strict_keyed=strict_keyed,
+            )
+
+    def test_missing_key_name_auto_detects(self):
+        """When all anchor samples share a deepest-key prefix, key_name is
+        inferred from the data."""
+        ds = self._make_with(
+            regulars={"rgb_aug": Modality("/data/rgb_aug", loader=dummy_loader)},
+            keyed={"depth": Modality(
+                "/data/gt_depth",
+                loader=dummy_loader,
+                keyed_by={},
+            )},
+        )
+        assert len(ds) == 4
+
+    def test_keyed_by_omitted_entirely_auto_detects(self):
+        """Same auto-detection works when keyed_by is left unset."""
+        ds = self._make_with(
+            regulars={"rgb_aug": Modality("/data/rgb_aug", loader=dummy_loader)},
+            keyed={"depth": Modality(
+                "/data/gt_depth",
+                loader=dummy_loader,
+            )},
+        )
+        assert len(ds) == 4
+
+    def test_auto_detect_resolves_inferred_key_name_in_join_config(self):
+        """The inferred key_name shows up in modality_paths()."""
+        ds = self._make_with(
+            regulars={"rgb_aug": Modality("/data/rgb_aug", loader=dummy_loader)},
+            keyed={"depth": Modality(
+                "/data/gt_depth",
+                loader=dummy_loader,
+            )},
+        )
+        paths = ds.keyed_modality_paths()
+        assert paths["depth"]["keyed_by_key_name"] == "file_id"
+        assert paths["depth"]["keyed_by_modality"] == "rgb_aug"
+
+    def test_auto_detect_raises_on_multiple_prefixes(self):
+        """If the anchor has mixed prefixes (e.g. 'file_id:...' and
+        'frame:...'), require an explicit key_name."""
+        rgb_index = {
+            "indexing": {"hierarchy": {"separator": ":"}, "id": {"join_char": "+"}},
+            "dataset": {
+                "children": {
+                    "file_id:abc": {"files": [_make_file("aug-1", "abc/aug_1.png")]},
+                    "frame:0001": {"files": [_make_file("aug-1", "0001/aug_1.png")]},
+                },
+            },
+        }
+        with pytest.raises(ValueError, match="multiple distinct deepest-key prefixes"):
+            self._make_with(
+                regulars={"rgb_aug": Modality("/data/rgb_aug", loader=dummy_loader)},
+                keyed={"depth": Modality(
+                    "/data/gt_depth",
+                    loader=dummy_loader,
+                )},
+                rgb_index=rgb_index,
+            )
+
+    def test_auto_detect_raises_when_no_hierarchy(self):
+        """Anchor with no hierarchy keys cannot supply a key_name."""
+        rgb_index = {
+            "indexing": {"hierarchy": {"separator": ":"}, "id": {"join_char": "+"}},
+            "dataset": {
+                "files": [_make_file("aug-1", "aug_1.png")],
+            },
+        }
+        with pytest.raises(ValueError, match="no hierarchy keys with separator"):
+            self._make_with(
+                regulars={"rgb_aug": Modality("/data/rgb_aug", loader=dummy_loader)},
+                keyed={"depth": Modality(
+                    "/data/gt_depth",
+                    loader=dummy_loader,
+                )},
+                rgb_index=rgb_index,
+            )
+
+    def test_unknown_anchor_modality_raises(self):
+        with pytest.raises(ValueError, match="unknown regular modality"):
+            self._make_with(
+                regulars={"rgb_aug": Modality("/data/rgb_aug", loader=dummy_loader)},
+                keyed={"depth": Modality(
+                    "/data/gt_depth",
+                    loader=dummy_loader,
+                    keyed_by={"key_name": "file_id", "modality": "nope"},
+                )},
+            )
+
+    def test_anchor_inferred_when_single_regular(self):
+        ds = self._make_with(
+            regulars={"rgb_aug": Modality("/data/rgb_aug", loader=dummy_loader)},
+            keyed={"depth": Modality(
+                "/data/gt_depth",
+                loader=dummy_loader,
+                keyed_by={"key_name": "file_id"},
+            )},
+        )
+        assert len(ds) == 4
+
+    def test_anchor_required_when_multiple_regulars(self):
+        rgb_index = _keyed_aug_index()
+        gt_index = _keyed_gt_index()
+
+        def mock_index(path, **kw):
+            return gt_index if "gt" in path else rgb_index
+
+        with patch(
+            "euler_loading.dataset.index_dataset_from_path",
+            side_effect=mock_index,
+        ):
+            with pytest.raises(ValueError, match="keyed_by.modality is required"):
+                MultiModalDataset(
+                    modalities={
+                        "rgb_aug_1": Modality("/data/rgb_aug_1", loader=dummy_loader),
+                        "rgb_aug_2": Modality("/data/rgb_aug_2", loader=dummy_loader),
+                    },
+                    keyed_modalities={
+                        "depth": Modality(
+                            "/data/gt_depth",
+                            loader=dummy_loader,
+                            keyed_by={"key_name": "file_id"},
+                        ),
+                    },
+                )
+
+    def test_anchor_separator_required(self):
+        rgb_index = _keyed_aug_index()
+        # Strip the separator from the regular index.
+        rgb_index["indexing"]["hierarchy"].pop("separator")
+
+        with pytest.raises(ValueError, match="hierarchy.separator"):
+            self._make_with(
+                regulars={"rgb_aug": Modality("/data/rgb_aug", loader=dummy_loader)},
+                keyed={"depth": Modality(
+                    "/data/gt_depth",
+                    loader=dummy_loader,
+                    keyed_by={"key_name": "file_id"},
+                )},
+                rgb_index=rgb_index,
+            )
+
+    def test_key_name_mismatch_drops_samples(self):
+        """Wrong key_name (e.g. 'frame' when keys are 'file_id:...') drops
+        all samples; we treat it as 0 valid joins."""
+        with pytest.raises(ValueError, match="No samples remain"):
+            self._make_with(
+                regulars={"rgb_aug": Modality("/data/rgb_aug", loader=dummy_loader)},
+                keyed={"depth": Modality(
+                    "/data/gt_depth",
+                    loader=dummy_loader,
+                    keyed_by={"key_name": "frame"},
+                )},
+            )
+
+    def test_key_name_mismatch_strict_raises_eagerly(self):
+        with pytest.raises(ValueError, match="expected the deepest hierarchy key"):
+            self._make_with(
+                regulars={"rgb_aug": Modality("/data/rgb_aug", loader=dummy_loader)},
+                keyed={"depth": Modality(
+                    "/data/gt_depth",
+                    loader=dummy_loader,
+                    keyed_by={"key_name": "frame"},
+                )},
+                strict_keyed=True,
+            )
+
+    def test_missing_join_drops_samples_warns(self, caplog):
+        # GT index missing one of the file_ids.
+        rgb_index = _keyed_aug_index()
+        gt_index = {
+            "indexing": {"hierarchy": {"separator": ":"}, "id": {"join_char": "+"}},
+            "dataset": {
+                "files": [_make_file("abc", "abc.png")],  # xyz missing
+            },
+        }
+
+        def mock_index(path, **kw):
+            return rgb_index if "rgb" in path else gt_index
+
+        with patch(
+            "euler_loading.dataset.index_dataset_from_path",
+            side_effect=mock_index,
+        ):
+            with caplog.at_level(logging.WARNING, logger="euler_loading.dataset"):
+                ds = MultiModalDataset(
+                    modalities={
+                        "rgb_aug": Modality("/data/rgb_aug", loader=dummy_loader),
+                    },
+                    keyed_modalities={
+                        "depth": Modality(
+                            "/data/gt_depth",
+                            loader=dummy_loader,
+                            keyed_by={"key_name": "file_id"},
+                        ),
+                    },
+                )
+
+        assert len(ds) == 2  # only the abc file_id's two augs survive
+        assert any("samples dropped" in r.message for r in caplog.records)
+
+
+class TestKeyedModalityDiagnostic:
+    """When a keyed-style modality is mistakenly passed under
+    ``modalities=``, the no-common-ids error should hint at the fix."""
+
+    def test_hint_fired_when_keyed_modality_passed_as_regular(self):
+        rgb_index = _keyed_aug_index()
+        gt_index = _keyed_gt_index()
+
+        def mock_index(path, **kw):
+            return rgb_index if "rgb" in path else gt_index
+
+        with patch(
+            "euler_loading.dataset.index_dataset_from_path",
+            side_effect=mock_index,
+        ):
+            with pytest.raises(ValueError) as exc:
+                MultiModalDataset(
+                    modalities={
+                        "rgb_aug": Modality("/data/rgb_aug", loader=dummy_loader),
+                        "depth": Modality("/data/gt_depth", loader=dummy_loader),
+                    },
+                )
+
+        msg = str(exc.value)
+        assert "No common IDs found" in msg
+        assert "keyed_modalities" in msg
+        assert "key_name='file_id'" in msg
+        # Either direction may be reported; this dataset's geometry implies
+        # depth is the keyed candidate, anchored on rgb_aug.
+        assert "'depth'" in msg
+        assert "'rgb_aug'" in msg
+
+    def test_no_hint_when_modalities_are_unrelated(self):
+        """Two unrelated regular modalities with no overlap and no parent
+        relationship should NOT produce a misleading keyed hint."""
+        idx_a = _flat_index("a", ["alpha"])
+        idx_b = _flat_index("b", ["beta"])
+
+        def mock_index(path, **kw):
+            return idx_a if "/a" in path else idx_b
+
+        with patch(
+            "euler_loading.dataset.index_dataset_from_path",
+            side_effect=mock_index,
+        ):
+            with pytest.raises(ValueError) as exc:
+                MultiModalDataset(
+                    modalities={
+                        "a": Modality("/data/a", loader=dummy_loader),
+                        "b": Modality("/data/b", loader=dummy_loader),
+                    },
+                )
+
+        msg = str(exc.value)
+        assert "No common IDs found" in msg
+        assert "keyed_modalities" not in msg
+
+
+class TestKeyedModalityWriteSample:
+    def test_write_sample_writes_to_gt_shape(self, tmp_path):
+        rgb_index = _keyed_aug_index()
+        gt_index = _keyed_gt_index()
+        from ds_crawler import DatasetWriter
+
+        def file_writer(path: str, value: Any, meta: dict[str, Any] | None = None) -> None:
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(str(value))
+
+        def mock_index(path, **kw):
+            return rgb_index if "rgb" in path else gt_index
+
+        with patch(
+            "euler_loading.dataset.index_dataset_from_path",
+            side_effect=mock_index,
+        ):
+            ds = MultiModalDataset(
+                modalities={
+                    "rgb_aug": Modality("/data/rgb_aug", loader=dummy_loader),
+                },
+                keyed_modalities={
+                    "depth": Modality(
+                        "/data/gt_depth",
+                        loader=dummy_loader,
+                        writer=file_writer,
+                        keyed_by={"key_name": "file_id"},
+                    ),
+                },
+            )
+
+        out = tmp_path / "depth_pred"
+        out.mkdir()
+        writer = DatasetWriter(
+            out,
+            head={
+                "contract": {"kind": "dataset_head", "version": "1.0"},
+                "dataset": {"id": "pred", "name": "Pred"},
+                "modality": {
+                    "key": "depth",
+                    "meta": {
+                        "radial_depth": False,
+                        "scale_to_meters": 1.0,
+                        "range": [0, 65535],
+                    },
+                },
+                "addons": {},
+            },
+        )
+
+        ds.write_sample(0, {"depth": "prediction"}, writer)
+        writer.save_index()
+
+        # Output should be flat, mirroring the GT shape (no file_id: child).
+        produced = sorted(p.relative_to(out) for p in out.rglob("*.png"))
+        # There's exactly one written GT file, and it must NOT live under a
+        # synthetic file_id: subdir.
+        assert len(produced) == 1
+        assert "file_id" not in str(produced[0])
+
+
+# ---------------------------------------------------------------------------
 # Per-file ``attributes`` field exposed on samples
 # ---------------------------------------------------------------------------
 
@@ -1434,6 +1942,7 @@ class TestRunlogDescription:
                     "applies_to": ["hazy_rgb", "depth"],
                 },
             },
+            "keyed_modalities": {},
         }
 
     def test_describe_for_runlog_resolves_ds_crawler_properties(self):
@@ -1544,6 +2053,7 @@ class TestRunlogDescription:
                     "applies_to": ["hazy_rgb", "depth"],
                 },
             },
+            "keyed_modalities": {},
         }
 
     def test_describe_for_runlog_uses_euler_loading_namespace_only(self):
@@ -1591,6 +2101,7 @@ class TestRunlogDescription:
                 }
             },
             "hierarchical_modalities": {},
+            "keyed_modalities": {},
         }
 
 
