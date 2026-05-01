@@ -4,7 +4,7 @@ Multi-modal PyTorch `Dataset` that synchronises files across arbitrary dataset m
 
 Each modality points at a directory (or `.zip` archive) that carries its own `ds-crawler.config` (or cached `output.json`).
 ds-crawler indexes the directory tree, discovers files, and exposes hierarchical metadata (path properties, calibration files, …).
-euler-loading then **intersects file IDs** across all modalities so that every sample contains exactly one file per modality. Additional hierarchical data (e.g. per-scene calibration files) can be loaded via `hierarchical_modalities`. For augmentation-style datasets — many augmented files per ground-truth sample — `keyed_modalities` joins each augmented sample to its single GT file via the value encoded in the augmented sample's deepest hierarchy key.
+euler-loading then **intersects file IDs** across all modalities so that every sample contains exactly one file per modality. Additional hierarchical data (e.g. per-scene calibration files) can be loaded via `hierarchical_modalities`. For augmentation-style datasets — many augmented files per ground-truth sample — `euler_layout` metadata lets `MultiModalDataset.from_layout(...)` load shared targets as collapsed hierarchical modalities.
 How a file is actually **loaded** (image, depth map, point cloud, …) is configurable per modality — either supply a `Callable` or let euler-loading resolve a built-in loader automatically from the ds-crawler config.
 Writer functions can be resolved the same way, so inference outputs can be written back in dataset-native formats.
 
@@ -65,8 +65,8 @@ Frozen dataclass describing one data modality.
 | `hierarchy_scope` | `str \| None` | Optional scope label for hierarchical modalities (e.g. `scene_camera`). |
 | `applies_to` | `list[str] \| None` | Optional list of regular modality names a hierarchical modality applies to. |
 | `split` | `str \| None` | Optional inline split name. Loads `.ds_crawler/split_<name>.json` from the modality root (directory or zip) and overlays it on the normal ds-crawler metadata. |
-| `keyed_by` | `Mapping[str, str] \| None` | Optional join configuration used only when this modality is passed under `MultiModalDataset(keyed_modalities=...)`. Recognised keys: `key_name` (named-group prefix at the regular modality's deepest hierarchy key, e.g. `"file_id"`; auto-detected from the anchor's data when omitted) and `modality` (anchor regular-modality name; auto-inferred when there's exactly one regular). Both keys are optional — the kwarg can be left unset entirely. |
-| `cache` | `bool \| None` | Opt-in/out for in-memory caching of decoded values (only meaningful for hierarchical and keyed modalities; regular modalities are never cached). `True` keeps every distinct loaded file in a process-lifetime dict. `False` re-reads on every access. `None` (default): hierarchical → `True` (small calibration files benefit), keyed → `False` (safe for the augmentation case where the keyed modality holds full per-sample tensors and unbounded caching would OOM). |
+| `cache` | `bool \| None` | Opt-in/out for in-memory caching of decoded values (only meaningful for hierarchical modalities; regular modalities are never cached). `True` keeps every distinct loaded file in a process-lifetime dict. `False` re-reads on every access. `None` (default): hierarchical → `True` because small shared calibration files benefit. |
+| `collapse_single` | `bool` | For hierarchical modalities only. When `True`, a sample that matches exactly one hierarchical file returns that loaded value directly instead of `{file_id: value}`. This is useful for shared GT tensors used by multiple augmentations of the same source sample. |
 | `metadata` | `dict[str, Any]` | Optional arbitrary metadata. Keys under `metadata["euler_loading"]` are treated as euler-loading defaults. |
 
 The loader is the **only** place where domain-specific I/O happens.
@@ -137,30 +137,23 @@ Returns a dict mapping each regular modality name to `{"path": ..., "origin_path
 
 Returns a dict mapping each hierarchical modality name to `{"path": ..., "origin_path": ...}` and includes `split` when configured.
 
-### `MultiModalDataset.keyed_modality_paths()`
-
-Returns a dict mapping each keyed modality name to `{"path": ..., "origin_path": ...}` plus `keyed_by_modality` (the resolved anchor) and `keyed_by_key_name` (the resolved or auto-detected key name). Includes `split` when configured. Useful for verifying which prefix the auto-detection picked.
-
 ### `MultiModalDataset.get_modality_metadata(modality_name)`
 
 Returns the ds-crawler metadata dict for the given modality.
 
-### `MultiModalDataset(modalities, hierarchical_modalities=None, transforms=None, keyed_modalities=None, strict_keyed=False)`
+### `MultiModalDataset(modalities, hierarchical_modalities=None, transforms=None)`
 
 PyTorch `Dataset`. On construction it:
 
-1. Runs `ds_crawler.index_dataset_from_path()` for every modality (regular, hierarchical, and keyed).
+1. Runs `ds_crawler.index_dataset_from_path()` for every modality (regular and hierarchical).
 2. Computes the **sorted intersection** of file IDs across all regular modalities.
-3. Validates keyed-modality joins for every common id; drops samples whose join misses (or raises when `strict_keyed=True`).
-4. Logs warnings for unmatched files; raises `ValueError` when the intersection is empty or all samples are dropped by keyed-join validation.
+3. Logs warnings for unmatched files; raises `ValueError` when the intersection is empty.
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `modalities` | `dict[str, Modality]` | At least one entry required. Keys become the sample dict keys. These modalities participate in ID intersection. |
 | `hierarchical_modalities` | `dict[str, Modality] \| None` | Optional modalities whose files live at intermediate hierarchy levels (e.g. per-scene intrinsics). These do **not** participate in ID intersection. Each sample will contain a dict `{file_id: loaded_result}` with all files at or above the sample's hierarchy level. Results are cached so shared files are parsed only once. |
-| `keyed_modalities` | `dict[str, Modality] \| None` | Optional modalities joined to a regular sample by the value of the regular sample's deepest hierarchy key. See [Keyed modalities](#keyed-modalities) below. Contributes a single loaded value per sample (not a dict). Caching is **off by default** for keyed modalities (per-sample tensors can be large); set `Modality(..., cache=True)` to opt in when the keyed dataset is small enough to fit in memory. |
 | `transforms` | `list[Callable[[dict], dict]] \| None` | Applied in order after loading. Each receives and returns the full sample dict. |
-| `strict_keyed` | `bool` | When `True`, missing or mis-decoded keyed-modality joins raise immediately at construction instead of warning + dropping the affected samples. Default `False`. |
 
 #### Sample dict
 
@@ -175,8 +168,6 @@ PyTorch `Dataset`. On construction it:
         ...
     },
     ...
-    "<keyed_modality_name>": <loader result>,  # one entry per keyed modality (single value)
-    ...
     "id":          str,                   # file ID (leaf only, shared across modalities)
     "full_id":     str,                   # full hierarchical path including file ID (e.g. "/scene/camera/frame")
     "meta":        {                      # per-modality ds-crawler file entries
@@ -184,7 +175,7 @@ PyTorch `Dataset`. On construction it:
         ...
     },
     "attributes":  {                      # per-modality top-level surface for file_entry["attributes"]
-        "<modality_name>": {...},                # for regular and keyed modalities (single dict)
+        "<modality_name>": {...},                # for regular modalities (single dict)
         "<hierarchical_modality_name>": {        # for hierarchical modalities (one dict per matched file)
             "<file_id>": {...},
             ...
@@ -194,7 +185,7 @@ PyTorch `Dataset`. On construction it:
 }
 ```
 
-Hierarchical modality results are cached by default; keyed modality results are not. Both can be flipped via `Modality(..., cache=True|False)` — see the [`cache` row in the `Modality` table](#modalitypath--loadernone-metadatanone) and [Keyed modalities](#keyed-modalities) for details on when each default is the right choice.
+Hierarchical modality results are cached by default. This can be flipped via `Modality(..., cache=True|False)` — see the [`cache` row in the `Modality` table](#modalitypath--loadernone-metadatanone).
 
 ### `FileRecord`
 
@@ -334,13 +325,9 @@ Files across modalities are matched by these IDs, so **the directory structure m
 
 Calibration files or other per-scene/per-sequence metadata can be loaded via `hierarchical_modalities`. These files are matched to samples based on their position in the hierarchy — all files at or above a sample's hierarchy level are included and cached for efficiency.
 
-## Keyed modalities
+## Layout-aware augmentation loading
 
-A **keyed modality** joins each regular sample to a single file in another dataset by reading the *value* of the regular sample's deepest hierarchy key. This is the right tool when one modality augments samples of another at a different hierarchy depth — typically: many augmented files per ground-truth sample.
-
-### When to use it
-
-Layout where the augmented modality nests files under an extra `file_id:<id>` level, while the GT keeps the file id as the filename stem:
+Augmentation datasets often contain many files for the same source sample, while a target modality such as GT depth should be reused for every augmentation of that source. The recommended layout is to index the source sample as a hierarchy level and the augmentation variant as the file ID:
 
 ```
 augmented_rgb/
@@ -349,84 +336,32 @@ augmented_rgb/
   scene_000000/CS_FRONT/file_id:000000000000000026/mor_10m.png
   ...
 gt_depth/
-  scene_000000/CS_FRONT/000000000000000025.png
-  scene_000000/CS_FRONT/000000000000000026.png
+  scene_000000/CS_FRONT/file_id:000000000000000025/depth.png
+  scene_000000/CS_FRONT/file_id:000000000000000026/depth.png
   ...
 ```
 
-ds-crawler indexes both layouts unchanged; the augmented modality's `indexing.hierarchy.separator` must be `":"` (or any single separator) so the deepest key `"file_id:000…025"` decodes into `("file_id", "000…025")`.
-
-### Wiring
+Both modality indexes should include an `euler_layout` addon. The augmented RGB layout declares a `sample_axis` such as `file_id` at `location="hierarchy"` and a `variant_axis` at `location="file_id"`. The GT depth layout declares the same `sample_axis` and no variant axis.
 
 ```python
 from euler_loading import Modality, MultiModalDataset
 
-dataset = MultiModalDataset(
-    modalities={
+dataset = MultiModalDataset.from_layout(
+    {
         "rgb_aug": Modality("/data/augmented_rgb", loader=load_rgb),
-    },
-    keyed_modalities={
         "depth": Modality("/data/gt_depth", loader=load_depth),
     },
+    primary="rgb_aug",
 )
 
 sample = dataset[0]
-# sample["rgb_aug"]   – the per-aug RGB
-# sample["depth"]     – the GT depth for this file_id (single value, shared across augs)
+# sample["rgb_aug"]   – the per-augmentation RGB
+# sample["depth"]     – the GT depth for this file_id, shared across variants
 # sample["full_id"]   – e.g. "/scene_000000/CS_FRONT/file_id:000…025/mor_10m"
-# sample["id"]        – the augmentation's leaf id (e.g. "mor_10m")
+# sample["id"]        – the augmentation's leaf id, e.g. "mor_10m"
 ```
 
-`keyed_by` is optional — both `key_name` (the named-group prefix at the regular modality's deepest hierarchy key) and `modality` (the anchor regular modality) are auto-detected when unambiguous. Set them explicitly when:
-
-- there are multiple regular modalities (anchor must be picked: `keyed_by={"modality": "rgb_aug", "key_name": "file_id"}`); or
-- the anchor's deepest hierarchy keys mix multiple prefixes (e.g. some `file_id:…` and some `frame:…`).
-
-### Sample shape
-
-A keyed modality contributes a **single loaded value** per sample, unlike hierarchical modalities which return `{file_id: loader_result}`. The join returns exactly one record by construction (one GT per augmented sample's file id at the parent hierarchy prefix), so a dict would be misleading.
-
-### How the join works
-
-For each common id in the regular modalities, euler-loading:
-
-1. Looks up the anchor record's `hierarchy_path`, e.g. `(scene_000000, CS_FRONT, file_id:000…025)`.
-2. Splits the deepest key on the regular modality's `indexing.hierarchy.separator` → `("file_id", "000…025")`.
-3. Verifies the key name matches the configured (or auto-detected) `key_name`.
-4. Looks up the keyed modality's record at hierarchy `(scene_000000, CS_FRONT)` with `id == "000…025"`.
-
-The lookup is hierarchical: **both** the parent prefix `(scene_000000, CS_FRONT)` *and* the extracted key value `000…025` participate in the match. Two GT files that share an `id` at different parents are not interchangeable — each augmented sample picks the GT under its own parent. One footgun to watch: both modalities must use the same hierarchy-key convention for the parent prefix. If the augmented modality emits named-group keys like `scene:scene_000000` while the GT emits bare `scene_000000`, the prefixes won't match and the join silently drops every sample. Either both modalities use named groups or neither does.
-
-### Caching
-
-Caching for keyed modalities is **off by default**, which differs from hierarchical modalities (default on). The reason is workload shape: hierarchical files are usually tiny calibration / metadata blobs that you'd happily keep in memory forever, whereas a keyed modality typically holds the same kind of full per-sample tensor as a regular modality. Caching every decoded GT depth tensor in a 500 GB dataset would OOM the process.
-
-Override per modality:
-
-```python
-keyed_modalities={
-    # Small GT (a few hundred MB total): worth caching to avoid re-reads
-    # across augmentations of the same file_id.
-    "depth": Modality("/data/gt_depth", loader=load_depth, cache=True),
-    # Large GT (multi-hundred-GB total): keep it off, re-read each access.
-    "lidar": Modality("/data/gt_lidar", loader=load_lidar),  # cache=False default
-}
-```
-
-When `cache=True`, the GT for `file_id:000…025` is decoded once and reused across every augmentation that points at it. When `cache=False` (the default), every sample access re-reads and re-decodes the file.
-
-### Validation and missing joins
-
-Construction-time validation runs the decoding for every common id. Samples whose decode or lookup fails are dropped from the dataset with a per-modality warning summarising the count. Pass `strict_keyed=True` to raise instead — useful in pipelines where dropped samples should be a hard error. Common error cases (with precise messages):
-
-- key-name mismatch (deepest key starts with a different prefix);
-- regular modality with no `indexing.hierarchy.separator`;
-- ambiguous auto-detection (multiple distinct deepest-key prefixes in the anchor);
-- regular modality with no hierarchy at all.
-
-### Writing keyed-modality outputs
-
-`MultiModalDataset.write_sample(...)` accepts keyed modality names alongside regular ones. The destination path is derived from the keyed record (the GT's relative path), so prediction outputs land in the GT-shape layout — *not* under a synthetic `file_id:` subdirectory.
+`from_layout(...)` plans the GT modality as `hierarchical_modalities={"depth": Modality(..., collapse_single=True)}`. The hierarchical match uses the regular sample's hierarchy path, so source samples remain disambiguated by their parent hierarchy as well as by `file_id`. If a shared modality declares the same `sample_axis` but its index does not expose that axis as hierarchy, construction raises and the dataset should be re-indexed with the source sample axis in hierarchy.
 
 ## DenseDepthLoader protocol
 
