@@ -7,4 +7,6 @@ All loaders return **torch tensors** suitable for direct GPU-based training.
 Available submodules:
 
 - :mod:`euler_loading.loaders.gpu.vkitti2` — Virtual KITTI 2
+- :mod:`euler_loading.loaders.gpu.real_drive_sim` — Real Drive Sim
+- :mod:`euler_loading.loaders.gpu.muses` — MUSES
 """

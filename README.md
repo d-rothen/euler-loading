@@ -309,7 +309,7 @@ When `Modality.loader` is `None`, euler-loading resolves the loader from the ds-
 }
 ```
 
-`loader` is the module name (`vkitti2`, `real_drive_sim`, or `generic_dense_depth`) and `function` is the function within that module. The GPU variant is used by default.
+`loader` is the module name (`vkitti2`, `real_drive_sim`, `muses`, or `generic_dense_depth`) and `function` is the function within that module. The GPU variant is used by default.
 
 Writer resolution uses the same module and function metadata:
 
@@ -439,6 +439,18 @@ All built-in loaders accept both filesystem paths (`str`) and in-memory buffers 
 | `sky_mask` | Binary mask where class ID == 29 (sky) |
 | `calibration` | Per-sensor calibration from JSON: returns `dict[sensor_name, {"K": (3,3), "T": (4,4), "distortion": (8,)}]` (use with `hierarchical_modalities`) |
 
+### MUSES (`euler_loading.loaders.muses`)
+
+| Function | Description |
+|----------|-------------|
+| `rgb` | Frame-camera RGB image as float32, normalised to [0, 1] |
+| `reference_rgb` | Clear-weather reference RGB image as float32, normalised to [0, 1] |
+| `semantic_segmentation` | Single-channel Cityscapes `labelIds` or `labelTrainIds` PNG as class IDs |
+| `semantic_segmentation_color` | Cityscapes `labelColor` PNG as RGB uint8 labels |
+| `panoptic_segmentation` | COCO-style RGB panoptic PNG decoded to integer segment IDs |
+| `lidar_point_cloud` / `point_cloud` | Lidar `.bin` file as `(N, 6)` float64: `x, y, z, intensity, ring, timestamp` |
+| `sparse_depth` | Alias for MUSES lidar points for sparse-depth style workflows |
+
 ### Generic Dense Depth (`euler_loading.loaders.gpu.generic_dense_depth`)
 
 A format-agnostic loader that infers the loading strategy from the file extension. Useful for datasets that don't have a dedicated loader module.
@@ -450,7 +462,7 @@ A format-agnostic loader that infers the loading strategy from the file extensio
 | `sky_mask` | Binary mask by comparing pixels against `meta["sky_mask"]` (`[R, G, B]`). Requires `meta` |
 | `read_intrinsics` | Returns `meta["intrinsics"]` as a `(3, 3)` tensor. Ignores path; requires `meta` |
 
-CPU variants of all loaders live under `euler_loading.loaders.cpu.{vkitti2,real_drive_sim,generic_dense_depth}`.
+CPU variants of all loaders live under `euler_loading.loaders.cpu.{vkitti2,real_drive_sim,muses,generic_dense_depth}`.
 
 ### Flattening hierarchical modalities
 

@@ -8,4 +8,6 @@ requiring torch.
 Available submodules:
 
 - :mod:`euler_loading.loaders.cpu.vkitti2` — Virtual KITTI 2
+- :mod:`euler_loading.loaders.cpu.real_drive_sim` — Real Drive Sim
+- :mod:`euler_loading.loaders.cpu.muses` — MUSES
 """

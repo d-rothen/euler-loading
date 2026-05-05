@@ -23,4 +23,8 @@ Available submodules:
 
 - :mod:`euler_loading.loaders.gpu.vkitti2` — Virtual KITTI 2 (torch)
 - :mod:`euler_loading.loaders.cpu.vkitti2` — Virtual KITTI 2 (numpy)
+- :mod:`euler_loading.loaders.gpu.real_drive_sim` — Real Drive Sim (torch)
+- :mod:`euler_loading.loaders.cpu.real_drive_sim` — Real Drive Sim (numpy)
+- :mod:`euler_loading.loaders.gpu.muses` — MUSES (torch)
+- :mod:`euler_loading.loaders.cpu.muses` — MUSES (numpy)
 """

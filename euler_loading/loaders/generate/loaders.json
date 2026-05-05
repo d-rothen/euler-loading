@@ -220,6 +220,175 @@
             ]
         },
         {
+            "name": "muses",
+            "modalities": [
+                {
+                    "type": "point_cloud",
+                    "function": "lidar_point_cloud",
+                    "hierarchical": false,
+                    "dtype": "float64",
+                    "access": "key",
+                    "file_formats": [
+                        ".bin"
+                    ],
+                    "meta": {
+                        "columns": [
+                            "x",
+                            "y",
+                            "z",
+                            "intensity",
+                            "ring",
+                            "timestamp"
+                        ],
+                        "coordinate_unit": "meters",
+                        "timestamp_unit": "seconds"
+                    },
+                    "cpu": {
+                        "shape": "NC"
+                    },
+                    "gpu": {
+                        "shape": "NC"
+                    }
+                },
+                {
+                    "type": "panoptic_segmentation",
+                    "function": "panoptic_segmentation",
+                    "hierarchical": false,
+                    "dtype": "int64",
+                    "access": "key",
+                    "file_formats": [
+                        ".png"
+                    ],
+                    "meta": {
+                        "encoding": "coco_rgb_id"
+                    },
+                    "cpu": {
+                        "shape": "HW"
+                    },
+                    "gpu": {
+                        "shape": "1HW"
+                    }
+                },
+                {
+                    "type": "rgb",
+                    "function": "reference_rgb",
+                    "hierarchical": false,
+                    "dtype": "float32",
+                    "access": "key",
+                    "output_range": [
+                        0.0,
+                        1.0
+                    ],
+                    "file_formats": [
+                        ".png"
+                    ],
+                    "meta": {
+                        "source": "reference_frames"
+                    },
+                    "cpu": {
+                        "shape": "HWC"
+                    },
+                    "gpu": {
+                        "shape": "CHW"
+                    }
+                },
+                {
+                    "type": "rgb",
+                    "function": "rgb",
+                    "hierarchical": false,
+                    "dtype": "float32",
+                    "access": "key",
+                    "output_range": [
+                        0.0,
+                        1.0
+                    ],
+                    "file_formats": [
+                        ".png"
+                    ],
+                    "cpu": {
+                        "shape": "HWC"
+                    },
+                    "gpu": {
+                        "shape": "CHW"
+                    }
+                },
+                {
+                    "type": "semantic_segmentation",
+                    "function": "semantic_segmentation",
+                    "hierarchical": false,
+                    "dtype": "int64",
+                    "access": "key",
+                    "file_formats": [
+                        ".png"
+                    ],
+                    "meta": {
+                        "encoding": "single_channel",
+                        "supported_suffixes": [
+                            "labelIds",
+                            "labelTrainIds"
+                        ]
+                    },
+                    "cpu": {
+                        "shape": "HW"
+                    },
+                    "gpu": {
+                        "shape": "1HW"
+                    }
+                },
+                {
+                    "type": "semantic_segmentation_color",
+                    "function": "semantic_segmentation_color",
+                    "hierarchical": false,
+                    "dtype": "uint8",
+                    "access": "key",
+                    "file_formats": [
+                        ".png"
+                    ],
+                    "meta": {
+                        "encoding": "rgb",
+                        "supported_suffixes": [
+                            "labelColor"
+                        ]
+                    },
+                    "cpu": {
+                        "shape": "HWC"
+                    },
+                    "gpu": {
+                        "shape": "CHW"
+                    }
+                },
+                {
+                    "type": "sparse_depth",
+                    "function": "sparse_depth",
+                    "hierarchical": false,
+                    "dtype": "float64",
+                    "access": "key",
+                    "file_formats": [
+                        ".bin"
+                    ],
+                    "meta": {
+                        "representation": "point_cloud",
+                        "columns": [
+                            "x",
+                            "y",
+                            "z",
+                            "intensity",
+                            "ring",
+                            "timestamp"
+                        ],
+                        "coordinate_unit": "meters",
+                        "timestamp_unit": "seconds"
+                    },
+                    "cpu": {
+                        "shape": "NC"
+                    },
+                    "gpu": {
+                        "shape": "NC"
+                    }
+                }
+            ]
+        },
+        {
             "name": "real_drive_sim",
             "modalities": [
                 {

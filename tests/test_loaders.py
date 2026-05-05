@@ -2,22 +2,27 @@
 
 from __future__ import annotations
 
+import io
 from pathlib import Path
 
 import numpy as np
 import pytest
 import torch
+from PIL import Image
 
 from euler_loading.loaders import vkitti2
 from euler_loading.loaders import generic as generic_top
+from euler_loading.loaders import muses as muses_top
 from euler_loading.loaders.gpu import vkitti2 as gpu_vkitti2
 from euler_loading.loaders.gpu import real_drive_sim as gpu_rds
 from euler_loading.loaders.gpu import generic as gpu_generic
 from euler_loading.loaders.gpu import generic_dense_depth as gpu_generic_dense_depth
+from euler_loading.loaders.gpu import muses as gpu_muses
 from euler_loading.loaders.cpu import vkitti2 as cpu_vkitti2
 from euler_loading.loaders.cpu import real_drive_sim as cpu_rds
 from euler_loading.loaders.cpu import generic as cpu_generic
 from euler_loading.loaders.cpu import generic_dense_depth as cpu_generic_dense_depth
+from euler_loading.loaders.cpu import muses as cpu_muses
 
 # ---------------------------------------------------------------------------
 # Shared fixtures
@@ -141,6 +146,230 @@ class TestGenericDenseDepthAttributes:
 
         expected = np.array([[1.0, 2.0], [3.0, 4.0]], dtype=np.float32)
         np.testing.assert_allclose(result, expected)
+
+
+# ---------------------------------------------------------------------------
+# MUSES loader smoke tests
+# ---------------------------------------------------------------------------
+
+MUSES_LOADER_NAMES = [
+    "rgb",
+    "reference_rgb",
+    "semantic_segmentation",
+    "semantic_segmentation_color",
+    "panoptic_segmentation",
+    "lidar_point_cloud",
+    "point_cloud",
+    "sparse_depth",
+]
+
+
+@pytest.fixture()
+def muses_rgb_path(tmp_path):
+    arr = np.array(
+        [
+            [[0, 64, 128], [255, 128, 0]],
+            [[32, 16, 8], [4, 2, 1]],
+        ],
+        dtype=np.uint8,
+    )
+    path = tmp_path / "REC0001_frame_000001_frame_camera.png"
+    Image.fromarray(arr, mode="RGB").save(path)
+    return str(path), arr
+
+
+@pytest.fixture()
+def muses_semantic_path(tmp_path):
+    arr = np.array([[0, 7], [24, 255]], dtype=np.uint8)
+    path = tmp_path / "REC0001_frame_000001_gt_labelTrainIds.png"
+    Image.fromarray(arr, mode="L").save(path)
+    return str(path), arr
+
+
+@pytest.fixture()
+def muses_semantic_color_path(tmp_path):
+    arr = np.array(
+        [
+            [[128, 64, 128], [70, 70, 70]],
+            [[220, 20, 60], [0, 0, 142]],
+        ],
+        dtype=np.uint8,
+    )
+    path = tmp_path / "REC0001_frame_000001_gt_labelColor.png"
+    Image.fromarray(arr, mode="RGB").save(path)
+    return str(path), arr
+
+
+@pytest.fixture()
+def muses_panoptic_path(tmp_path):
+    arr = np.array(
+        [
+            [[1, 0, 0], [2, 1, 0]],
+            [[3, 2, 1], [255, 255, 255]],
+        ],
+        dtype=np.uint8,
+    )
+    path = tmp_path / "REC0001_frame_000001_gt_panoptic.png"
+    Image.fromarray(arr, mode="RGB").save(path)
+    expected = (
+        arr[:, :, 0].astype(np.int64)
+        + 256 * arr[:, :, 1].astype(np.int64)
+        + 65536 * arr[:, :, 2].astype(np.int64)
+    )
+    return str(path), expected
+
+
+@pytest.fixture()
+def muses_lidar_path(tmp_path):
+    arr = np.array(
+        [
+            [1.0, 2.0, 3.0, 19.0, 1.0, 1671182560.125],
+            [4.0, 5.0, 6.0, 27.0, 5.0, 1671182560.250],
+        ],
+        dtype=np.float64,
+    )
+    path = tmp_path / "REC0001_frame_000001_lidar.bin"
+    arr.tofile(path)
+    return str(path), arr
+
+
+class TestMUSESModuleContents:
+    """The muses module exposes the expected loader functions."""
+
+    @pytest.mark.parametrize("name", MUSES_LOADER_NAMES)
+    def test_top_level_has_callable(self, name):
+        assert callable(getattr(muses_top, name))
+
+    @pytest.mark.parametrize("name", MUSES_LOADER_NAMES)
+    def test_gpu_has_callable(self, name):
+        assert callable(getattr(gpu_muses, name))
+
+    @pytest.mark.parametrize("name", MUSES_LOADER_NAMES)
+    def test_cpu_has_callable(self, name):
+        assert callable(getattr(cpu_muses, name))
+
+    def test_reference_rgb_is_marked_as_rgb_modality(self):
+        assert gpu_muses.reference_rgb._modality_meta["type"] == "rgb"
+        assert cpu_muses.reference_rgb._modality_meta["type"] == "rgb"
+
+
+class TestMUSESGPULoaders:
+    """GPU MUSES loaders produce torch tensors from minimal on-disk data."""
+
+    def test_rgb_shape_dtype_and_range(self, muses_rgb_path):
+        path, _ = muses_rgb_path
+        result = gpu_muses.rgb(path)
+        assert isinstance(result, torch.Tensor)
+        assert result.dtype == torch.float32
+        assert result.shape == (3, 2, 2)
+        assert result.min() >= 0.0
+        assert result.max() <= 1.0
+
+    def test_reference_rgb_matches_rgb_loader(self, muses_rgb_path):
+        path, _ = muses_rgb_path
+        assert torch.equal(gpu_muses.reference_rgb(path), gpu_muses.rgb(path))
+
+    def test_semantic_segmentation_is_single_channel_long(self, muses_semantic_path):
+        path, expected = muses_semantic_path
+        result = gpu_muses.semantic_segmentation(path)
+        assert result.dtype == torch.int64
+        assert result.shape == (1, 2, 2)
+        assert torch.equal(result, torch.from_numpy(expected.astype(np.int64)).unsqueeze(0))
+
+    def test_semantic_color_is_chw_uint8(self, muses_semantic_color_path):
+        path, expected = muses_semantic_color_path
+        result = gpu_muses.semantic_segmentation_color(path)
+        assert result.dtype == torch.uint8
+        assert result.shape == (3, 2, 2)
+        assert torch.equal(result, torch.from_numpy(expected).permute(2, 0, 1))
+
+    def test_panoptic_segmentation_decodes_rgb_ids(self, muses_panoptic_path):
+        path, expected = muses_panoptic_path
+        result = gpu_muses.panoptic_segmentation(path)
+        assert result.dtype == torch.int64
+        assert result.shape == (1, 2, 2)
+        assert torch.equal(result, torch.from_numpy(expected).unsqueeze(0))
+
+    def test_lidar_point_cloud_preserves_float64_columns(self, muses_lidar_path):
+        path, expected = muses_lidar_path
+        result = gpu_muses.lidar_point_cloud(path)
+        assert result.dtype == torch.float64
+        assert result.shape == (2, 6)
+        assert torch.equal(result, torch.from_numpy(expected))
+
+    def test_point_cloud_alias_matches_lidar_point_cloud(self, muses_lidar_path):
+        path, _ = muses_lidar_path
+        assert torch.equal(gpu_muses.point_cloud(path), gpu_muses.lidar_point_cloud(path))
+
+    def test_sparse_depth_matches_lidar_point_cloud(self, muses_lidar_path):
+        path, _ = muses_lidar_path
+        assert torch.equal(gpu_muses.sparse_depth(path), gpu_muses.lidar_point_cloud(path))
+
+
+class TestMUSESCPULoaders:
+    """CPU MUSES loaders produce numpy arrays from minimal on-disk data."""
+
+    def test_rgb_shape_dtype_and_range(self, muses_rgb_path):
+        path, _ = muses_rgb_path
+        result = cpu_muses.rgb(path)
+        assert isinstance(result, np.ndarray)
+        assert result.dtype == np.float32
+        assert result.shape == (2, 2, 3)
+        assert result.min() >= 0.0
+        assert result.max() <= 1.0
+
+    def test_semantic_segmentation_is_hw_int64(self, muses_semantic_path):
+        path, expected = muses_semantic_path
+        result = cpu_muses.semantic_segmentation(path)
+        assert result.dtype == np.int64
+        assert result.shape == (2, 2)
+        assert np.array_equal(result, expected.astype(np.int64))
+
+    def test_semantic_color_is_hwc_uint8(self, muses_semantic_color_path):
+        path, expected = muses_semantic_color_path
+        result = cpu_muses.semantic_segmentation_color(path)
+        assert result.dtype == np.uint8
+        assert result.shape == (2, 2, 3)
+        assert np.array_equal(result, expected)
+
+    def test_panoptic_segmentation_decodes_rgb_ids(self, muses_panoptic_path):
+        path, expected = muses_panoptic_path
+        result = cpu_muses.panoptic_segmentation(path)
+        assert result.dtype == np.int64
+        assert result.shape == (2, 2)
+        assert np.array_equal(result, expected)
+
+    def test_lidar_point_cloud_preserves_float64_columns(self, muses_lidar_path):
+        path, expected = muses_lidar_path
+        result = cpu_muses.lidar_point_cloud(path)
+        assert result.dtype == np.float64
+        assert result.shape == (2, 6)
+        assert np.array_equal(result, expected)
+
+    def test_point_cloud_alias_matches_lidar_point_cloud(self, muses_lidar_path):
+        path, _ = muses_lidar_path
+        assert np.array_equal(cpu_muses.point_cloud(path), cpu_muses.lidar_point_cloud(path))
+
+    def test_lidar_point_cloud_supports_binary_streams(self, muses_lidar_path):
+        _, expected = muses_lidar_path
+        stream = io.BytesIO(expected.tobytes())
+        result = cpu_muses.lidar_point_cloud(stream)
+        assert np.array_equal(result, expected)
+
+
+class TestMUSESBackwardCompat:
+    """``from euler_loading.loaders import muses`` returns GPU loaders."""
+
+    def test_top_level_rgb_matches_gpu(self, muses_rgb_path):
+        path, _ = muses_rgb_path
+        assert torch.equal(muses_top.rgb(path), gpu_muses.rgb(path))
+
+    def test_top_level_panoptic_matches_gpu(self, muses_panoptic_path):
+        path, _ = muses_panoptic_path
+        assert torch.equal(
+            muses_top.panoptic_segmentation(path),
+            gpu_muses.panoptic_segmentation(path),
+        )
 
 
 # ---------------------------------------------------------------------------
