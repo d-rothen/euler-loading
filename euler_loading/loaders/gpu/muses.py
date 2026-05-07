@@ -16,11 +16,17 @@ Return types
   containing COCO-style panoptic segment IDs decoded from RGB.
 - **lidar_point_cloud** / **sparse_depth** -- ``torch.DoubleTensor`` of shape
   ``(N, 6)`` with columns ``x, y, z, intensity, ring, timestamp``.
+- **read_intrinsics** -- ``torch.FloatTensor`` of shape ``(3, 3)`` parsed
+  from ``calib.json``.
+- **read_extrinsics** -- ``torch.FloatTensor`` of shape ``(4, 4)`` parsed
+  from ``calib.json``.
 """
 
 from __future__ import annotations
 
+import json
 import os
+from collections.abc import Mapping
 from typing import Any, BinaryIO, Union
 
 import numpy as np
@@ -77,6 +83,128 @@ def _load_lidar_array(path: Union[str, BinaryIO]) -> np.ndarray:
             "which is not divisible by 6."
         )
     return arr.reshape((-1, 6))
+
+
+def _load_json(path: Union[str, BinaryIO]) -> dict[str, Any]:
+    """Load JSON from a file path or an in-memory buffer."""
+    if isinstance(path, (str, os.PathLike)):
+        with open(path) as f:
+            data = json.load(f)
+    else:
+        data = json.load(path)
+    if not isinstance(data, dict):
+        name = getattr(path, "name", path)
+        raise ValueError(f"MUSES calibration file {name!r} must contain a JSON object.")
+    return data
+
+
+def _select_string(
+    *,
+    meta: Mapping[str, Any] | None,
+    attributes: Mapping[str, Any] | None,
+    keys: tuple[str, ...],
+) -> str | None:
+    for source in (attributes, meta):
+        if not isinstance(source, Mapping):
+            continue
+        for key in keys:
+            value = source.get(key)
+            if isinstance(value, str) and value:
+                return value
+    return None
+
+
+def _available_keys(section: Mapping[str, Any]) -> str:
+    return ", ".join(sorted(str(key) for key in section.keys()))
+
+
+def _read_intrinsics_array(
+    path: Union[str, BinaryIO],
+    meta: Mapping[str, Any] | None,
+    attributes: Mapping[str, Any] | None,
+) -> np.ndarray:
+    data = _load_json(path)
+    intrinsics = data.get("intrinsics")
+    if not isinstance(intrinsics, Mapping):
+        raise ValueError("MUSES calibration JSON must contain an 'intrinsics' object.")
+
+    sensor = _select_string(
+        meta=meta,
+        attributes=attributes,
+        keys=("sensor", "camera", "intrinsics_sensor", "target_sensor"),
+    ) or "rgb"
+    entry = intrinsics.get(sensor)
+    if not isinstance(entry, Mapping) or "K" not in entry:
+        raise KeyError(
+            f"MUSES calibration has no intrinsics for sensor {sensor!r}. "
+            f"Available sensors: {_available_keys(intrinsics)}"
+        )
+
+    K = np.asarray(entry["K"], dtype=np.float32)
+    if K.shape != (3, 3):
+        raise ValueError(
+            f"MUSES intrinsics for sensor {sensor!r} must have shape (3, 3), "
+            f"got {K.shape}."
+        )
+    return K
+
+
+def _select_extrinsics_key(
+    *,
+    meta: Mapping[str, Any] | None,
+    attributes: Mapping[str, Any] | None,
+) -> str:
+    explicit = _select_string(
+        meta=meta,
+        attributes=attributes,
+        keys=("transform", "extrinsics_key", "extrinsic", "key"),
+    )
+    if explicit is not None:
+        return explicit
+
+    source_sensor = _select_string(
+        meta=meta,
+        attributes=attributes,
+        keys=("source_sensor", "from_sensor", "source"),
+    )
+    target_sensor = _select_string(
+        meta=meta,
+        attributes=attributes,
+        keys=("target_sensor", "to_sensor", "target", "camera"),
+    )
+    if source_sensor is not None and target_sensor is not None:
+        return f"{source_sensor}2{target_sensor}"
+
+    return "lidar2rgb"
+
+
+def _read_extrinsics_array(
+    path: Union[str, BinaryIO],
+    meta: Mapping[str, Any] | None,
+    attributes: Mapping[str, Any] | None,
+) -> np.ndarray:
+    data = _load_json(path)
+    extrinsics = data.get("extrinsics")
+    if not isinstance(extrinsics, Mapping):
+        raise ValueError("MUSES calibration JSON must contain an 'extrinsics' object.")
+
+    transform = _select_extrinsics_key(meta=meta, attributes=attributes)
+    raw = extrinsics.get(transform)
+    if raw is None:
+        raise KeyError(
+            f"MUSES calibration has no extrinsics transform {transform!r}. "
+            f"Available transforms: {_available_keys(extrinsics)}"
+        )
+
+    T = np.asarray(raw, dtype=np.float32)
+    if T.shape == (3, 4):
+        T = np.vstack([T, np.array([[0.0, 0.0, 0.0, 1.0]], dtype=np.float32)])
+    if T.shape != (4, 4):
+        raise ValueError(
+            f"MUSES extrinsics transform {transform!r} must have shape "
+            f"(4, 4) or (3, 4), got {T.shape}."
+        )
+    return T
 
 
 @modality_meta(
@@ -184,3 +312,43 @@ def point_cloud(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None, 
 def sparse_depth(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None, *, attributes: dict[str, Any] | None = None) -> torch.Tensor:
     """Load MUSES lidar points for sparse-depth style workflows."""
     return torch.from_numpy(_load_lidar_array(path)).contiguous()
+
+
+@modality_meta(
+    modality_type="intrinsics",
+    dtype="float32",
+    hierarchical=True,
+    shape="3x3",
+    file_formats=[".json"],
+    meta={"default_sensor": "rgb"},
+)
+def read_intrinsics(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None, *, attributes: dict[str, Any] | None = None) -> torch.Tensor:
+    """Load a MUSES camera intrinsics matrix from ``calib.json``.
+
+    The default sensor is ``"rgb"``. Override it with ``meta`` or per-file
+    ``attributes`` using ``sensor``, ``camera``, ``intrinsics_sensor``, or
+    ``target_sensor``.
+    """
+    return torch.from_numpy(_read_intrinsics_array(path, meta, attributes)).contiguous()
+
+
+@modality_meta(
+    modality_type="camera_extrinsics",
+    dtype="float32",
+    hierarchical=True,
+    shape="4x4",
+    file_formats=[".json"],
+    meta={
+        "default_transform": "lidar2rgb",
+        "transform_direction": "source_sensor_to_target_sensor",
+    },
+)
+def read_extrinsics(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None, *, attributes: dict[str, Any] | None = None) -> torch.Tensor:
+    """Load a MUSES camera extrinsics matrix from ``calib.json``.
+
+    The default transform is ``"lidar2rgb"``, suitable for projecting MUSES
+    lidar/sparse-depth points into the RGB camera. Override it with ``meta`` or
+    per-file ``attributes`` using ``transform`` / ``extrinsics_key`` or
+    ``source_sensor`` + ``target_sensor``.
+    """
+    return torch.from_numpy(_read_extrinsics_array(path, meta, attributes)).contiguous()

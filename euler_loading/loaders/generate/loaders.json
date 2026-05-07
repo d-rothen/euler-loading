@@ -270,6 +270,45 @@
                     }
                 },
                 {
+                    "type": "camera_extrinsics",
+                    "function": "read_extrinsics",
+                    "hierarchical": true,
+                    "dtype": "float32",
+                    "access": "key",
+                    "file_formats": [
+                        ".json"
+                    ],
+                    "meta": {
+                        "default_transform": "lidar2rgb",
+                        "transform_direction": "source_sensor_to_target_sensor"
+                    },
+                    "cpu": {
+                        "shape": "4x4"
+                    },
+                    "gpu": {
+                        "shape": "4x4"
+                    }
+                },
+                {
+                    "type": "intrinsics",
+                    "function": "read_intrinsics",
+                    "hierarchical": true,
+                    "dtype": "float32",
+                    "access": "key",
+                    "file_formats": [
+                        ".json"
+                    ],
+                    "meta": {
+                        "default_sensor": "rgb"
+                    },
+                    "cpu": {
+                        "shape": "3x3"
+                    },
+                    "gpu": {
+                        "shape": "3x3"
+                    }
+                },
+                {
                     "type": "rgb",
                     "function": "reference_rgb",
                     "hierarchical": false,

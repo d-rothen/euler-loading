@@ -12,6 +12,7 @@ from ._ds_crawler_utils import (
     extract_ds_crawler_properties,
     first_non_empty,
     first_non_empty_list,
+    load_dataset_config_for_scope,
 )
 
 if TYPE_CHECKING:
@@ -66,6 +67,8 @@ def _build_runlog_entry(
     entry: dict[str, Any] = {"path": modality.path}
     if modality.split is not None:
         entry["split"] = modality.split
+    if modality.metadata_scope is not None:
+        entry["metadata_scope"] = modality.metadata_scope
     if used_as is not None:
         entry["used_as"] = used_as
     if slot is not None:
@@ -125,22 +128,26 @@ def _resolve_euler_loading_property(
 def _get_ds_crawler_descriptor(
     *,
     path: str,
+    metadata_scope: str | None = None,
     index_output: Mapping[str, Any] | None,
     cache: dict[str, dict[str, Any]],
     load_dataset_config_fn: Callable[[dict[str, Any]], Any],
 ) -> dict[str, Any]:
-    if path not in cache:
-        cache[path] = _read_ds_crawler_descriptor(
+    cache_key = f"{path}::{metadata_scope or ''}"
+    if cache_key not in cache:
+        cache[cache_key] = _read_ds_crawler_descriptor(
             path=path,
+            metadata_scope=metadata_scope,
             index_output=index_output,
             load_dataset_config_fn=load_dataset_config_fn,
         )
-    return cache[path]
+    return cache[cache_key]
 
 
 def _read_ds_crawler_descriptor(
     *,
     path: str,
+    metadata_scope: str | None,
     index_output: Mapping[str, Any] | None,
     load_dataset_config_fn: Callable[[dict[str, Any]], Any],
 ) -> dict[str, Any]:
@@ -164,7 +171,11 @@ def _read_ds_crawler_descriptor(
                     descriptor["hierarchy_regex"] = hierarchy_regex
 
     try:
-        cfg = load_dataset_config_fn({"path": path})
+        cfg = load_dataset_config_for_scope(
+            path,
+            metadata_scope=metadata_scope,
+            load_dataset_config_fn=load_dataset_config_fn,
+        )
     except Exception:
         return descriptor
 

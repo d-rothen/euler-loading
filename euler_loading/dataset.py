@@ -30,7 +30,11 @@ try:
 except ImportError:  # pragma: no cover - compatibility with older ds-crawler
     _ds_crawler_get_layout_addon = None
 
-from ._ds_crawler_utils import load_index_output, parse_path_with_split
+from ._ds_crawler_utils import (
+    load_index_output,
+    parse_path_with_split,
+    validate_metadata_scope,
+)
 from ._metadata import _build_runlog_entry, _get_ds_crawler_descriptor
 from ._resolution import (
     _resolve_loader,
@@ -328,6 +332,14 @@ class Modality:
         split: Optional inline split name. When set, euler-loading reads the
                full ds-crawler metadata from the modality root and overlays the
                dataset payload from ``.ds_crawler/split_<name>.json``.
+        metadata_scope: Optional subdirectory below ``.ds_crawler`` to use for
+               this modality's ds-crawler artifacts. This allows multiple
+               logical modalities to share one physical directory or zip while
+               keeping separate ``dataset-head.json``, ``ds-crawler.json``,
+               ``index.json``, and split files under
+               ``.ds_crawler/<metadata_scope>/``. When scoped artifacts are
+               absent, loading falls back to the legacy root-level
+               ``.ds_crawler`` layout.
         cache: Optional opt-in/out for in-memory caching of loaded values.
                Only meaningful for hierarchical modalities; regular
                modalities load once per sample and never cache.
@@ -359,6 +371,7 @@ class Modality:
     hierarchy_scope: str | None = None
     applies_to: list[str] | None = None
     split: str | None = None
+    metadata_scope: str | None = None
     cache: bool | None = None
     collapse_single: bool = False
     metadata: dict[str, Any] = field(default_factory=dict)
@@ -374,6 +387,12 @@ class Modality:
                 )
             object.__setattr__(self, "path", parsed_path)
             object.__setattr__(self, "split", path_split)
+        if self.metadata_scope is not None:
+            object.__setattr__(
+                self,
+                "metadata_scope",
+                validate_metadata_scope(self.metadata_scope),
+            )
 
 
 class MultiModalDataset(_BaseDataset):
@@ -433,6 +452,8 @@ class MultiModalDataset(_BaseDataset):
             entry: dict[str, str | None] = {"path": path, "origin_path": origin}
             if mod.split is not None:
                 entry["split"] = mod.split
+            if mod.metadata_scope is not None:
+                entry["metadata_scope"] = mod.metadata_scope
             res[name] = entry
         return res
 
@@ -450,6 +471,8 @@ class MultiModalDataset(_BaseDataset):
             entry: dict[str, str | None] = {"path": path, "origin_path": origin}
             if mod.split is not None:
                 entry["split"] = mod.split
+            if mod.metadata_scope is not None:
+                entry["metadata_scope"] = mod.metadata_scope
             res[name] = entry
         return res
 
@@ -496,6 +519,7 @@ class MultiModalDataset(_BaseDataset):
         for name, modality in self._modalities.items():
             descriptor = _get_ds_crawler_descriptor(
                 path=modality.path,
+                metadata_scope=modality.metadata_scope,
                 index_output=self._index_outputs.get(name),
                 cache=descriptor_cache,
                 load_dataset_config_fn=load_dataset_config,
@@ -513,6 +537,7 @@ class MultiModalDataset(_BaseDataset):
         for name, modality in self._hierarchical_modalities.items():
             descriptor = _get_ds_crawler_descriptor(
                 path=modality.path,
+                metadata_scope=modality.metadata_scope,
                 index_output=self._hierarchical_index_outputs.get(name),
                 cache=descriptor_cache,
                 load_dataset_config_fn=load_dataset_config,
@@ -562,6 +587,7 @@ class MultiModalDataset(_BaseDataset):
             index = load_index_output(
                 modality.path,
                 split=modality.split,
+                metadata_scope=modality.metadata_scope,
                 index_dataset_from_path_fn=index_dataset_from_path,
             )
             indexed[name] = index
@@ -653,6 +679,7 @@ class MultiModalDataset(_BaseDataset):
             index = load_index_output(
                 modality.path,
                 split=modality.split,
+                metadata_scope=modality.metadata_scope,
                 index_dataset_from_path_fn=index_dataset_from_path,
             )
             self._index_outputs[name] = index
@@ -688,6 +715,7 @@ class MultiModalDataset(_BaseDataset):
             index = load_index_output(
                 modality.path,
                 split=modality.split,
+                metadata_scope=modality.metadata_scope,
                 index_dataset_from_path_fn=index_dataset_from_path,
             )
             self._hierarchical_index_outputs[name] = index

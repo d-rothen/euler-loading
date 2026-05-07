@@ -51,6 +51,21 @@ def _write_inline_split(
         json.dump(dataset_node, f)
 
 
+def _write_metadata(
+    root: os.PathLike[str] | str,
+    filename: str,
+    payload: dict[str, Any],
+    *,
+    scope: str | None = None,
+) -> None:
+    metadata_dir = os.path.join(root, ".ds_crawler")
+    if scope is not None:
+        metadata_dir = os.path.join(metadata_dir, scope)
+    os.makedirs(metadata_dir, exist_ok=True)
+    with open(os.path.join(metadata_dir, filename), "w") as f:
+        json.dump(payload, f)
+
+
 def _create_zip_with_inline_split(
     tmp_path,
     *,
@@ -302,6 +317,97 @@ class TestInlineSplitLoading:
         assert buf.read() == b"fake-png-002"
 
 
+class TestScopedMetadataLoading:
+    def test_hierarchical_modality_can_use_scoped_index_from_same_root(self, tmp_path):
+        root = tmp_path / "muses"
+        root.mkdir()
+
+        rgb_index: dict[str, Any] = {
+            "dataset": {
+                "children": {
+                    "scene:REC0001": {
+                        "files": [
+                            _make_file(
+                                "frame-000001",
+                                "frames/REC0001_frame_000001_frame_camera.png",
+                            )
+                        ]
+                    }
+                }
+            }
+        }
+        extrinsics_index: dict[str, Any] = {
+            "index": {
+                "files": [
+                    _make_file("lidar2rgb", "calib.json"),
+                ]
+            }
+        }
+        _write_metadata(
+            root,
+            "index.json",
+            extrinsics_index,
+            scope="camera_extrinsics",
+        )
+
+        with patch(
+            "euler_loading.dataset.index_dataset_from_path",
+            return_value=rgb_index,
+        ):
+            ds = MultiModalDataset(
+                modalities={
+                    "rgb": Modality(str(root), loader=dummy_loader),
+                },
+                hierarchical_modalities={
+                    "camera_extrinsics": Modality(
+                        str(root),
+                        loader=dummy_loader,
+                        metadata_scope="camera_extrinsics",
+                        collapse_single=True,
+                    ),
+                },
+            )
+
+        sample = ds[0]
+        assert sample["rgb"] == (
+            f"loaded:{root}/frames/REC0001_frame_000001_frame_camera.png"
+        )
+        assert sample["camera_extrinsics"] == f"loaded:{root}/calib.json"
+        assert ds.hierarchical_modality_paths()["camera_extrinsics"] == {
+            "path": str(root),
+            "origin_path": None,
+            "metadata_scope": "camera_extrinsics",
+        }
+        assert ds.get_modality_index("camera_extrinsics") == extrinsics_index
+
+    def test_metadata_scope_falls_back_to_legacy_root_index(self, tmp_path):
+        root = tmp_path / "rgb"
+        root.mkdir()
+        rgb_index = _flat_index("rgb", ["f001"])
+
+        with patch(
+            "euler_loading.dataset.index_dataset_from_path",
+            return_value=rgb_index,
+        ):
+            ds = MultiModalDataset(
+                modalities={
+                    "rgb": Modality(
+                        str(root),
+                        loader=dummy_loader,
+                        metadata_scope="rgb",
+                    ),
+                },
+            )
+
+        assert len(ds) == 1
+        assert ds[0]["rgb"] == f"loaded:{root}/f001.rgb"
+        assert ds.modality_paths()["rgb"] == {
+            "path": str(root),
+            "origin_path": None,
+            "metadata_scope": "rgb",
+        }
+
+
 class TestPathWithColonSplit:
     """Colon-separated path:split syntax."""
 
@@ -328,6 +434,10 @@ class TestPathWithColonSplit:
     def test_colon_and_explicit_split_raises(self):
         with pytest.raises(ValueError, match="inline split"):
             Modality("/data/ds:train", split="val")
+
+    def test_invalid_metadata_scope_raises(self):
+        with pytest.raises(ValueError, match="metadata_scope"):
+            Modality("/data/ds", metadata_scope="bad/scope")
 
     def test_windows_drive_letter_not_treated_as_split(self):
         mod = Modality("C:\\data\\ds")

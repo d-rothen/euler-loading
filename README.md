@@ -55,7 +55,7 @@ Frozen dataclass describing one data modality.
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `path` | `str` | Absolute path to the modality root directory or `.zip` archive. Must contain a `ds-crawler.config` or cached `output.json`. |
+| `path` | `str` | Absolute path to the modality root directory or `.zip` archive. Must contain ds-crawler metadata, either at `.ds_crawler/` or under the configured `metadata_scope`. |
 | `origin_path` | `str \| None` | Original path before copying/symlinking (e.g. for SLURM staging). Not used by euler-loading itself — useful for experiment logging to retain references to the original dataset location. |
 | `loader` | `Callable[..., Any] \| None` | Receives the file path (or `BinaryIO` buffer for zip-backed modalities) and an optional `meta` dict. Returns loaded data. When `None`, the loader is resolved automatically from the ds-crawler index (see [Automatic loader resolution](#automatic-loader-resolution)). |
 | `writer` | `Callable[..., Any] \| None` | Receives `(path, value, meta)` and writes modality data to disk. When `None`, euler-loading tries to resolve a built-in writer from ds-crawler metadata (`write_<function>` or `write_<suffix>` for `read_<suffix>`). |
@@ -65,6 +65,7 @@ Frozen dataclass describing one data modality.
 | `hierarchy_scope` | `str \| None` | Optional scope label for hierarchical modalities (e.g. `scene_camera`). |
 | `applies_to` | `list[str] \| None` | Optional list of regular modality names a hierarchical modality applies to. |
 | `split` | `str \| None` | Optional inline split name. Loads `.ds_crawler/split_<name>.json` from the modality root (directory or zip) and overlays it on the normal ds-crawler metadata. |
+| `metadata_scope` | `str \| None` | Optional namespace below `.ds_crawler`, e.g. `.ds_crawler/camera_extrinsics/index.json`. Use this when multiple logical modalities share one physical directory or zip. If the scoped artifacts are absent, loading falls back to the legacy root-level `.ds_crawler` layout. |
 | `cache` | `bool \| None` | Opt-in/out for in-memory caching of decoded values (only meaningful for hierarchical modalities; regular modalities are never cached). `True` keeps every distinct loaded file in a process-lifetime dict. `False` re-reads on every access. `None` (default): hierarchical → `True` because small shared calibration files benefit. |
 | `collapse_single` | `bool` | For hierarchical modalities only. When `True`, a sample that matches exactly one hierarchical file returns that loaded value directly instead of `{file_id: value}`. This is useful for shared GT tensors used by multiple augmentations of the same source sample. |
 | `metadata` | `dict[str, Any]` | Optional arbitrary metadata. Keys under `metadata["euler_loading"]` are treated as euler-loading defaults. |
@@ -129,13 +130,50 @@ dataset = MultiModalDataset(
 
 This works for both directory-backed and zip-backed modalities. The split file only replaces the `dataset` payload; top-level metadata such as dataset type and euler-loading loader hints still come from the canonical ds-crawler index.
 
+### Scoped ds-crawler Metadata
+
+When a single physical root or zip contains files for several logical modalities, keep one ds-crawler artifact set per modality under `.ds_crawler/<metadata_scope>/`:
+
+```
+muses.zip
+  calib.json
+  frames/...
+  lidar/...
+  .ds_crawler/rgb/dataset-head.json
+  .ds_crawler/rgb/ds-crawler.json
+  .ds_crawler/rgb/index.json
+  .ds_crawler/camera_extrinsics/dataset-head.json
+  .ds_crawler/camera_extrinsics/ds-crawler.json
+  .ds_crawler/camera_extrinsics/index.json
+```
+
+Then point multiple modalities at the same `path` and select the appropriate metadata scope:
+
+```python
+dataset = MultiModalDataset(
+    modalities={
+        "rgb": Modality("/data/muses.zip", metadata_scope="rgb"),
+        "sparse_depth": Modality("/data/muses.zip", metadata_scope="sparse_depth"),
+    },
+    hierarchical_modalities={
+        "camera_extrinsics": Modality(
+            "/data/muses.zip",
+            metadata_scope="camera_extrinsics",
+            collapse_single=True,
+        ),
+    },
+)
+```
+
+This is an additive layout. Existing roots with `.ds_crawler/index.json` continue to load unchanged, and a scoped modality falls back to that legacy location when the scoped artifacts are not present.
+
 ### `MultiModalDataset.modality_paths()`
 
-Returns a dict mapping each regular modality name to `{"path": ..., "origin_path": ...}` and includes `split` when configured.
+Returns a dict mapping each regular modality name to `{"path": ..., "origin_path": ...}` and includes `split` and `metadata_scope` when configured.
 
 ### `MultiModalDataset.hierarchical_modality_paths()`
 
-Returns a dict mapping each hierarchical modality name to `{"path": ..., "origin_path": ...}` and includes `split` when configured.
+Returns a dict mapping each hierarchical modality name to `{"path": ..., "origin_path": ...}` and includes `split` and `metadata_scope` when configured.
 
 ### `MultiModalDataset.get_modality_metadata(modality_name)`
 
@@ -145,7 +183,7 @@ Returns the ds-crawler metadata dict for the given modality.
 
 PyTorch `Dataset`. On construction it:
 
-1. Runs `ds_crawler.index_dataset_from_path()` for every modality (regular and hierarchical).
+1. Loads each modality's ds-crawler index from `.ds_crawler/<metadata_scope>/index.json` when `metadata_scope` is configured and present; otherwise uses the legacy root-level ds-crawler lookup.
 2. Computes the **sorted intersection** of file IDs across all regular modalities.
 3. Logs warnings for unmatched files; raises `ValueError` when the intersection is empty.
 
@@ -319,9 +357,8 @@ Writer resolution uses the same module and function metadata:
 
 ## ds-crawler integration
 
-Every modality root must be independently indexable by ds-crawler.
-Place a `ds-crawler.config` in the root of each modality directory (or zip archive) — ds-crawler will then parse the directory tree and assign each file an ID derived from its path properties.
-Files across modalities are matched by these IDs, so **the directory structure must be consistent** across modalities (identical hierarchy and naming conventions up to the modality-specific parts captured in the config).
+Each logical modality must have its own ds-crawler index. Usually that means one modality root with its own `.ds_crawler` artifacts. When several logical modalities share one physical directory or zip, put each artifact set under `.ds_crawler/<metadata_scope>/` and set `Modality(..., metadata_scope=...)`.
+Files across regular modalities are matched by IDs from those indexes, so **the indexed hierarchy and naming conventions must be consistent** across modalities up to modality-specific parts captured in the config.
 
 Calibration files or other per-scene/per-sequence metadata can be loaded via `hierarchical_modalities`. These files are matched to samples based on their position in the hierarchy — all files at or above a sample's hierarchy level are included and cached for efficiency.
 
@@ -450,6 +487,8 @@ All built-in loaders accept both filesystem paths (`str`) and in-memory buffers 
 | `panoptic_segmentation` | COCO-style RGB panoptic PNG decoded to integer segment IDs |
 | `lidar_point_cloud` / `point_cloud` | Lidar `.bin` file as `(N, 6)` float64: `x, y, z, intensity, ring, timestamp` |
 | `sparse_depth` | Alias for MUSES lidar points for sparse-depth style workflows |
+| `read_intrinsics` | RGB camera intrinsics from MUSES `calib.json` as a `(3, 3)` matrix; defaults to `sensor="rgb"` |
+| `read_extrinsics` | Camera extrinsics from MUSES `calib.json` as a `(4, 4)` matrix; defaults to `transform="lidar2rgb"` for sparse-depth reprojection into RGB pixels |
 
 ### Generic Dense Depth (`euler_loading.loaders.gpu.generic_dense_depth`)
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import json
 from pathlib import Path
 
 import numpy as np
@@ -161,6 +162,8 @@ MUSES_LOADER_NAMES = [
     "lidar_point_cloud",
     "point_cloud",
     "sparse_depth",
+    "read_intrinsics",
+    "read_extrinsics",
 ]
 
 
@@ -231,6 +234,47 @@ def muses_lidar_path(tmp_path):
     path = tmp_path / "REC0001_frame_000001_lidar.bin"
     arr.tofile(path)
     return str(path), arr
+
+
+@pytest.fixture()
+def muses_calib_path(tmp_path):
+    data = {
+        "intrinsics": {
+            "rgb": {
+                "K": [
+                    [1055.0, 0.0, 941.0],
+                    [0.0, 1056.0, 550.0],
+                    [0.0, 0.0, 1.0],
+                ],
+                "D": [0.0, 0.0, 0.0, 0.0, 0.0],
+            },
+            "event": {
+                "K": [
+                    [1038.0, 0.0, 625.0],
+                    [0.0, 1039.0, 344.0],
+                    [0.0, 0.0, 1.0],
+                ],
+                "D": [0.0, 0.0, 0.0, 0.0, 0.0],
+            },
+        },
+        "extrinsics": {
+            "lidar2rgb": [
+                [1.0, 0.0, 0.0, 0.12],
+                [0.0, 1.0, 0.0, 0.03],
+                [0.0, 0.0, 1.0, -0.02],
+                [0.0, 0.0, 0.0, 1.0],
+            ],
+            "radar2rgb": [
+                [0.0, -1.0, 0.0, -0.4],
+                [1.0, 0.0, 0.0, 0.15],
+                [0.0, 0.0, 1.0, 0.2],
+                [0.0, 0.0, 0.0, 1.0],
+            ],
+        },
+    }
+    path = tmp_path / "calib.json"
+    path.write_text(json.dumps(data))
+    return str(path), data
 
 
 class TestMUSESModuleContents:
@@ -305,6 +349,30 @@ class TestMUSESGPULoaders:
         path, _ = muses_lidar_path
         assert torch.equal(gpu_muses.sparse_depth(path), gpu_muses.lidar_point_cloud(path))
 
+    def test_read_intrinsics_defaults_to_rgb(self, muses_calib_path):
+        path, data = muses_calib_path
+        result = gpu_muses.read_intrinsics(path)
+        assert result.dtype == torch.float32
+        assert result.shape == (3, 3)
+        assert torch.equal(result, torch.tensor(data["intrinsics"]["rgb"]["K"], dtype=torch.float32))
+
+    def test_read_intrinsics_can_select_sensor_from_attributes(self, muses_calib_path):
+        path, data = muses_calib_path
+        result = gpu_muses.read_intrinsics(path, attributes={"sensor": "event"})
+        assert torch.equal(result, torch.tensor(data["intrinsics"]["event"]["K"], dtype=torch.float32))
+
+    def test_read_extrinsics_defaults_to_lidar2rgb(self, muses_calib_path):
+        path, data = muses_calib_path
+        result = gpu_muses.read_extrinsics(path)
+        assert result.dtype == torch.float32
+        assert result.shape == (4, 4)
+        assert torch.equal(result, torch.tensor(data["extrinsics"]["lidar2rgb"], dtype=torch.float32))
+
+    def test_read_extrinsics_can_select_transform_from_meta(self, muses_calib_path):
+        path, data = muses_calib_path
+        result = gpu_muses.read_extrinsics(path, meta={"transform": "radar2rgb"})
+        assert torch.equal(result, torch.tensor(data["extrinsics"]["radar2rgb"], dtype=torch.float32))
+
 
 class TestMUSESCPULoaders:
     """CPU MUSES loaders produce numpy arrays from minimal on-disk data."""
@@ -355,6 +423,30 @@ class TestMUSESCPULoaders:
         stream = io.BytesIO(expected.tobytes())
         result = cpu_muses.lidar_point_cloud(stream)
         assert np.array_equal(result, expected)
+
+    def test_read_intrinsics_defaults_to_rgb(self, muses_calib_path):
+        path, data = muses_calib_path
+        result = cpu_muses.read_intrinsics(path)
+        assert result.dtype == np.float32
+        assert result.shape == (3, 3)
+        assert np.array_equal(result, np.asarray(data["intrinsics"]["rgb"]["K"], dtype=np.float32))
+
+    def test_read_intrinsics_can_select_sensor_from_attributes(self, muses_calib_path):
+        path, data = muses_calib_path
+        result = cpu_muses.read_intrinsics(path, attributes={"sensor": "event"})
+        assert np.array_equal(result, np.asarray(data["intrinsics"]["event"]["K"], dtype=np.float32))
+
+    def test_read_extrinsics_defaults_to_lidar2rgb(self, muses_calib_path):
+        path, data = muses_calib_path
+        result = cpu_muses.read_extrinsics(path)
+        assert result.dtype == np.float32
+        assert result.shape == (4, 4)
+        assert np.array_equal(result, np.asarray(data["extrinsics"]["lidar2rgb"], dtype=np.float32))
+
+    def test_read_extrinsics_can_select_transform_from_meta(self, muses_calib_path):
+        path, data = muses_calib_path
+        result = cpu_muses.read_extrinsics(path, meta={"transform": "radar2rgb"})
+        assert np.array_equal(result, np.asarray(data["extrinsics"]["radar2rgb"], dtype=np.float32))
 
 
 class TestMUSESBackwardCompat:
