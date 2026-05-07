@@ -350,9 +350,14 @@ class TestScopedMetadataLoading:
             scope="camera_extrinsics",
         )
 
+        def mock_index(path, **kwargs):
+            if kwargs.get("metadata_scope") == "camera_extrinsics":
+                return extrinsics_index
+            return rgb_index
+
         with patch(
             "euler_loading.dataset.index_dataset_from_path",
-            return_value=rgb_index,
+            side_effect=mock_index,
         ):
             ds = MultiModalDataset(
                 modalities={
