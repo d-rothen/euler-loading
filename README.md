@@ -193,6 +193,17 @@ PyTorch `Dataset`. On construction it:
 | `hierarchical_modalities` | `dict[str, Modality] \| None` | Optional modalities whose files live at intermediate hierarchy levels (e.g. per-scene intrinsics). These do **not** participate in ID intersection. Each sample will contain a dict `{file_id: loaded_result}` with all files at or above the sample's hierarchy level. Results are cached so shared files are parsed only once. |
 | `transforms` | `list[Callable[[dict], dict]] \| None` | Applied in order after loading. Each receives and returns the full sample dict. |
 
+For hierarchical modalities, the ds-crawler file ID is the key in
+`{file_id: loaded_result}`. If files at different ancestor levels use the same
+ID, the deepest matching file wins. This gives calibration files natural
+inheritance semantics: a root-level `intrinsics` file can apply to every sample,
+while a scene- or camera-level `intrinsics` file with the same ID overrides it
+for descendants. Use ds-crawler's `indexing.id.override` when the physical file
+name is incidental, such as `calib.json` or a UUID, and you want a stable
+semantic key like `intrinsics`, `extrinsics`, or `calibration`. Do not use an
+override when multiple distinct files at the same hierarchy level should all be
+returned.
+
 #### Sample dict
 
 `dataset[i]` returns:
@@ -361,6 +372,11 @@ Each logical modality must have its own ds-crawler index. Usually that means one
 Files across regular modalities are matched by IDs from those indexes, so **the indexed hierarchy and naming conventions must be consistent** across modalities up to modality-specific parts captured in the config.
 
 Calibration files or other per-scene/per-sequence metadata can be loaded via `hierarchical_modalities`. These files are matched to samples based on their position in the hierarchy — all files at or above a sample's hierarchy level are included and cached for efficiency.
+Root-level calibration files, for example `calib.json` at the top of a shared
+zip, should be indexed by ds-crawler without a hierarchy block. euler-loading
+treats that root file as an ancestor of every sample. If the modality uses
+`collapse_single=True`, the loaded calibration value is returned directly as
+long as exactly one hierarchical file matches the sample.
 
 ## Layout-aware augmentation loading
 
