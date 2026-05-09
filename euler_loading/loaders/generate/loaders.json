@@ -397,6 +397,32 @@
                     }
                 },
                 {
+                    "type": "sky_mask",
+                    "function": "sky_mask",
+                    "hierarchical": false,
+                    "dtype": "bool",
+                    "access": "key",
+                    "file_formats": [
+                        ".png"
+                    ],
+                    "meta": {
+                        "encoding": "single_channel",
+                        "sky_class": [
+                            0,
+                            0,
+                            23
+                        ],
+                        "sky_label_id": 23,
+                        "sky_train_id": 10
+                    },
+                    "cpu": {
+                        "shape": "HW"
+                    },
+                    "gpu": {
+                        "shape": "1HW"
+                    }
+                },
+                {
                     "type": "sparse_depth",
                     "function": "sparse_depth",
                     "hierarchical": false,
