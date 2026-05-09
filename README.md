@@ -500,6 +500,7 @@ All built-in loaders accept both filesystem paths (`str`) and in-memory buffers 
 | `reference_rgb` | Clear-weather reference RGB image as float32, normalised to [0, 1] |
 | `semantic_segmentation` | Single-channel Cityscapes `labelIds` or `labelTrainIds` PNG as class IDs |
 | `semantic_segmentation_color` | Cityscapes `labelColor` PNG as RGB uint8 labels |
+| `sky_mask` | Binary mask from Cityscapes labels; uses sky `trainId=10` for `labelTrainIds`, `labelId=23` for `labelIds`, or RGB `meta["sky_class"]` such as `[0, 0, 23]` |
 | `panoptic_segmentation` | COCO-style RGB panoptic PNG decoded to integer segment IDs |
 | `lidar_point_cloud` / `point_cloud` | Lidar `.bin` file as `(N, 6)` float64: `x, y, z, intensity, ring, timestamp` |
 | `sparse_depth` | Alias for MUSES lidar points for sparse-depth style workflows |

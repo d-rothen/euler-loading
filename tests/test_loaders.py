@@ -158,6 +158,7 @@ MUSES_LOADER_NAMES = [
     "reference_rgb",
     "semantic_segmentation",
     "semantic_segmentation_color",
+    "sky_mask",
     "panoptic_segmentation",
     "lidar_point_cloud",
     "point_cloud",
@@ -187,6 +188,33 @@ def muses_semantic_path(tmp_path):
     path = tmp_path / "REC0001_frame_000001_gt_labelTrainIds.png"
     Image.fromarray(arr, mode="L").save(path)
     return str(path), arr
+
+
+@pytest.fixture()
+def muses_sky_mask_path(tmp_path):
+    arr = np.array([[0, 10], [10, 255]], dtype=np.uint8)
+    path = tmp_path / "REC0001_frame_000001_gt_labelTrainIds.png"
+    Image.fromarray(arr, mode="L").save(path)
+    return str(path), arr == 10
+
+
+@pytest.fixture()
+def muses_sky_label_ids_path(tmp_path):
+    arr = np.array([[0, 23], [23, 255]], dtype=np.uint8)
+    path = tmp_path / "REC0001_frame_000001_gt_labelIds.png"
+    Image.fromarray(arr, mode="L").save(path)
+    return str(path), arr == 23
+
+
+@pytest.fixture()
+def muses_sky_rgb_class_path(tmp_path):
+    arr = np.zeros((2, 2, 3), dtype=np.uint8)
+    arr[0, 1] = [0, 0, 23]
+    arr[1, 0] = [0, 0, 23]
+    arr[1, 1] = [0, 0, 7]
+    path = tmp_path / "REC0001_frame_000001_gt_labelIds_rgb.png"
+    Image.fromarray(arr, mode="RGB").save(path)
+    return str(path), np.all(arr == np.array([0, 0, 23], dtype=np.uint8), axis=-1)
 
 
 @pytest.fixture()
@@ -320,6 +348,23 @@ class TestMUSESGPULoaders:
         assert result.shape == (1, 2, 2)
         assert torch.equal(result, torch.from_numpy(expected.astype(np.int64)).unsqueeze(0))
 
+    def test_sky_mask_uses_train_ids(self, muses_sky_mask_path):
+        path, expected = muses_sky_mask_path
+        result = gpu_muses.sky_mask(path)
+        assert result.dtype == torch.bool
+        assert result.shape == (1, 2, 2)
+        assert torch.equal(result, torch.from_numpy(expected).unsqueeze(0))
+
+    def test_sky_mask_uses_label_ids_from_filename(self, muses_sky_label_ids_path):
+        path, expected = muses_sky_label_ids_path
+        result = gpu_muses.sky_mask(path)
+        assert torch.equal(result, torch.from_numpy(expected).unsqueeze(0))
+
+    def test_sky_mask_uses_rgb_sky_class_meta(self, muses_sky_rgb_class_path):
+        path, expected = muses_sky_rgb_class_path
+        result = gpu_muses.sky_mask(path, meta={"sky_class": [0, 0, 23]})
+        assert torch.equal(result, torch.from_numpy(expected).unsqueeze(0))
+
     def test_semantic_color_is_chw_uint8(self, muses_semantic_color_path):
         path, expected = muses_semantic_color_path
         result = gpu_muses.semantic_segmentation_color(path)
@@ -392,6 +437,23 @@ class TestMUSESCPULoaders:
         assert result.dtype == np.int64
         assert result.shape == (2, 2)
         assert np.array_equal(result, expected.astype(np.int64))
+
+    def test_sky_mask_uses_train_ids(self, muses_sky_mask_path):
+        path, expected = muses_sky_mask_path
+        result = cpu_muses.sky_mask(path)
+        assert result.dtype == np.bool_
+        assert result.shape == (2, 2)
+        assert np.array_equal(result, expected)
+
+    def test_sky_mask_uses_label_ids_from_filename(self, muses_sky_label_ids_path):
+        path, expected = muses_sky_label_ids_path
+        result = cpu_muses.sky_mask(path)
+        assert np.array_equal(result, expected)
+
+    def test_sky_mask_uses_rgb_sky_class_meta(self, muses_sky_rgb_class_path):
+        path, expected = muses_sky_rgb_class_path
+        result = cpu_muses.sky_mask(path, meta={"sky_class": [0, 0, 23]})
+        assert np.array_equal(result, expected)
 
     def test_semantic_color_is_hwc_uint8(self, muses_semantic_color_path):
         path, expected = muses_semantic_color_path
