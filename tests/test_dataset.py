@@ -343,6 +343,7 @@ class TestScopedMetadataLoading:
                 ]
             }
         }
+        _write_metadata(root, "index.json", rgb_index)
         _write_metadata(
             root,
             "index.json",
@@ -412,6 +413,170 @@ class TestScopedMetadataLoading:
             "metadata_scope": "rgb",
         }
 
+    def test_metadata_scope_inferred_from_single_available_scope(self, tmp_path):
+        root = tmp_path / "muses"
+        root.mkdir()
+        rgb_index = _flat_index("rgb", ["f001"])
+        _write_metadata(root, "index.json", rgb_index, scope="rgb")
+
+        def mock_index(path, **kwargs):
+            assert kwargs.get("metadata_scope") == "rgb"
+            return rgb_index
+
+        with patch(
+            "euler_loading.dataset.index_dataset_from_path",
+            side_effect=mock_index,
+        ):
+            ds = MultiModalDataset(
+                modalities={
+                    "image": Modality(str(root), loader=dummy_loader),
+                },
+            )
+
+        assert len(ds) == 1
+        assert ds.modality_paths()["image"] == {
+            "path": str(root),
+            "origin_path": None,
+            "metadata_scope": "rgb",
+        }
+
+    def test_metadata_scope_inferred_from_modality_name(self, tmp_path):
+        root = tmp_path / "muses"
+        root.mkdir()
+        rgb_index = _flat_index("rgb", ["f001"])
+        depth_index = _flat_index("depth", ["f001"])
+        _write_metadata(root, "index.json", rgb_index, scope="rgb")
+        _write_metadata(root, "index.json", depth_index, scope="depth")
+
+        def mock_index(path, **kwargs):
+            assert kwargs.get("metadata_scope") == "rgb"
+            return rgb_index
+
+        with patch(
+            "euler_loading.dataset.index_dataset_from_path",
+            side_effect=mock_index,
+        ):
+            ds = MultiModalDataset(
+                modalities={
+                    "rgb": Modality(str(root), loader=dummy_loader),
+                },
+            )
+
+        assert ds.modality_paths()["rgb"]["metadata_scope"] == "rgb"
+
+    def test_metadata_scope_inferred_from_loader_modality_type(self, tmp_path):
+        root = tmp_path / "muses"
+        root.mkdir()
+        rgb_index = _flat_index("rgb", ["f001"])
+        depth_index = _flat_index("depth", ["f001"])
+        _write_metadata(root, "index.json", rgb_index, scope="rgb")
+        _write_metadata(root, "index.json", depth_index, scope="depth")
+
+        def rgb_loader(path, meta=None):
+            return dummy_loader(path, meta)
+
+        rgb_loader._modality_meta = {"type": "rgb"}  # type: ignore[attr-defined]
+
+        def mock_index(path, **kwargs):
+            assert kwargs.get("metadata_scope") == "rgb"
+            return rgb_index
+
+        with patch(
+            "euler_loading.dataset.index_dataset_from_path",
+            side_effect=mock_index,
+        ):
+            ds = MultiModalDataset(
+                modalities={
+                    "image": Modality(str(root), loader=rgb_loader),
+                },
+            )
+
+        assert ds.modality_paths()["image"]["metadata_scope"] == "rgb"
+
+    def test_metadata_scope_inferred_from_scoped_head_modality_key(self, tmp_path):
+        root = tmp_path / "muses"
+        root.mkdir()
+        rgb_index = _flat_index("rgb", ["f001"])
+        depth_index = _flat_index("depth", ["f001"])
+        _write_metadata(root, "index.json", rgb_index, scope="scope-a")
+        _write_metadata(
+            root,
+            "dataset-head.json",
+            {"dataset": {"name": "MUSES"}, "modality": {"key": "rgb"}},
+            scope="scope-a",
+        )
+        _write_metadata(root, "index.json", depth_index, scope="scope-b")
+        _write_metadata(
+            root,
+            "dataset-head.json",
+            {"dataset": {"name": "MUSES"}, "modality": {"key": "depth"}},
+            scope="scope-b",
+        )
+
+        def mock_index(path, **kwargs):
+            assert kwargs.get("metadata_scope") == "scope-a"
+            return rgb_index
+
+        with patch(
+            "euler_loading.dataset.index_dataset_from_path",
+            side_effect=mock_index,
+        ):
+            ds = MultiModalDataset(
+                modalities={
+                    "image": Modality(
+                        str(root),
+                        loader=dummy_loader,
+                        modality_type="rgb",
+                    ),
+                },
+            )
+
+        assert ds.modality_paths()["image"]["metadata_scope"] == "scope-a"
+
+    def test_multiple_metadata_scopes_without_match_raises(self, tmp_path):
+        root = tmp_path / "muses"
+        root.mkdir()
+        _write_metadata(root, "index.json", _flat_index("rgb", ["f001"]), scope="rgb")
+        _write_metadata(
+            root,
+            "index.json",
+            _flat_index("depth", ["f001"]),
+            scope="depth",
+        )
+
+        with pytest.raises(ValueError, match="Multiple ds-crawler metadata scopes"):
+            MultiModalDataset(
+                modalities={
+                    "image": Modality(str(root), loader=dummy_loader),
+                },
+            )
+
+    def test_root_metadata_prevents_scope_inference(self, tmp_path):
+        root = tmp_path / "muses"
+        root.mkdir()
+        rgb_index = _flat_index("rgb", ["f001"])
+        _write_metadata(root, "index.json", rgb_index)
+        _write_metadata(root, "index.json", _flat_index("depth", ["f001"]), scope="rgb")
+
+        def mock_index(path, **kwargs):
+            assert "metadata_scope" not in kwargs
+            return rgb_index
+
+        with patch(
+            "euler_loading.dataset.index_dataset_from_path",
+            side_effect=mock_index,
+        ):
+            ds = MultiModalDataset(
+                modalities={
+                    "rgb": Modality(str(root), loader=dummy_loader),
+                },
+            )
+
+        assert ds.modality_paths()["rgb"] == {
+            "path": str(root),
+            "origin_path": None,
+        }
+
 
 class TestPathWithColonSplit:
     """Colon-separated path:split syntax."""
@@ -436,13 +601,38 @@ class TestPathWithColonSplit:
         assert mod.path == "/data/ds"
         assert mod.split == "train"
 
+    def test_scope_extracted_from_path(self):
+        mod = Modality("/data/ds.zip#scope=rgb")
+        assert mod.path == "/data/ds.zip"
+        assert mod.split is None
+        assert mod.metadata_scope == "rgb"
+
+    def test_split_and_scope_extracted_from_path(self):
+        mod = Modality("/data/ds.zip:train#scope=rgb")
+        assert mod.path == "/data/ds.zip"
+        assert mod.split == "train"
+        assert mod.metadata_scope == "rgb"
+
+    def test_inline_scope_can_match_explicit_scope(self):
+        mod = Modality("/data/ds.zip#scope=rgb", metadata_scope=" rgb ")
+        assert mod.path == "/data/ds.zip"
+        assert mod.metadata_scope == "rgb"
+
     def test_colon_and_explicit_split_raises(self):
         with pytest.raises(ValueError, match="inline split"):
             Modality("/data/ds:train", split="val")
 
+    def test_inline_scope_conflict_raises(self):
+        with pytest.raises(ValueError, match="inline metadata scope"):
+            Modality("/data/ds.zip#scope=rgb", metadata_scope="depth")
+
     def test_invalid_metadata_scope_raises(self):
         with pytest.raises(ValueError, match="metadata_scope"):
             Modality("/data/ds", metadata_scope="bad/scope")
+
+    def test_invalid_inline_metadata_scope_raises(self):
+        with pytest.raises(ValueError, match="metadata_scope"):
+            Modality("/data/ds.zip#scope=bad/scope")
 
     def test_windows_drive_letter_not_treated_as_split(self):
         mod = Modality("C:\\data\\ds")
