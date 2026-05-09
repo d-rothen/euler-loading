@@ -31,8 +31,10 @@ except ImportError:  # pragma: no cover - compatibility with older ds-crawler
     _ds_crawler_get_layout_addon = None
 
 from ._ds_crawler_utils import (
+    as_non_empty_str,
+    infer_metadata_scope,
     load_index_output,
-    parse_path_with_split,
+    parse_modality_path,
     validate_metadata_scope,
 )
 from ._metadata import _build_runlog_entry, _get_ds_crawler_descriptor
@@ -303,6 +305,9 @@ class Modality:
               ``output.json`` from a prior indexing run).  A colon-separated
               split suffix is also accepted (e.g. ``/data/ds.zip:train``);
               the suffix is extracted and used as the ``split`` parameter.
+              A metadata scope may also be selected inline with
+              ``#scope=<metadata_scope>``, including after a split suffix
+              (e.g. ``/data/ds.zip:train#scope=rgb``).
         origin_path: Optional original path string before any copying or symlinking for i.e. slurm staging.  
                 This is not used by euler-loading itself but can be useful for experiment 
                 logging to retain references to the original dataset location.
@@ -337,9 +342,10 @@ class Modality:
                logical modalities to share one physical directory or zip while
                keeping separate ``dataset-head.json``, ``ds-crawler.json``,
                ``index.json``, and split files under
-               ``.ds_crawler/<metadata_scope>/``. When scoped artifacts are
-               absent, loading falls back to the legacy root-level
-               ``.ds_crawler`` layout.
+               ``.ds_crawler/<metadata_scope>/``. If omitted, euler-loading
+               infers a scope only when the choice is deterministic. When
+               configured scoped artifacts are absent, loading falls back to
+               the legacy root-level ``.ds_crawler`` layout.
         cache: Optional opt-in/out for in-memory caching of loaded values.
                Only meaningful for hierarchical modalities; regular
                modalities load once per sample and never cache.
@@ -377,7 +383,7 @@ class Modality:
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        parsed_path, path_split = parse_path_with_split(self.path)
+        parsed_path, path_split, path_metadata_scope = parse_modality_path(self.path)
         if path_split is not None:
             if self.split is not None:
                 raise ValueError(
@@ -385,14 +391,91 @@ class Modality:
                     f"({path_split!r}) but an explicit split={self.split!r} "
                     f"was also provided. Use one or the other, not both."
                 )
+
+        normalized_metadata_scope = (
+            validate_metadata_scope(self.metadata_scope)
+            if self.metadata_scope is not None
+            else None
+        )
+        if path_metadata_scope is not None:
+            if (
+                normalized_metadata_scope is not None
+                and normalized_metadata_scope != path_metadata_scope
+            ):
+                raise ValueError(
+                    f"Modality path {self.path!r} contains an inline "
+                    f"metadata scope ({path_metadata_scope!r}) but an "
+                    f"explicit metadata_scope={self.metadata_scope!r} was "
+                    "also provided. Use one metadata scope selector."
+                )
+            normalized_metadata_scope = path_metadata_scope
+
+        if parsed_path != self.path:
             object.__setattr__(self, "path", parsed_path)
+        if path_split is not None:
             object.__setattr__(self, "split", path_split)
-        if self.metadata_scope is not None:
+        if normalized_metadata_scope is not None:
             object.__setattr__(
                 self,
                 "metadata_scope",
-                validate_metadata_scope(self.metadata_scope),
+                normalized_metadata_scope,
             )
+
+
+def _loader_modality_type(loader: Callable[..., Any] | None) -> str | None:
+    meta = getattr(loader, "_modality_meta", None)
+    if not isinstance(meta, Mapping):
+        return None
+    return as_non_empty_str(meta.get("type"))
+
+
+def _metadata_modality_type(modality: Modality) -> str | None:
+    euler_loading = modality.metadata.get("euler_loading")
+    if not isinstance(euler_loading, Mapping):
+        return None
+    return as_non_empty_str(euler_loading.get("modality_type"))
+
+
+def _metadata_scope_candidates(name: str, modality: Modality) -> list[str | None]:
+    return [
+        name,
+        modality.modality_type,
+        _metadata_modality_type(modality),
+        _loader_modality_type(modality.loader),
+    ]
+
+
+def _resolve_metadata_scope(name: str, modality: Modality) -> Modality:
+    if modality.metadata_scope is not None:
+        return modality
+
+    metadata_scope = infer_metadata_scope(
+        modality.path,
+        candidates=_metadata_scope_candidates(name, modality),
+    )
+    if metadata_scope is None:
+        return modality
+    return replace(modality, metadata_scope=metadata_scope)
+
+
+def _resolve_metadata_scopes(
+    modalities: dict[str, Modality],
+) -> dict[str, Modality]:
+    return {
+        name: _resolve_metadata_scope(name, modality)
+        for name, modality in modalities.items()
+    }
+
+
+def _modality_selector_suffix(modality: Modality) -> str:
+    selectors = []
+    if modality.split is not None:
+        selectors.append(f"split={modality.split}")
+    if modality.metadata_scope is not None:
+        selectors.append(f"metadata_scope={modality.metadata_scope}")
+    if not selectors:
+        return ""
+    return f" ({', '.join(selectors)})"
 
 
 class MultiModalDataset(_BaseDataset):
@@ -581,6 +664,7 @@ class MultiModalDataset(_BaseDataset):
         if not modalities:
             raise ValueError("At least one modality must be provided.")
 
+        modalities = _resolve_metadata_scopes(modalities)
         indexed: dict[str, dict[str, Any]] = {}
         layouts: dict[str, dict[str, Any] | None] = {}
         for name, modality in modalities.items():
@@ -663,8 +747,12 @@ class MultiModalDataset(_BaseDataset):
         if not modalities:
             raise ValueError("At least one modality must be provided.")
 
+        modalities = _resolve_metadata_scopes(modalities)
+        hierarchical_modalities = _resolve_metadata_scopes(
+            hierarchical_modalities or {}
+        )
         self._modalities = modalities
-        self._hierarchical_modalities = hierarchical_modalities or {}
+        self._hierarchical_modalities = hierarchical_modalities
         self._transforms = transforms or []
         self._index_outputs: dict[str, dict[str, Any]] = {}
         self._hierarchical_index_outputs: dict[str, dict[str, Any]] = {}
@@ -703,7 +791,7 @@ class MultiModalDataset(_BaseDataset):
                 name,
                 len(lookup),
                 modality.path,
-                f" (split={modality.split})" if modality.split is not None else "",
+                _modality_selector_suffix(modality),
             )
 
         # -- Index hierarchical modalities -----------------------------------
@@ -738,7 +826,7 @@ class MultiModalDataset(_BaseDataset):
                 total_files,
                 len(files_by_level),
                 modality.path,
-                f" (split={modality.split})" if modality.split is not None else "",
+                _modality_selector_suffix(modality),
             )
 
         # -- Compute common IDs (intersection across regular modalities) -----

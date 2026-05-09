@@ -55,7 +55,7 @@ Frozen dataclass describing one data modality.
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `path` | `str` | Absolute path to the modality root directory or `.zip` archive. Must contain ds-crawler metadata, either at `.ds_crawler/` or under the configured `metadata_scope`. |
+| `path` | `str` | Absolute path to the modality root directory or `.zip` archive. Must contain ds-crawler metadata, either at `.ds_crawler/` or under the configured `metadata_scope`. Inline selectors are accepted as `/data/ds.zip:train`, `/data/ds.zip#scope=rgb`, or `/data/ds.zip:train#scope=rgb`. |
 | `origin_path` | `str \| None` | Original path before copying/symlinking (e.g. for SLURM staging). Not used by euler-loading itself — useful for experiment logging to retain references to the original dataset location. |
 | `loader` | `Callable[..., Any] \| None` | Receives the file path (or `BinaryIO` buffer for zip-backed modalities) and an optional `meta` dict. Returns loaded data. When `None`, the loader is resolved automatically from the ds-crawler index (see [Automatic loader resolution](#automatic-loader-resolution)). |
 | `writer` | `Callable[..., Any] \| None` | Receives `(path, value, meta)` and writes modality data to disk. When `None`, euler-loading tries to resolve a built-in writer from ds-crawler metadata (`write_<function>` or `write_<suffix>` for `read_<suffix>`). |
@@ -65,7 +65,7 @@ Frozen dataclass describing one data modality.
 | `hierarchy_scope` | `str \| None` | Optional scope label for hierarchical modalities (e.g. `scene_camera`). |
 | `applies_to` | `list[str] \| None` | Optional list of regular modality names a hierarchical modality applies to. |
 | `split` | `str \| None` | Optional inline split name. Loads `.ds_crawler/split_<name>.json` from the modality root (directory or zip) and overlays it on the normal ds-crawler metadata. |
-| `metadata_scope` | `str \| None` | Optional namespace below `.ds_crawler`, e.g. `.ds_crawler/camera_extrinsics/index.json`. Use this when multiple logical modalities share one physical directory or zip. If the scoped artifacts are absent, loading falls back to the legacy root-level `.ds_crawler` layout. |
+| `metadata_scope` | `str \| None` | Optional namespace below `.ds_crawler`, e.g. `.ds_crawler/camera_extrinsics/index.json`. Use this when multiple logical modalities share one physical directory or zip. It can also be supplied inline as `#scope=<metadata_scope>`. If omitted, euler-loading infers it only when the choice is deterministic. If configured artifacts are absent, loading falls back to the legacy root-level `.ds_crawler` layout. |
 | `cache` | `bool \| None` | Opt-in/out for in-memory caching of decoded values (only meaningful for hierarchical modalities; regular modalities are never cached). `True` keeps every distinct loaded file in a process-lifetime dict. `False` re-reads on every access. `None` (default): hierarchical → `True` because small shared calibration files benefit. |
 | `collapse_single` | `bool` | For hierarchical modalities only. When `True`, a sample that matches exactly one hierarchical file returns that loaded value directly instead of `{file_id: value}`. This is useful for shared GT tensors used by multiple augmentations of the same source sample. |
 | `metadata` | `dict[str, Any]` | Optional arbitrary metadata. Keys under `metadata["euler_loading"]` are treated as euler-loading defaults. |
@@ -128,6 +128,12 @@ dataset = MultiModalDataset(
 )
 ```
 
+Path-only callers can use the existing colon form directly:
+
+```python
+Modality("/data/rgb:train")
+```
+
 This works for both directory-backed and zip-backed modalities. The split file only replaces the `dataset` payload; top-level metadata such as dataset type and euler-loading loader hints still come from the canonical ds-crawler index.
 
 ### Scoped ds-crawler Metadata
@@ -164,6 +170,23 @@ dataset = MultiModalDataset(
     },
 )
 ```
+
+Path-only callers can select the same scope inline. The scope selector comes
+after the optional split selector:
+
+```python
+Modality("/data/muses.zip#scope=rgb")
+Modality("/data/muses.zip:train#scope=rgb")
+```
+
+If `metadata_scope` is omitted, euler-loading resolves it automatically only
+when doing so is unambiguous:
+
+1. Explicit `metadata_scope` or `#scope=...` wins.
+2. If root-level `.ds_crawler` metadata exists, the legacy root metadata is used.
+3. If no root metadata exists and exactly one scope exists, that scope is used.
+4. If multiple scopes exist, euler-loading matches the modality dict key, `modality_type`, loader `_modality_meta["type"]`, or scoped `dataset-head.json` `modality.key`.
+5. If the result is still ambiguous, construction raises and lists the available scopes.
 
 This is an additive layout. Existing roots with `.ds_crawler/index.json` continue to load unchanged, and a scoped modality falls back to that legacy location when the scoped artifacts are not present.
 
@@ -368,7 +391,7 @@ Writer resolution uses the same module and function metadata:
 
 ## ds-crawler integration
 
-Each logical modality must have its own ds-crawler index. Usually that means one modality root with its own `.ds_crawler` artifacts. When several logical modalities share one physical directory or zip, put each artifact set under `.ds_crawler/<metadata_scope>/` and set `Modality(..., metadata_scope=...)`.
+Each logical modality must have its own ds-crawler index. Usually that means one modality root with its own `.ds_crawler` artifacts. When several logical modalities share one physical directory or zip, put each artifact set under `.ds_crawler/<metadata_scope>/` and set `Modality(..., metadata_scope=...)` or append `#scope=<metadata_scope>` to the path.
 Files across regular modalities are matched by IDs from those indexes, so **the indexed hierarchy and naming conventions must be consistent** across modalities up to modality-specific parts captured in the config.
 
 Calibration files or other per-scene/per-sequence metadata can be loaded via `hierarchical_modalities`. These files are matched to samples based on their position in the hierarchy — all files at or above a sample's hierarchy level are included and cached for efficiency.

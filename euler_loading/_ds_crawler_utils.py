@@ -3,18 +3,21 @@ from __future__ import annotations
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
+from urllib.parse import parse_qsl
 
 from ds_crawler import (
     get_dataset_contract,
+    list_metadata_scopes,
     load_dataset_config,
     load_dataset_split as _load_dataset_split,
     validate_metadata_scope,
 )
-from ds_crawler.zip_utils import read_metadata_json
 from ds_crawler.config import CONFIG_FILENAME as _DS_CRAWLER_CONFIG_FILENAME
 from ds_crawler.zip_utils import (
+    DATASET_HEAD_FILENAME as _DS_CRAWLER_HEAD_FILENAME,
     OUTPUT_FILENAME as _DS_CRAWLER_OUTPUT_FILENAME,
     get_split_filename,
+    read_metadata_json,
     validate_split_name,
 )
 
@@ -63,7 +66,38 @@ def extract_ds_crawler_properties(index_output: Mapping[str, Any]) -> dict[str, 
         return {}
 
 
-def parse_path_with_split(path: str) -> tuple[str, str | None]:
+_METADATA_FILENAMES = (
+    _DS_CRAWLER_OUTPUT_FILENAME,
+    _DS_CRAWLER_CONFIG_FILENAME,
+    _DS_CRAWLER_HEAD_FILENAME,
+)
+
+
+def _parse_path_with_scope(path: str) -> tuple[str, str | None]:
+    """Extract an optional ``#scope=<name>`` selector from a path."""
+    candidate_path, sep, fragment = path.rpartition("#")
+    if not sep:
+        return path, None
+
+    params = parse_qsl(fragment, keep_blank_values=True)
+    scope_values = [value for key, value in params if key == "scope"]
+    if not scope_values:
+        return path, None
+
+    unsupported = [key for key, _ in params if key != "scope"]
+    if unsupported:
+        raise ValueError(
+            "Unsupported modality path fragment parameter(s): "
+            f"{', '.join(sorted(set(unsupported)))}. "
+            "Only '#scope=<metadata_scope>' is supported."
+        )
+    if len(scope_values) > 1:
+        raise ValueError("Modality path may contain at most one '#scope=' selector.")
+
+    return candidate_path, validate_metadata_scope(scope_values[0])
+
+
+def _parse_path_with_split(path: str) -> tuple[str, str | None]:
     """Extract an optional inline split suffix from a colon-separated path.
 
     Supports paths like ``/data/ds.zip:train`` where the part after the
@@ -88,16 +122,134 @@ def parse_path_with_split(path: str) -> tuple[str, str | None]:
     return candidate_path, split
 
 
-def _has_scoped_metadata(dataset_path: Path, metadata_scope: str) -> bool:
-    """Return whether ds-crawler metadata exists under a configured scope."""
-    for filename in (_DS_CRAWLER_OUTPUT_FILENAME, _DS_CRAWLER_CONFIG_FILENAME):
-        if read_metadata_json(
+def parse_modality_path(path: str) -> tuple[str, str | None, str | None]:
+    """Extract inline ``:split`` and ``#scope=...`` selectors from a path."""
+    parsed_path, metadata_scope = _parse_path_with_scope(path)
+    parsed_path, split = _parse_path_with_split(parsed_path)
+    return parsed_path, split, metadata_scope
+
+
+def parse_path_with_split(path: str) -> tuple[str, str | None]:
+    """Extract an optional inline split suffix from a colon-separated path."""
+    parsed_path, split, _ = parse_modality_path(path)
+    return parsed_path, split
+
+
+def _read_metadata_json_safe(
+    dataset_path: Path,
+    filename: str,
+    *,
+    metadata_scope: str | None = None,
+) -> dict[str, Any] | None:
+    try:
+        return read_metadata_json(
             dataset_path,
             filename,
             metadata_scope=metadata_scope,
-        ) is not None:
-            return True
-    return False
+        )
+    except FileNotFoundError:
+        return None
+
+
+def _has_root_metadata(dataset_path: Path) -> bool:
+    """Return whether unscoped ds-crawler metadata exists at a dataset root."""
+    return any(
+        _read_metadata_json_safe(dataset_path, filename) is not None
+        for filename in _METADATA_FILENAMES
+    )
+
+
+def _has_scoped_metadata(dataset_path: Path, metadata_scope: str) -> bool:
+    """Return whether ds-crawler metadata exists under a configured scope."""
+    return any(
+        _read_metadata_json_safe(
+            dataset_path,
+            filename,
+            metadata_scope=metadata_scope,
+        ) is not None
+        for filename in _METADATA_FILENAMES
+    )
+
+
+def _list_metadata_scopes_safe(dataset_path: Path) -> list[str]:
+    try:
+        return list_metadata_scopes(dataset_path)
+    except FileNotFoundError:
+        return []
+
+
+def _read_scope_modality_key(dataset_path: Path, metadata_scope: str) -> str | None:
+    head = _read_metadata_json_safe(
+        dataset_path,
+        _DS_CRAWLER_HEAD_FILENAME,
+        metadata_scope=metadata_scope,
+    )
+    modality = head.get("modality") if isinstance(head, Mapping) else None
+    key = modality.get("key") if isinstance(modality, Mapping) else None
+    return as_non_empty_str(key)
+
+
+def infer_metadata_scope(
+    path: str | Path,
+    *,
+    candidates: list[str | None],
+) -> str | None:
+    """Infer a ds-crawler metadata scope only when the choice is deterministic.
+
+    Legacy root-level metadata always wins for an unscoped modality. If no
+    root metadata exists, a single available scope is selected automatically.
+    With multiple scopes, a scope is selected only when exactly one scope name
+    or scoped ``dataset-head.json`` modality key matches the provided
+    candidates.
+    """
+    dataset_path = Path(path)
+    if _has_root_metadata(dataset_path):
+        return None
+
+    scopes = _list_metadata_scopes_safe(dataset_path)
+    if not scopes:
+        return None
+    if len(scopes) == 1:
+        return scopes[0]
+
+    candidate_set = {
+        candidate
+        for candidate in (as_non_empty_str(value) for value in candidates)
+        if candidate is not None
+    }
+    if not candidate_set:
+        _raise_ambiguous_metadata_scope(path, scopes, candidate_set)
+
+    matches = {
+        scope
+        for scope in scopes
+        if scope in candidate_set
+        or _read_scope_modality_key(dataset_path, scope) in candidate_set
+    }
+    if len(matches) == 1:
+        return next(iter(matches))
+    if len(matches) > 1:
+        _raise_ambiguous_metadata_scope(path, sorted(matches), candidate_set)
+
+    _raise_ambiguous_metadata_scope(path, scopes, candidate_set)
+
+
+def _raise_ambiguous_metadata_scope(
+    path: str | Path,
+    scopes: list[str],
+    candidates: set[str],
+) -> None:
+    candidate_text = (
+        f" Candidates were: {', '.join(sorted(candidates))}."
+        if candidates
+        else ""
+    )
+    raise ValueError(
+        f"Multiple ds-crawler metadata scopes are available for {path!s}: "
+        f"{', '.join(scopes)}.{candidate_text} "
+        "Specify Modality(..., metadata_scope=...) or append "
+        "'#scope=<metadata_scope>' to the path."
+    )
 
 
 def load_dataset_config_for_scope(
