@@ -813,6 +813,47 @@ class TestRDSCalibration:
         assert self.result["CS_FRONT"]["distortion"].dtype == torch.float32
 
 
+class TestRDSCPUCalibration:
+    """CPU calibration loader parses the Real Drive Sim JSON format."""
+
+    @pytest.fixture(autouse=True)
+    def _load(self):
+        self.result = cpu_rds.calibration(_RDS_CALIB_PATH)
+
+    def test_returns_dict_keyed_by_sensor_name(self):
+        assert set(self.result.keys()) == {"CS_FRONT", "HDL_32E", "HDL_64E"}
+
+    def test_each_sensor_has_expected_keys(self):
+        for sensor in self.result.values():
+            assert set(sensor.keys()) == {"K", "T", "distortion"}
+
+    def test_intrinsics_shape(self):
+        assert self.result["CS_FRONT"]["K"].shape == (3, 3)
+
+    def test_intrinsics_dtype(self):
+        assert self.result["CS_FRONT"]["K"].dtype == np.float32
+
+    def test_intrinsics_values(self):
+        K = self.result["CS_FRONT"]["K"]
+        assert np.isclose(K[0, 0], 2262.52001953125)
+        assert np.isclose(K[1, 1], 2265.3017578125)
+        assert np.isclose(K[0, 2], 1096.97998046875)
+        assert np.isclose(K[1, 2], 513.1370239257812)
+        assert K[2, 2] == 1.0
+
+    def test_read_intrinsics_returns_front_camera_matrix(self):
+        K = cpu_rds.read_intrinsics(_RDS_CALIB_PATH)
+        assert K.shape == (3, 3)
+        assert K.dtype == np.float32
+        assert np.isclose(K[0, 0], 2262.52001953125)
+
+    def test_read_intrinsics_can_select_sensor_from_attributes(self):
+        K = cpu_rds.read_intrinsics(_RDS_CALIB_PATH, attributes={"sensor": "HDL_32E"})
+        assert K.shape == (3, 3)
+        assert K.dtype == np.float32
+        assert K[0, 0] == 0.0
+
+
 # ---------------------------------------------------------------------------
 # Writer round-trip tests
 # ---------------------------------------------------------------------------

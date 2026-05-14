@@ -12,6 +12,9 @@ Return types
   (single-channel class IDs).
 - **sky_mask** – ``np.ndarray`` of shape ``(H, W)`` bool
   (``True`` where class ID == 29).
+- **calibration** – ``dict[str, dict[str, np.ndarray]]`` keyed by sensor
+  name. Each sensor dict contains ``"K"`` (3x3), ``"T"`` (4x4), and
+  ``"distortion"`` (8,).
 
 Usage::
 
@@ -24,6 +27,7 @@ Usage::
 
 from __future__ import annotations
 
+import json
 from typing import Any, BinaryIO, Union
 
 import numpy as np
@@ -107,6 +111,136 @@ def sky_mask(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None, *, 
     where the class ID equals ``29`` (sky).
     """
     return np.array(Image.open(path), dtype=np.uint8)[:, :, 0] == _SKY_CLASS_ID
+
+
+# ---------------------------------------------------------------------------
+# Calibration loaders
+# ---------------------------------------------------------------------------
+
+
+def _load_json(path: Union[str, BinaryIO]) -> Any:
+    """Load JSON from a file path or an in-memory buffer."""
+    if isinstance(path, str):
+        with open(path) as f:
+            return json.load(f)
+    return json.load(path)
+
+
+def _quat_to_rotation_matrix(qw: float, qx: float, qy: float, qz: float) -> np.ndarray:
+    """Convert a quaternion ``(qw, qx, qy, qz)`` to a ``(3, 3)`` rotation matrix."""
+    return np.array(
+        [
+            [1 - 2 * (qy * qy + qz * qz), 2 * (qx * qy - qz * qw), 2 * (qx * qz + qy * qw)],
+            [2 * (qx * qy + qz * qw), 1 - 2 * (qx * qx + qz * qz), 2 * (qy * qz - qx * qw)],
+            [2 * (qx * qz - qy * qw), 2 * (qy * qz + qx * qw), 1 - 2 * (qx * qx + qy * qy)],
+        ],
+        dtype=np.float32,
+    )
+
+
+@modality_meta(
+    modality_type="calibration",
+    dtype="dict",
+    hierarchical=True,
+    shape="dict",
+    file_formats=[".json"],
+    meta={"sensors": ["CS_FRONT", "HDL_32E", "HDL_64E"], "keys": ["K", "T", "distortion"]},
+)
+def calibration(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None, *, attributes: dict[str, Any] | None = None) -> dict[str, dict[str, np.ndarray]]:
+    """Load a Real Drive Sim calibration JSON.
+
+    The file contains parallel arrays ``names``, ``intrinsics``, and
+    ``extrinsics`` - one entry per sensor. Returns a dict keyed by sensor
+    name, where each value contains:
+
+    - ``"K"`` - ``(3, 3)`` float32 camera-intrinsics matrix.
+    - ``"T"`` - ``(4, 4)`` float32 extrinsics matrix (rotation + translation).
+    - ``"distortion"`` - ``(8,)`` float32 distortion coefficients
+      ``[k1, k2, p1, p2, k3, k4, k5, k6]``.
+    """
+    data = _load_json(path)
+
+    result: dict[str, dict[str, np.ndarray]] = {}
+    for name, intr, extr in zip(data["names"], data["intrinsics"], data["extrinsics"]):
+        fx, fy = intr["fx"], intr["fy"]
+        cx, cy = intr["cx"], intr["cy"]
+        s = intr["skew"]
+        K = np.array(
+            [[fx, s, cx], [0.0, fy, cy], [0.0, 0.0, 1.0]],
+            dtype=np.float32,
+        )
+
+        rot = extr["rotation"]
+        R = _quat_to_rotation_matrix(rot["qw"], rot["qx"], rot["qy"], rot["qz"])
+        t = np.array(
+            [extr["translation"]["x"], extr["translation"]["y"], extr["translation"]["z"]],
+            dtype=np.float32,
+        )
+        T = np.eye(4, dtype=np.float32)
+        T[:3, :3] = R
+        T[:3, 3] = t
+
+        distortion = np.array(
+            [
+                intr["k1"],
+                intr["k2"],
+                intr["p1"],
+                intr["p2"],
+                intr["k3"],
+                intr["k4"],
+                intr["k5"],
+                intr["k6"],
+            ],
+            dtype=np.float32,
+        )
+
+        result[name] = {"K": K, "T": T, "distortion": distortion}
+    return result
+
+
+@modality_meta(
+    modality_type="all_intrinsics",
+    dtype="dict",
+    hierarchical=True,
+    shape="dict",
+    file_formats=[".json"],
+)
+def all_intrinsics(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None, *, attributes: dict[str, Any] | None = None) -> dict[str, np.ndarray]:
+    """Load only the intrinsics from a Real Drive Sim calibration JSON."""
+    data = _load_json(path)
+    result: dict[str, np.ndarray] = {}
+
+    for name, intr in zip(data["names"], data["intrinsics"]):
+        fx, fy = intr["fx"], intr["fy"]
+        cx, cy = intr["cx"], intr["cy"]
+        s = intr["skew"]
+        K = np.array(
+            [[fx, s, cx], [0.0, fy, cy], [0.0, 0.0, 1.0]],
+            dtype=np.float32,
+        )
+        result[name] = K
+
+    return result
+
+
+@modality_meta(
+    modality_type="intrinsics",
+    dtype="float32",
+    hierarchical=True,
+    shape="3x3",
+    file_formats=[".json"],
+    meta={"sensor": "CS_FRONT"},
+)
+def read_intrinsics(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None, *, attributes: dict[str, Any] | None = None) -> np.ndarray:
+    """Load the intrinsics for a specific sensor from a Real Drive Sim calibration JSON."""
+    sensor = (attributes or {}).get("sensor") or (meta or {}).get("sensor") or "CS_FRONT"
+    intrinsics = all_intrinsics(path)
+    if sensor not in intrinsics:
+        raise KeyError(
+            f"Real Drive Sim calibration has no intrinsics for sensor {sensor!r}. "
+            f"Available sensors: {sorted(intrinsics)}"
+        )
+    return intrinsics[sensor]
 
 
 # ---------------------------------------------------------------------------
