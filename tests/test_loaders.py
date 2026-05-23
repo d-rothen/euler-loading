@@ -160,6 +160,8 @@ class TestGenericDenseDepthAttributes:
 PRINCETON_DENSE_LOADER_NAMES = [
     "rgb",
     "sparse_depth",
+    "read_intrinsics",
+    "read_extrinsics",
 ]
 
 
@@ -183,6 +185,56 @@ def princeton_dense_sparse_depth_path(tmp_path):
     path = tmp_path / "2018-02-06_15-48-12_00200.bin"
     arr.tofile(path)
     return str(path), arr
+
+
+@pytest.fixture()
+def princeton_dense_intrinsics_path(tmp_path):
+    data = {
+        "K": [2612.86, 0.0, 966.525, 0.0, 2612.86, 508.297, 0.0, 0.0, 1.0],
+        "D": [-0.567575, 0.0, 0.0, 0.0, 0.0],
+        "R": [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0],
+        "P": [2355.722801, 0.0, 988.138054, 0.0, 0.0, 2355.722801, 508.051838, 0.0, 0.0, 0.0, 1.0, 0.0],
+        "width": 1920,
+        "height": 1024,
+        "header": {"frame_id": "cam_stereo_left_optical"},
+    }
+    path = tmp_path / "calib_cam_stereo_left.json"
+    path.write_text(json.dumps(data))
+    return str(path), np.asarray(data["K"], dtype=np.float32).reshape(3, 3)
+
+
+@pytest.fixture()
+def princeton_dense_tf_tree_path(tmp_path):
+    data = [
+        {
+            "header": {"frame_id": "body"},
+            "child_frame_id": "lidar_hdl64_s3_roof",
+            "transform": {
+                "translation": {"x": 1.0, "y": 0.0, "z": 0.0},
+                "rotation": {"x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0},
+            },
+        },
+        {
+            "header": {"frame_id": "body"},
+            "child_frame_id": "cam_stereo_left_optical",
+            "transform": {
+                "translation": {"x": 0.0, "y": 2.0, "z": 0.0},
+                "rotation": {"x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0},
+            },
+        },
+    ]
+    path = tmp_path / "calib_tf_tree_full.json"
+    path.write_text(json.dumps(data))
+    expected = np.asarray(
+        [
+            [1.0, 0.0, 0.0, 1.0],
+            [0.0, 1.0, 0.0, -2.0],
+            [0.0, 0.0, 1.0, 0.0],
+            [0.0, 0.0, 0.0, 1.0],
+        ],
+        dtype=np.float32,
+    )
+    return str(path), expected
 
 
 class TestPrincetonDenseModuleContents:
@@ -227,6 +279,20 @@ class TestPrincetonDenseGPULoaders:
         assert result.shape == (2, 5)
         assert torch.equal(result, torch.from_numpy(expected))
 
+    def test_read_intrinsics_returns_camera_k(self, princeton_dense_intrinsics_path):
+        path, expected = princeton_dense_intrinsics_path
+        result = gpu_princeton_dense.read_intrinsics(path)
+        assert result.dtype == torch.float32
+        assert result.shape == (3, 3)
+        assert torch.equal(result, torch.from_numpy(expected))
+
+    def test_read_extrinsics_maps_hdl64_lidar_to_camera(self, princeton_dense_tf_tree_path):
+        path, expected = princeton_dense_tf_tree_path
+        result = gpu_princeton_dense.read_extrinsics(path)
+        assert result.dtype == torch.float32
+        assert result.shape == (4, 4)
+        assert torch.equal(result, torch.from_numpy(expected))
+
 
 class TestPrincetonDenseCPULoaders:
     """CPU Princeton DENSE loaders produce numpy arrays."""
@@ -251,6 +317,31 @@ class TestPrincetonDenseCPULoaders:
         stream = io.BytesIO(expected.tobytes())
         result = cpu_princeton_dense.sparse_depth(stream)
         assert np.array_equal(result, expected)
+
+    def test_read_intrinsics_returns_camera_k(self, princeton_dense_intrinsics_path):
+        path, expected = princeton_dense_intrinsics_path
+        result = cpu_princeton_dense.read_intrinsics(path)
+        assert result.dtype == np.float32
+        assert result.shape == (3, 3)
+        assert np.array_equal(result, expected)
+
+    def test_read_extrinsics_maps_hdl64_lidar_to_camera(self, princeton_dense_tf_tree_path):
+        path, expected = princeton_dense_tf_tree_path
+        result = cpu_princeton_dense.read_extrinsics(path)
+        assert result.dtype == np.float32
+        assert result.shape == (4, 4)
+        assert np.array_equal(result, expected)
+
+    def test_read_extrinsics_supports_frame_overrides(self, princeton_dense_tf_tree_path):
+        path, expected_lidar_to_camera = princeton_dense_tf_tree_path
+        result = cpu_princeton_dense.read_extrinsics(
+            path,
+            attributes={
+                "source_frame": "cam_stereo_left_optical",
+                "target_frame": "lidar_hdl64_s3_roof",
+            },
+        )
+        assert np.allclose(result, np.linalg.inv(expected_lidar_to_camera))
 
 
 class TestPrincetonDenseBackwardCompat:

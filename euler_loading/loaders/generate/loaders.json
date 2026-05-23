@@ -457,6 +457,49 @@
             "name": "princeton_dense",
             "modalities": [
                 {
+                    "type": "camera_extrinsics",
+                    "function": "read_extrinsics",
+                    "hierarchical": true,
+                    "dtype": "float32",
+                    "access": "key",
+                    "file_formats": [
+                        ".json"
+                    ],
+                    "meta": {
+                        "dataset": "SeeingThroughFog",
+                        "default_source_frame": "lidar_hdl64_s3_roof",
+                        "default_target_frame": "cam_stereo_left_optical",
+                        "transform_direction": "source_frame_to_target_frame"
+                    },
+                    "cpu": {
+                        "shape": "4x4"
+                    },
+                    "gpu": {
+                        "shape": "4x4"
+                    }
+                },
+                {
+                    "type": "intrinsics",
+                    "function": "read_intrinsics",
+                    "hierarchical": true,
+                    "dtype": "float32",
+                    "access": "key",
+                    "file_formats": [
+                        ".json"
+                    ],
+                    "meta": {
+                        "dataset": "SeeingThroughFog",
+                        "camera_frame": "cam_stereo_left_optical",
+                        "source": "calib_cam_stereo_left"
+                    },
+                    "cpu": {
+                        "shape": "3x3"
+                    },
+                    "gpu": {
+                        "shape": "3x3"
+                    }
+                },
+                {
                     "type": "rgb",
                     "function": "rgb",
                     "hierarchical": false,

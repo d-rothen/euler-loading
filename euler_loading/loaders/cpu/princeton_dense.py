@@ -8,6 +8,11 @@ Return types
 - **rgb** -- ``np.ndarray`` of shape ``(H, W, 3)`` float32 in ``[0, 1]``.
 - **sparse_depth** -- ``np.ndarray`` of shape ``(N, 5)`` float32 with columns
   ``x, y, z, intensity, ring``.
+- **read_intrinsics** -- ``np.ndarray`` of shape ``(3, 3)`` float32 from
+  ``calib_cam_stereo_left.json``.
+- **read_extrinsics** -- ``np.ndarray`` of shape ``(4, 4)`` float32 from
+  ``calib_tf_tree_full.json``, mapping HDL64 lidar points into the left camera
+  optical frame by default.
 """
 
 from __future__ import annotations
@@ -17,7 +22,11 @@ from typing import Any, BinaryIO, Union
 import numpy as np
 
 from euler_loading.loaders._annotations import modality_meta
+from euler_loading.loaders._princeton_dense import DEFAULT_CAMERA_FRAME
+from euler_loading.loaders._princeton_dense import DEFAULT_LIDAR_FRAME
 from euler_loading.loaders._princeton_dense import LIDAR_COLUMNS
+from euler_loading.loaders._princeton_dense import load_extrinsics_array
+from euler_loading.loaders._princeton_dense import load_intrinsics_array
 from euler_loading.loaders._princeton_dense import load_rgb_array
 from euler_loading.loaders._princeton_dense import load_sparse_depth_array
 
@@ -85,3 +94,48 @@ def point_cloud(
 ) -> np.ndarray:
     """Alias for :func:`sparse_depth`."""
     return load_sparse_depth_array(path)
+
+
+@modality_meta(
+    modality_type="intrinsics",
+    dtype="float32",
+    hierarchical=True,
+    shape="3x3",
+    file_formats=[".json"],
+    meta={
+        "dataset": "SeeingThroughFog",
+        "camera_frame": DEFAULT_CAMERA_FRAME,
+        "source": "calib_cam_stereo_left",
+    },
+)
+def read_intrinsics(
+    path: Union[str, BinaryIO],
+    meta: dict[str, Any] | None = None,
+    *,
+    attributes: dict[str, Any] | None = None,
+) -> np.ndarray:
+    """Load the left stereo camera intrinsics matrix ``K``."""
+    return load_intrinsics_array(path)
+
+
+@modality_meta(
+    modality_type="camera_extrinsics",
+    dtype="float32",
+    hierarchical=True,
+    shape="4x4",
+    file_formats=[".json"],
+    meta={
+        "dataset": "SeeingThroughFog",
+        "default_source_frame": DEFAULT_LIDAR_FRAME,
+        "default_target_frame": DEFAULT_CAMERA_FRAME,
+        "transform_direction": "source_frame_to_target_frame",
+    },
+)
+def read_extrinsics(
+    path: Union[str, BinaryIO],
+    meta: dict[str, Any] | None = None,
+    *,
+    attributes: dict[str, Any] | None = None,
+) -> np.ndarray:
+    """Load the default ``lidar_hdl64_s3_roof`` to left-camera transform."""
+    return load_extrinsics_array(path, meta, attributes)

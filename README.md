@@ -536,6 +536,8 @@ All built-in loaders accept both filesystem paths (`str`) and in-memory buffers 
 |----------|-------------|
 | `rgb` | Left/right stereo 12-bit Bayer TIFF as RGB float32, normalised to [0, 1] |
 | `sparse_depth` | Lidar `.bin` point cloud as `(N, 5)` float32: `x, y, z, intensity, ring` |
+| `read_intrinsics` | Left stereo camera intrinsics `K` from `calib_cam_stereo_left.json` as a `(3, 3)` matrix |
+| `read_extrinsics` | Transform from HDL64 lidar frame `lidar_hdl64_s3_roof` to left camera optical frame `cam_stereo_left_optical` from `calib_tf_tree_full.json` as a `(4, 4)` matrix |
 
 ### Generic Dense Depth (`euler_loading.loaders.gpu.generic_dense_depth`)
 
