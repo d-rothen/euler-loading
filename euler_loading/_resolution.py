@@ -24,6 +24,8 @@ _LOADER_MODULES: dict[str, str] = {
     "generic_dense_depth": "euler_loading.loaders.gpu.generic_dense_depth",
     "generic": "euler_loading.loaders.gpu.generic",
     "muses": "euler_loading.loaders.gpu.muses",
+    "princeton_dense": "euler_loading.loaders.gpu.princeton_dense",
+    "seeing_through_fog": "euler_loading.loaders.gpu.princeton_dense",
 }
 
 

@@ -381,7 +381,7 @@ When `Modality.loader` is `None`, euler-loading resolves the loader from the ds-
 }
 ```
 
-`loader` is the module name (`vkitti2`, `real_drive_sim`, `muses`, or `generic_dense_depth`) and `function` is the function within that module. The GPU variant is used by default.
+`loader` is the module name (`vkitti2`, `real_drive_sim`, `muses`, `princeton_dense`, or `generic_dense_depth`) and `function` is the function within that module. The GPU variant is used by default.
 
 Writer resolution uses the same module and function metadata:
 
@@ -530,6 +530,13 @@ All built-in loaders accept both filesystem paths (`str`) and in-memory buffers 
 | `read_intrinsics` | RGB camera intrinsics from MUSES `calib.json` as a `(3, 3)` matrix; defaults to `sensor="rgb"` |
 | `read_extrinsics` | Camera extrinsics from MUSES `calib.json` as a `(4, 4)` matrix; defaults to `transform="lidar2rgb"` for sparse-depth reprojection into RGB pixels |
 
+### Princeton DENSE / SeeingThroughFog (`euler_loading.loaders.princeton_dense`)
+
+| Function | Description |
+|----------|-------------|
+| `rgb` | Left/right stereo 12-bit Bayer TIFF as RGB float32, normalised to [0, 1] |
+| `sparse_depth` | Lidar `.bin` point cloud as `(N, 5)` float32: `x, y, z, intensity, ring` |
+
 ### Generic Dense Depth (`euler_loading.loaders.gpu.generic_dense_depth`)
 
 A format-agnostic loader that infers the loading strategy from the file extension. Useful for datasets that don't have a dedicated loader module.
@@ -541,7 +548,7 @@ A format-agnostic loader that infers the loading strategy from the file extensio
 | `sky_mask` | Binary mask by comparing pixels against `meta["sky_mask"]` (`[R, G, B]`). Requires `meta` |
 | `read_intrinsics` | Returns `meta["intrinsics"]` as a `(3, 3)` tensor. Ignores path; requires `meta` |
 
-CPU variants of all loaders live under `euler_loading.loaders.cpu.{vkitti2,real_drive_sim,muses,generic_dense_depth}`.
+CPU variants of all loaders live under `euler_loading.loaders.cpu.{vkitti2,real_drive_sim,muses,princeton_dense,generic_dense_depth}`.
 
 ### Flattening hierarchical modalities
 

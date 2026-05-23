@@ -27,4 +27,8 @@ Available submodules:
 - :mod:`euler_loading.loaders.cpu.real_drive_sim` — Real Drive Sim (numpy)
 - :mod:`euler_loading.loaders.gpu.muses` — MUSES (torch)
 - :mod:`euler_loading.loaders.cpu.muses` — MUSES (numpy)
+- :mod:`euler_loading.loaders.gpu.princeton_dense` — Princeton DENSE /
+  SeeingThroughFog (torch)
+- :mod:`euler_loading.loaders.cpu.princeton_dense` — Princeton DENSE /
+  SeeingThroughFog (numpy)
 """

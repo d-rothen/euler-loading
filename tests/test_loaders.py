@@ -11,19 +11,23 @@ import pytest
 import torch
 from PIL import Image
 
+from euler_loading import resolve_loader_module
 from euler_loading.loaders import vkitti2
 from euler_loading.loaders import generic as generic_top
 from euler_loading.loaders import muses as muses_top
+from euler_loading.loaders import princeton_dense as princeton_dense_top
 from euler_loading.loaders.gpu import vkitti2 as gpu_vkitti2
 from euler_loading.loaders.gpu import real_drive_sim as gpu_rds
 from euler_loading.loaders.gpu import generic as gpu_generic
 from euler_loading.loaders.gpu import generic_dense_depth as gpu_generic_dense_depth
 from euler_loading.loaders.gpu import muses as gpu_muses
+from euler_loading.loaders.gpu import princeton_dense as gpu_princeton_dense
 from euler_loading.loaders.cpu import vkitti2 as cpu_vkitti2
 from euler_loading.loaders.cpu import real_drive_sim as cpu_rds
 from euler_loading.loaders.cpu import generic as cpu_generic
 from euler_loading.loaders.cpu import generic_dense_depth as cpu_generic_dense_depth
 from euler_loading.loaders.cpu import muses as cpu_muses
+from euler_loading.loaders.cpu import princeton_dense as cpu_princeton_dense
 
 # ---------------------------------------------------------------------------
 # Shared fixtures
@@ -147,6 +151,123 @@ class TestGenericDenseDepthAttributes:
 
         expected = np.array([[1.0, 2.0], [3.0, 4.0]], dtype=np.float32)
         np.testing.assert_allclose(result, expected)
+
+
+# ---------------------------------------------------------------------------
+# Princeton DENSE / SeeingThroughFog loader smoke tests
+# ---------------------------------------------------------------------------
+
+PRINCETON_DENSE_LOADER_NAMES = [
+    "rgb",
+    "sparse_depth",
+]
+
+
+@pytest.fixture()
+def princeton_dense_rgb_path(tmp_path):
+    arr = np.full((4, 4), 2048, dtype=np.uint16)
+    path = tmp_path / "2018-02-05_12-09-01_00000.tiff"
+    Image.fromarray(arr).save(path)
+    return str(path)
+
+
+@pytest.fixture()
+def princeton_dense_sparse_depth_path(tmp_path):
+    arr = np.array(
+        [
+            [1.0, 2.0, 3.0, 128.0, 12.0],
+            [4.0, 5.0, 6.0, 255.0, 63.0],
+        ],
+        dtype=np.float32,
+    )
+    path = tmp_path / "2018-02-06_15-48-12_00200.bin"
+    arr.tofile(path)
+    return str(path), arr
+
+
+class TestPrincetonDenseModuleContents:
+    """The Princeton DENSE module exposes the expected loader functions."""
+
+    @pytest.mark.parametrize("name", PRINCETON_DENSE_LOADER_NAMES)
+    def test_top_level_has_callable(self, name):
+        assert callable(getattr(princeton_dense_top, name))
+
+    @pytest.mark.parametrize("name", PRINCETON_DENSE_LOADER_NAMES)
+    def test_gpu_has_callable(self, name):
+        assert callable(getattr(gpu_princeton_dense, name))
+
+    @pytest.mark.parametrize("name", PRINCETON_DENSE_LOADER_NAMES)
+    def test_cpu_has_callable(self, name):
+        assert callable(getattr(cpu_princeton_dense, name))
+
+    def test_auto_resolution_uses_gpu_module(self):
+        module = resolve_loader_module("princeton_dense")
+        assert module.__name__ == "euler_loading.loaders.gpu.princeton_dense"
+
+    def test_auto_resolution_supports_dataset_alias(self):
+        module = resolve_loader_module("seeing_through_fog")
+        assert module.__name__ == "euler_loading.loaders.gpu.princeton_dense"
+
+
+class TestPrincetonDenseGPULoaders:
+    """GPU Princeton DENSE loaders produce torch tensors."""
+
+    def test_rgb_shape_dtype_and_range(self, princeton_dense_rgb_path):
+        result = gpu_princeton_dense.rgb(princeton_dense_rgb_path)
+        assert isinstance(result, torch.Tensor)
+        assert result.dtype == torch.float32
+        assert result.shape == (3, 4, 4)
+        assert result.min() >= 0.0
+        assert result.max() <= 1.0
+
+    def test_sparse_depth_preserves_float32_columns(self, princeton_dense_sparse_depth_path):
+        path, expected = princeton_dense_sparse_depth_path
+        result = gpu_princeton_dense.sparse_depth(path)
+        assert result.dtype == torch.float32
+        assert result.shape == (2, 5)
+        assert torch.equal(result, torch.from_numpy(expected))
+
+
+class TestPrincetonDenseCPULoaders:
+    """CPU Princeton DENSE loaders produce numpy arrays."""
+
+    def test_rgb_shape_dtype_and_range(self, princeton_dense_rgb_path):
+        result = cpu_princeton_dense.rgb(princeton_dense_rgb_path)
+        assert isinstance(result, np.ndarray)
+        assert result.dtype == np.float32
+        assert result.shape == (4, 4, 3)
+        assert result.min() >= 0.0
+        assert result.max() <= 1.0
+
+    def test_sparse_depth_preserves_float32_columns(self, princeton_dense_sparse_depth_path):
+        path, expected = princeton_dense_sparse_depth_path
+        result = cpu_princeton_dense.sparse_depth(path)
+        assert result.dtype == np.float32
+        assert result.shape == (2, 5)
+        assert np.array_equal(result, expected)
+
+    def test_sparse_depth_supports_binary_streams(self, princeton_dense_sparse_depth_path):
+        _, expected = princeton_dense_sparse_depth_path
+        stream = io.BytesIO(expected.tobytes())
+        result = cpu_princeton_dense.sparse_depth(stream)
+        assert np.array_equal(result, expected)
+
+
+class TestPrincetonDenseBackwardCompat:
+    """``from euler_loading.loaders import princeton_dense`` returns GPU loaders."""
+
+    def test_top_level_rgb_matches_gpu(self, princeton_dense_rgb_path):
+        assert torch.equal(
+            princeton_dense_top.rgb(princeton_dense_rgb_path),
+            gpu_princeton_dense.rgb(princeton_dense_rgb_path),
+        )
+
+    def test_top_level_sparse_depth_matches_gpu(self, princeton_dense_sparse_depth_path):
+        path, _ = princeton_dense_sparse_depth_path
+        assert torch.equal(
+            princeton_dense_top.sparse_depth(path),
+            gpu_princeton_dense.sparse_depth(path),
+        )
 
 
 # ---------------------------------------------------------------------------

@@ -9,4 +9,6 @@ Available submodules:
 - :mod:`euler_loading.loaders.gpu.vkitti2` — Virtual KITTI 2
 - :mod:`euler_loading.loaders.gpu.real_drive_sim` — Real Drive Sim
 - :mod:`euler_loading.loaders.gpu.muses` — MUSES
+- :mod:`euler_loading.loaders.gpu.princeton_dense` — Princeton DENSE /
+  SeeingThroughFog
 """

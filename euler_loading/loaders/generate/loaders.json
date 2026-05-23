@@ -454,6 +454,66 @@
             ]
         },
         {
+            "name": "princeton_dense",
+            "modalities": [
+                {
+                    "type": "rgb",
+                    "function": "rgb",
+                    "hierarchical": false,
+                    "dtype": "float32",
+                    "access": "key",
+                    "output_range": [
+                        0.0,
+                        1.0
+                    ],
+                    "file_formats": [
+                        ".tif",
+                        ".tiff"
+                    ],
+                    "meta": {
+                        "dataset": "SeeingThroughFog",
+                        "raw_bit_depth": 12,
+                        "bayer_pattern": "GBRG",
+                        "raw_max_value": 4095.0
+                    },
+                    "cpu": {
+                        "shape": "HWC"
+                    },
+                    "gpu": {
+                        "shape": "CHW"
+                    }
+                },
+                {
+                    "type": "sparse_depth",
+                    "function": "sparse_depth",
+                    "hierarchical": false,
+                    "dtype": "float32",
+                    "access": "key",
+                    "file_formats": [
+                        ".bin"
+                    ],
+                    "meta": {
+                        "dataset": "SeeingThroughFog",
+                        "representation": "point_cloud",
+                        "columns": [
+                            "x",
+                            "y",
+                            "z",
+                            "intensity",
+                            "ring"
+                        ],
+                        "coordinate_unit": "meters"
+                    },
+                    "cpu": {
+                        "shape": "NC"
+                    },
+                    "gpu": {
+                        "shape": "NC"
+                    }
+                }
+            ]
+        },
+        {
             "name": "real_drive_sim",
             "modalities": [
                 {
@@ -465,6 +525,9 @@
                     "file_formats": [
                         ".json"
                     ],
+                    "cpu": {
+                        "shape": "dict"
+                    },
                     "gpu": {
                         "shape": "dict"
                     }
@@ -489,6 +552,9 @@
                             "T",
                             "distortion"
                         ]
+                    },
+                    "cpu": {
+                        "shape": "dict"
                     },
                     "gpu": {
                         "shape": "dict"
@@ -545,6 +611,9 @@
                     ],
                     "meta": {
                         "sensor": "CS_FRONT"
+                    },
+                    "cpu": {
+                        "shape": "3x3"
                     },
                     "gpu": {
                         "shape": "3x3"
