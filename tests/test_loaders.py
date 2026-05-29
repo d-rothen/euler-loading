@@ -159,6 +159,7 @@ class TestGenericDenseDepthAttributes:
 
 PRINCETON_DENSE_LOADER_NAMES = [
     "rgb",
+    "rccb",
     "sparse_depth",
     "read_intrinsics",
     "read_extrinsics",
@@ -167,6 +168,14 @@ PRINCETON_DENSE_LOADER_NAMES = [
 
 @pytest.fixture()
 def princeton_dense_rgb_path(tmp_path):
+    arr = np.full((4, 4, 3), 128, dtype=np.uint8)
+    path = tmp_path / "2018-02-05_12-09-01_00000.png"
+    Image.fromarray(arr).save(path)
+    return str(path)
+
+
+@pytest.fixture()
+def princeton_dense_rccb_path(tmp_path):
     arr = np.full((4, 4), 2048, dtype=np.uint16)
     path = tmp_path / "2018-02-05_12-09-01_00000.tiff"
     Image.fromarray(arr).save(path)
@@ -264,6 +273,14 @@ class TestPrincetonDenseModuleContents:
 class TestPrincetonDenseGPULoaders:
     """GPU Princeton DENSE loaders produce torch tensors."""
 
+    def test_rccb_shape_dtype_and_range(self, princeton_dense_rccb_path):
+        result = gpu_princeton_dense.rccb(princeton_dense_rccb_path)
+        assert isinstance(result, torch.Tensor)
+        assert result.dtype == torch.float32
+        assert result.shape == (3, 4, 4)
+        assert result.min() >= 0.0
+        assert result.max() <= 1.0
+
     def test_rgb_shape_dtype_and_range(self, princeton_dense_rgb_path):
         result = gpu_princeton_dense.rgb(princeton_dense_rgb_path)
         assert isinstance(result, torch.Tensor)
@@ -296,6 +313,14 @@ class TestPrincetonDenseGPULoaders:
 
 class TestPrincetonDenseCPULoaders:
     """CPU Princeton DENSE loaders produce numpy arrays."""
+
+    def test_rccb_shape_dtype_and_range(self, princeton_dense_rccb_path):
+        result = cpu_princeton_dense.rccb(princeton_dense_rccb_path)
+        assert isinstance(result, np.ndarray)
+        assert result.dtype == np.float32
+        assert result.shape == (4, 4, 3)
+        assert result.min() >= 0.0
+        assert result.max() <= 1.0
 
     def test_rgb_shape_dtype_and_range(self, princeton_dense_rgb_path):
         result = cpu_princeton_dense.rgb(princeton_dense_rgb_path)
@@ -346,6 +371,12 @@ class TestPrincetonDenseCPULoaders:
 
 class TestPrincetonDenseBackwardCompat:
     """``from euler_loading.loaders import princeton_dense`` returns GPU loaders."""
+
+    def test_top_level_rccb_matches_gpu(self, princeton_dense_rccb_path):
+        assert torch.equal(
+            princeton_dense_top.rccb(princeton_dense_rccb_path),
+            gpu_princeton_dense.rccb(princeton_dense_rccb_path),
+        )
 
     def test_top_level_rgb_matches_gpu(self, princeton_dense_rgb_path):
         assert torch.equal(

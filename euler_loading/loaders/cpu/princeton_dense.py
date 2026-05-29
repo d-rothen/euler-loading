@@ -5,6 +5,7 @@ images and Velodyne lidar point clouds as binary ``float32`` records.
 
 Return types
 ------------
+- **rccb** -- ``np.ndarray`` of shape ``(H, W, 3)`` float32 in ``[0, 1]``.
 - **rgb** -- ``np.ndarray`` of shape ``(H, W, 3)`` float32 in ``[0, 1]``.
 - **sparse_depth** -- ``np.ndarray`` of shape ``(N, 5)`` float32 with columns
   ``x, y, z, intensity, ring``.
@@ -20,6 +21,7 @@ from __future__ import annotations
 from typing import Any, BinaryIO, Union
 
 import numpy as np
+from PIL import Image
 
 from euler_loading.loaders._annotations import modality_meta
 from euler_loading.loaders._princeton_dense import DEFAULT_CAMERA_FRAME
@@ -32,7 +34,7 @@ from euler_loading.loaders._princeton_dense import load_sparse_depth_array
 
 
 @modality_meta(
-    modality_type="rgb",
+    modality_type="rccb",
     dtype="float32",
     shape="HWC",
     file_formats=[".tif", ".tiff"],
@@ -44,14 +46,31 @@ from euler_loading.loaders._princeton_dense import load_sparse_depth_array
         "raw_max_value": 4095.0,
     },
 )
+def rccb(
+    path: Union[str, BinaryIO],
+    meta: dict[str, Any] | None = None,
+    *,
+    attributes: dict[str, Any] | None = None,
+) -> np.ndarray:
+    """Load a SeeingThroughFog 12-bit Bayer TIFF as RCCB float32 in ``[0, 1]``."""
+    return load_rgb_array(path, meta, attributes)
+
+
+@modality_meta(
+    modality_type="rgb",
+    dtype="float32",
+    shape="HWC",
+    file_formats=[".png"],
+    output_range=[0.0, 1.0],
+)
 def rgb(
     path: Union[str, BinaryIO],
     meta: dict[str, Any] | None = None,
     *,
     attributes: dict[str, Any] | None = None,
 ) -> np.ndarray:
-    """Load a SeeingThroughFog 12-bit Bayer TIFF as RGB float32 in ``[0, 1]``."""
-    return load_rgb_array(path, meta, attributes)
+    """Load a SeeingThroughFog plain 8-bit PNG as RGB float32 in ``[0, 1]``."""
+    return np.array(Image.open(path).convert("RGB"), dtype=np.float32) / 255.0
 
 
 @modality_meta(

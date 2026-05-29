@@ -457,6 +457,33 @@
             "name": "princeton_dense",
             "modalities": [
                 {
+                    "type": "rccb",
+                    "function": "rccb",
+                    "hierarchical": false,
+                    "dtype": "float32",
+                    "access": "key",
+                    "output_range": [
+                        0.0,
+                        1.0
+                    ],
+                    "file_formats": [
+                        ".tif",
+                        ".tiff"
+                    ],
+                    "meta": {
+                        "dataset": "SeeingThroughFog",
+                        "raw_bit_depth": 12,
+                        "bayer_pattern": "GBRG",
+                        "raw_max_value": 4095.0
+                    },
+                    "cpu": {
+                        "shape": "HWC"
+                    },
+                    "gpu": {
+                        "shape": "CHW"
+                    }
+                },
+                {
                     "type": "camera_extrinsics",
                     "function": "read_extrinsics",
                     "hierarchical": true,
@@ -510,15 +537,8 @@
                         1.0
                     ],
                     "file_formats": [
-                        ".tif",
-                        ".tiff"
+                        ".png"
                     ],
-                    "meta": {
-                        "dataset": "SeeingThroughFog",
-                        "raw_bit_depth": 12,
-                        "bayer_pattern": "GBRG",
-                        "raw_max_value": 4095.0
-                    },
                     "cpu": {
                         "shape": "HWC"
                     },

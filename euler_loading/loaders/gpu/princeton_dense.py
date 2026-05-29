@@ -5,6 +5,7 @@ images and Velodyne lidar point clouds as binary ``float32`` records.
 
 Return types
 ------------
+- **rccb** -- ``torch.FloatTensor`` of shape ``(3, H, W)`` in ``[0, 1]``.
 - **rgb** -- ``torch.FloatTensor`` of shape ``(3, H, W)`` in ``[0, 1]``.
 - **sparse_depth** -- ``torch.FloatTensor`` of shape ``(N, 5)`` with columns
   ``x, y, z, intensity, ring``.
@@ -19,6 +20,8 @@ from __future__ import annotations
 
 from typing import Any, BinaryIO, Union
 
+import numpy as np
+from PIL import Image
 import torch
 
 from euler_loading.loaders._annotations import modality_meta
@@ -32,7 +35,7 @@ from euler_loading.loaders._princeton_dense import load_sparse_depth_array
 
 
 @modality_meta(
-    modality_type="rgb",
+    modality_type="rccb",
     dtype="float32",
     shape="CHW",
     file_formats=[".tif", ".tiff"],
@@ -44,14 +47,32 @@ from euler_loading.loaders._princeton_dense import load_sparse_depth_array
         "raw_max_value": 4095.0,
     },
 )
+def rccb(
+    path: Union[str, BinaryIO],
+    meta: dict[str, Any] | None = None,
+    *,
+    attributes: dict[str, Any] | None = None,
+) -> torch.Tensor:
+    """Load a SeeingThroughFog 12-bit Bayer TIFF as an RCCB tensor."""
+    arr = load_rgb_array(path, meta, attributes)
+    return torch.from_numpy(arr).permute(2, 0, 1).contiguous()
+
+
+@modality_meta(
+    modality_type="rgb",
+    dtype="float32",
+    shape="CHW",
+    file_formats=[".png"],
+    output_range=[0.0, 1.0],
+)
 def rgb(
     path: Union[str, BinaryIO],
     meta: dict[str, Any] | None = None,
     *,
     attributes: dict[str, Any] | None = None,
 ) -> torch.Tensor:
-    """Load a SeeingThroughFog 12-bit Bayer TIFF as an RGB tensor."""
-    arr = load_rgb_array(path, meta, attributes)
+    """Load a SeeingThroughFog plain 8-bit PNG as an RGB tensor."""
+    arr = np.array(Image.open(path).convert("RGB"), dtype=np.float32) / 255.0
     return torch.from_numpy(arr).permute(2, 0, 1).contiguous()
 
 
