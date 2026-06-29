@@ -12,6 +12,7 @@ Return types
 ------------
 - **map_2d** / **scattering_coefficient** -- ``np.ndarray`` of shape ``(H, W)`` float32.
 - **map_3d** / **atmospheric_light** -- ``np.ndarray`` of shape ``(H, W, C)`` float32.
+- **points_3d** -- ``np.ndarray`` of shape ``(3, H, W)`` float32.
 - **spherical_map** -- ``np.ndarray`` of shape ``(H, W, C)`` float32.
 - **intrinsics** -- ``np.ndarray`` of shape ``(3, 3)`` float32.
 - **sh_coeffs** -- ``np.ndarray`` of shape ``(N, 3)`` float32.
@@ -23,6 +24,7 @@ Usage::
 
     Modality("/data/my_dataset/scattering_coefficient", loader=generic.scattering_coefficient)
     Modality("/data/my_dataset/atmospheric_light",      loader=generic.atmospheric_light)
+    Modality("/data/my_dataset/points_3d",              loader=generic.points_3d)
     Modality("/data/my_dataset/spherical_map",          loader=generic.spherical_map)
     Modality("/data/my_dataset/intrinsics",             loader=generic.intrinsics)
     Modality("/data/my_dataset/sh_coeffs",              loader=generic.sh_coeffs)
@@ -85,6 +87,14 @@ def _write_numpy(path: Union[str, BinaryIO], value: Any) -> None:
     raise ValueError(f"Unsupported output extension: {ext}")
 
 
+def _as_3d_points(value: Any) -> np.ndarray:
+    """Return a float32 ``(3, H, W)`` array for dense 3D point maps."""
+    arr = to_numpy(value).astype(np.float32)
+    if arr.ndim != 3 or arr.shape[0] != 3:
+        raise ValueError(f"points_3d must have shape (3, H, W), got {arr.shape}")
+    return arr
+
+
 # ---------------------------------------------------------------------------
 # Public loaders
 # ---------------------------------------------------------------------------
@@ -122,6 +132,23 @@ def map_3d(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None, *, at
     """
     arr = _load_numpy(path)
     return np.transpose(arr, (1, 2, 0))
+
+
+@modality_meta(
+    modality_type="points_3d",
+    dtype="float32",
+    shape="3HW",
+    file_formats=[".npy", ".npz"],
+)
+def points_3d(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None, *, attributes: dict[str, Any] | None = None) -> np.ndarray:
+    """Load dense 3D points as a ``(3, H, W)`` float32 array.
+
+    Files are expected to store the per-pixel 3D point coordinates directly in
+    ``(3, H, W)`` layout.  Unlike :func:`map_3d`, this loader preserves the
+    channel-first representation on CPU because it is a coordinate point map,
+    not a generic HWC image-style map.
+    """
+    return _as_3d_points(_load_numpy(path))
 
 
 @modality_meta(
@@ -237,6 +264,12 @@ def write_map_3d(path: Union[str, BinaryIO], value: Any, meta: dict[str, Any] | 
         return
 
     raise ValueError(f"Unsupported map_3d output extension: {ext}")
+
+
+@mark_stream_supported
+def write_points_3d(path: Union[str, BinaryIO], value: Any, meta: dict[str, Any] | None = None) -> None:
+    """Write dense 3D points to NumPy formats in ``(3, H, W)`` layout."""
+    _write_numpy(path, _as_3d_points(value))
 
 
 @mark_stream_supported

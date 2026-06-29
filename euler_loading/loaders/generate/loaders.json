@@ -72,6 +72,23 @@
                     }
                 },
                 {
+                    "type": "points_3d",
+                    "function": "points_3d",
+                    "hierarchical": false,
+                    "dtype": "float32",
+                    "access": "key",
+                    "file_formats": [
+                        ".npy",
+                        ".npz"
+                    ],
+                    "cpu": {
+                        "shape": "3HW"
+                    },
+                    "gpu": {
+                        "shape": "3HW"
+                    }
+                },
+                {
                     "type": "scattering_coefficient",
                     "function": "scattering_coefficient",
                     "hierarchical": false,

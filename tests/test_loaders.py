@@ -1179,6 +1179,7 @@ class TestRDSWriters:
 GENERIC_LOADER_NAMES = [
     "map_2d",
     "map_3d",
+    "points_3d",
     "scattering_coefficient",
     "atmospheric_light",
     "spherical_map",
@@ -1186,6 +1187,7 @@ GENERIC_LOADER_NAMES = [
 GENERIC_WRITER_NAMES = [
     "write_map_2d",
     "write_map_3d",
+    "write_points_3d",
     "write_scattering_coefficient",
     "write_atmospheric_light",
     "write_spherical_map",
@@ -1384,6 +1386,24 @@ def map_3d_npz_path(tmp_path):
     return str(p), arr
 
 
+@pytest.fixture()
+def points_3d_npy_path(tmp_path):
+    """Write a small (3, 4, 5) float32 .npy file in 3HW layout."""
+    arr = np.random.default_rng(4).random((3, 4, 5), dtype=np.float32)
+    p = tmp_path / "points_3d.npy"
+    np.save(str(p), arr)
+    return str(p), arr
+
+
+@pytest.fixture()
+def points_3d_npz_path(tmp_path):
+    """Write a small (3, 4, 5) float32 .npz file in 3HW layout."""
+    arr = np.random.default_rng(5).random((3, 4, 5), dtype=np.float32)
+    p = tmp_path / "points_3d.npz"
+    np.savez_compressed(str(p), data=arr)
+    return str(p), arr
+
+
 class TestGPUMap2DLoader:
     """GPU ``map_2d`` loads a 2D map as an ``(H, W)`` float32 tensor."""
 
@@ -1465,6 +1485,52 @@ class TestCPUMap3DLoader:
         assert np.allclose(result, np.transpose(expected, (1, 2, 0)))
 
 
+class TestGPUPoints3DLoader:
+    """GPU ``points_3d`` loads dense 3D points as a ``(3, H, W)`` tensor."""
+
+    def test_npy_dtype_and_shape(self, points_3d_npy_path):
+        path, _ = points_3d_npy_path
+        result = gpu_generic.points_3d(path)
+        assert isinstance(result, torch.Tensor)
+        assert result.dtype == torch.float32
+        assert result.shape == (3, 4, 5)
+
+    def test_npy_values_match(self, points_3d_npy_path):
+        path, expected = points_3d_npy_path
+        result = gpu_generic.points_3d(path)
+        assert torch.allclose(result, torch.from_numpy(expected))
+
+    def test_npz_dtype_and_shape(self, points_3d_npz_path):
+        path, _ = points_3d_npz_path
+        result = gpu_generic.points_3d(path)
+        assert result.dtype == torch.float32
+        assert result.shape == (3, 4, 5)
+
+
+class TestCPUPoints3DLoader:
+    """CPU ``points_3d`` preserves the ``(3, H, W)`` dense point layout."""
+
+    def test_npy_dtype_and_shape(self, points_3d_npy_path):
+        path, _ = points_3d_npy_path
+        result = cpu_generic.points_3d(path)
+        assert isinstance(result, np.ndarray)
+        assert result.dtype == np.float32
+        assert result.shape == (3, 4, 5)
+
+    def test_npy_values_match(self, points_3d_npy_path):
+        path, expected = points_3d_npy_path
+        result = cpu_generic.points_3d(path)
+        assert np.allclose(result, expected)
+
+    def test_rejects_hwc_input(self, tmp_path):
+        arr = np.random.default_rng(6).random((4, 5, 3), dtype=np.float32)
+        path = tmp_path / "points_3d.npy"
+        np.save(str(path), arr)
+
+        with pytest.raises(ValueError, match=r"points_3d must have shape"):
+            cpu_generic.points_3d(str(path))
+
+
 class TestMapWriters:
     """Writer round-trip tests for ``map_2d`` / ``map_3d``."""
 
@@ -1504,11 +1570,25 @@ class TestMapWriters:
         loaded = gpu_generic.map_3d(str(path))
         assert torch.allclose(loaded, data)
 
+    def test_gpu_write_points_3d_npy_roundtrip(self, tmp_path):
+        data = torch.rand(3, 4, 5, dtype=torch.float32)
+        path = tmp_path / "points.npy"
+        gpu_generic.write_points_3d(str(path), data)
+        loaded = gpu_generic.points_3d(str(path))
+        assert torch.allclose(loaded, data)
+
     def test_cpu_write_map_3d_npy_roundtrip(self, tmp_path):
         data = np.random.default_rng(0).random((4, 5, 2)).astype(np.float32)
         path = tmp_path / "m.npy"
         cpu_generic.write_map_3d(str(path), data)
         loaded = cpu_generic.map_3d(str(path))
+        assert np.allclose(loaded, data)
+
+    def test_cpu_write_points_3d_npz_roundtrip(self, tmp_path):
+        data = np.random.default_rng(0).random((3, 4, 5)).astype(np.float32)
+        path = tmp_path / "points.npz"
+        cpu_generic.write_points_3d(str(path), data)
+        loaded = cpu_generic.points_3d(str(path))
         assert np.allclose(loaded, data)
 
     def test_cpu_write_map_3d_npz_roundtrip(self, tmp_path):
@@ -1560,6 +1640,8 @@ class TestSpecificMapAliases:
 
     def test_modality_meta_distinct_types(self):
         """Each alias carries its own modality_type even though logic is shared."""
+        assert gpu_generic.points_3d._modality_meta["type"] == "points_3d"
+        assert cpu_generic.points_3d._modality_meta["type"] == "points_3d"
         assert (
             gpu_generic.scattering_coefficient._modality_meta["type"]
             == "scattering_coefficient"

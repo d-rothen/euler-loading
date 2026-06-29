@@ -381,7 +381,7 @@ When `Modality.loader` is `None`, euler-loading resolves the loader from the ds-
 }
 ```
 
-`loader` is the module name (`vkitti2`, `real_drive_sim`, `muses`, `princeton_dense`, or `generic_dense_depth`) and `function` is the function within that module. The GPU variant is used by default.
+`loader` is the module name (`vkitti2`, `real_drive_sim`, `muses`, `princeton_dense`, `generic`, or `generic_dense_depth`) and `function` is the function within that module. The GPU variant is used by default.
 
 Writer resolution uses the same module and function metadata:
 
@@ -550,7 +550,15 @@ A format-agnostic loader that infers the loading strategy from the file extensio
 | `sky_mask` | Binary mask by comparing pixels against `meta["sky_mask"]` (`[R, G, B]`). Requires `meta` |
 | `read_intrinsics` | Returns `meta["intrinsics"]` as a `(3, 3)` tensor. Ignores path; requires `meta` |
 
-CPU variants of all loaders live under `euler_loading.loaders.cpu.{vkitti2,real_drive_sim,muses,princeton_dense,generic_dense_depth}`.
+### Generic NumPy Modalities (`euler_loading.loaders.gpu.generic`)
+
+Generic loaders for `.npy` and `.npz` modalities without dataset-specific decoding.
+
+| Function | Description |
+|----------|-------------|
+| `points_3d` | Dense 3D point map from NumPy files stored as `(3, H, W)` float32 |
+
+CPU variants of all loaders live under `euler_loading.loaders.cpu.{vkitti2,real_drive_sim,muses,princeton_dense,generic,generic_dense_depth}`.
 
 ### Flattening hierarchical modalities
 
