@@ -58,9 +58,7 @@ def resolve_loader_module(name: str) -> ModuleType:
     module_path = _LOADER_MODULES.get(name)
     if module_path is None:
         available = ", ".join(sorted(_LOADER_MODULES))
-        raise ValueError(
-            f"Unknown loader {name!r}. Available loaders: {available}"
-        )
+        raise ValueError(f"Unknown loader {name!r}. Available loaders: {available}")
     return importlib.import_module(module_path)
 
 
@@ -132,7 +130,8 @@ def _resolve_loader(
     func = getattr(module, func_name, None)
     if func is None or not callable(func):
         available = [
-            attr for attr in dir(module)
+            attr
+            for attr in dir(module)
             if not attr.startswith("_") and callable(getattr(module, attr))
         ]
         raise ValueError(
@@ -150,7 +149,7 @@ def _writer_name_candidates(read_function_name: str, explicit: Any) -> list[str]
         names.append(explicit_name)
 
     if read_function_name.startswith("read_"):
-        names.append(f"write_{read_function_name[len('read_'):]}")
+        names.append(f"write_{read_function_name[len('read_') :]}")
     names.append(f"write_{read_function_name}")
 
     deduped: list[str] = []
