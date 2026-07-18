@@ -240,6 +240,71 @@ class TestWriteSample:
                 output_index = json.load(io.TextIOWrapper(entry, encoding="utf-8"))
         assert output_index["type"] == "txt"
 
+    def test_output_writer_writes_scoped_metadata_and_manifest(self, tmp_path):
+        def writer(path: str, value: Any, meta: dict[str, Any] | None = None) -> None:
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(str(value))
+
+        index = _flat_index("txt", ["f001"])
+        with patch(
+            "euler_loading.dataset.index_dataset_from_path",
+            return_value=index,
+        ):
+            ds = MultiModalDataset(
+                modalities={
+                    "depth": Modality(
+                        "/data/depth", loader=dummy_loader, writer=writer
+                    )
+                }
+            )
+
+        output_writer = ds.create_output_writer(
+            "depth", tmp_path / "out", metadata_scope="depth"
+        )
+        ds.write_sample(0, {"depth": "prediction"}, output_writer)
+        output_writer.save_index()
+
+        scoped_index = tmp_path / "out" / ".ds_crawler" / "depth" / "output.json"
+        manifest_path = tmp_path / "out" / ".ds_crawler" / "scopes.json"
+        assert json.loads(scoped_index.read_text())["type"] == "txt"
+        manifest = json.loads(manifest_path.read_text())
+        assert manifest["scopes"]["depth"]["metadata_dir"] == ".ds_crawler/depth"
+        assert "output.json" in manifest["scopes"]["depth"]["files"]
+
+    def test_zip_output_writer_writes_scoped_metadata_and_manifest(self, tmp_path):
+        def writer(path: str, value: Any, meta: dict[str, Any] | None = None) -> None:
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(str(value))
+
+        index = _flat_index("txt", ["f001"])
+        with patch(
+            "euler_loading.dataset.index_dataset_from_path",
+            return_value=index,
+        ):
+            ds = MultiModalDataset(
+                modalities={
+                    "depth": Modality(
+                        "/data/depth", loader=dummy_loader, writer=writer
+                    )
+                }
+            )
+
+        output_writer = ds.create_output_writer(
+            "depth", tmp_path / "out.zip", zip=True, metadata_scope="depth"
+        )
+        ds.write_sample(0, {"depth": "prediction"}, output_writer)
+        output_writer.save_index()
+
+        with zipfile.ZipFile(tmp_path / "out.zip") as zf:
+            scoped_index = json.loads(
+                zf.read(".ds_crawler/depth/output.json").decode("utf-8")
+            )
+            manifest = json.loads(
+                zf.read(".ds_crawler/scopes.json").decode("utf-8")
+            )
+        assert scoped_index["type"] == "txt"
+        assert manifest["scopes"]["depth"]["metadata_dir"] == ".ds_crawler/depth"
+
     def test_write_sample_records_attributes_on_dataset_writer_entry(self, tmp_path):
         """write_sample(attributes={modality: {...}}) lands on the output entry."""
         def writer(path: str, value: Any, meta: dict[str, Any] | None = None) -> None:

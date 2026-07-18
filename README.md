@@ -190,6 +190,24 @@ when doing so is unambiguous:
 
 This is an additive layout. Existing roots with `.ds_crawler/index.json` continue to load unchanged, and a scoped modality falls back to that legacy location when the scoped artifacts are not present.
 
+Output writers can create the same layout natively. Pass a scope when creating
+each modality writer; ds-crawler writes the scoped artifacts and maintains
+`.ds_crawler/scopes.json`:
+
+```python
+rgb_writer = dataset.create_output_writer(
+    "rgb", output_root, metadata_scope="rgb"
+)
+depth_writer = dataset.create_output_writer(
+    "sparse_depth", output_root, metadata_scope="sparse_depth"
+)
+```
+
+The standalone `create_dataset_writer_from_index(...)` helper accepts the same
+`metadata_scope` argument. For ZIP output, one `ZipDatasetWriter` owns and
+finalizes one archive, so do not open multiple ZIP writers concurrently for the
+same path.
+
 ### `MultiModalDataset.modality_paths()`
 
 Returns a dict mapping each regular modality name to `{"path": ..., "origin_path": ...}` and includes `split` and `metadata_scope` when configured.

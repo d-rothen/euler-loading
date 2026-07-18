@@ -969,13 +969,23 @@ class MultiModalDataset(_BaseDataset):
         root: str | os.PathLike[str],
         *,
         zip: bool = False,
+        metadata_scope: str | None = None,
     ) -> DatasetWriter | ZipDatasetWriter:
-        """Create a ds-crawler writer preconfigured from a modality's index."""
+        """Create a ds-crawler writer preconfigured from a modality's index.
+
+        Args:
+            modality_name: Modality whose index metadata should be mirrored.
+            root: Output directory or, when ``zip=True``, output archive.
+            zip: Create a :class:`ds_crawler.ZipDatasetWriter`.
+            metadata_scope: Optional namespace below ``.ds_crawler``. Scoped
+                writers also update ``.ds_crawler/scopes.json``.
+        """
         index_output = self.get_modality_index(modality_name)
         return create_dataset_writer_from_index(
             index_output=index_output,
             root=root,
             zip=zip,
+            metadata_scope=metadata_scope,
         )
 
     def get_writer(self, modality_name: str) -> Callable[..., Any]:

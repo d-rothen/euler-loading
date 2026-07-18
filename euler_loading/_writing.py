@@ -28,6 +28,8 @@ OutputDestination = str | os.PathLike[str] | DatasetWriter | ZipDatasetWriter
 
 def _wrap_writer_save_index(
     writer: DatasetWriter | ZipDatasetWriter,
+    *,
+    metadata_scope: str | None = None,
 ) -> DatasetWriter | ZipDatasetWriter:
     original_save_index = writer.save_index
 
@@ -72,7 +74,12 @@ def _wrap_writer_save_index(
         path = original_save_index(filename=filename)
 
         if isinstance(writer, ZipDatasetWriter):
-            entry_name = f".ds_crawler/{filename}"
+            metadata_prefix = (
+                f".ds_crawler/{metadata_scope}"
+                if metadata_scope is not None
+                else ".ds_crawler"
+            )
+            entry_name = f"{metadata_prefix}/{filename}"
             archive_path = Path(writer.root)
             with zipfile.ZipFile(archive_path, "r") as source_zip:
                 output_index = json.loads(source_zip.read(entry_name).decode("utf-8"))
@@ -113,8 +120,15 @@ def create_dataset_writer_from_index(
     index_output: Mapping[str, Any],
     root: str | os.PathLike[str],
     zip: bool = False,
+    metadata_scope: str | None = None,
 ) -> DatasetWriter | ZipDatasetWriter:
-    """Create a ds-crawler writer that mirrors an existing index's metadata."""
+    """Create a ds-crawler writer that mirrors an existing index's metadata.
+
+    ``metadata_scope`` stores the generated artifacts below
+    ``.ds_crawler/<metadata_scope>/`` and lets ds-crawler maintain the shared
+    ``.ds_crawler/scopes.json`` manifest.  This is useful when several logical
+    modalities share one physical output root or archive.
+    """
     indexing = index_output.get("indexing")
     hierarchy = indexing.get("hierarchy") if isinstance(indexing, Mapping) else None
     id_cfg = indexing.get("id") if isinstance(indexing, Mapping) else None
@@ -133,8 +147,9 @@ def create_dataset_writer_from_index(
             root,
             head=contract.to_mapping(),
             separator=separator,
+            metadata_scope=metadata_scope,
         )
-        return _wrap_writer_save_index(writer)
+        return _wrap_writer_save_index(writer, metadata_scope=metadata_scope)
 
     name = as_non_empty_str(index_output.get("name"))
     type_name = as_non_empty_str(index_output.get("type"))
@@ -160,9 +175,10 @@ def create_dataset_writer_from_index(
         type=type_name,
         euler_train=dict(euler_train) if isinstance(euler_train, Mapping) else None,
         separator=separator,
+        metadata_scope=metadata_scope,
         **properties,
     )
-    return _wrap_writer_save_index(writer)
+    return _wrap_writer_save_index(writer, metadata_scope=metadata_scope)
 
 
 def _resolve_output_destination(
