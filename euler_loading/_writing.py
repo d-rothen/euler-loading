@@ -7,7 +7,7 @@ import tempfile
 import zipfile
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Union
 
 from ds_crawler import DatasetWriter, ZipDatasetWriter, get_dataset_contract
 
@@ -23,7 +23,14 @@ logger = logging.getLogger(__name__)
 _DEFAULT_WRITER_INDEX_FILENAME = "output.json"
 
 
-OutputDestination = str | os.PathLike[str] | DatasetWriter | ZipDatasetWriter
+# Type aliases are evaluated at import time even with postponed annotations.
+# ``typing.Union`` keeps this module importable on the supported Python 3.9.
+OutputDestination = Union[
+    str,
+    os.PathLike[str],
+    DatasetWriter,
+    ZipDatasetWriter,
+]
 
 
 def _wrap_writer_save_index(
