@@ -11,6 +11,8 @@ Supported file extensions:
 Return types
 ------------
 - **map_2d** / **scattering_coefficient** -- ``torch.FloatTensor`` of shape ``(H, W)``.
+- **semantic_segmentation** / **instance_segmentation** -- integer
+  ``torch.Tensor`` of shape ``(H, W)``.
 - **map_3d** / **atmospheric_light** -- ``torch.FloatTensor`` of shape ``(C, H, W)``.
 - **points_3d** -- ``torch.FloatTensor`` of shape ``(3, H, W)``.
 - **spherical_map** -- ``torch.FloatTensor`` of shape ``(C, H, W)``.
@@ -72,6 +74,20 @@ def _load_numpy(path: Union[str, BinaryIO]) -> np.ndarray:
     return arr.astype(np.float32)
 
 
+def _load_label_map(path: Union[str, BinaryIO], dtype: np.dtype) -> np.ndarray:
+    """Load a standardized HW integer label map without converting to float."""
+    ext = os.path.splitext(_get_name(path))[1].lower()
+    if ext == _NPZ_EXTENSION:
+        with np.load(path) as npz:
+            arr = next(iter(npz.values()))
+    else:
+        arr = np.load(path)
+    arr = np.asarray(arr)
+    if arr.ndim != 2:
+        raise ValueError(f"segmentation map must have shape (H, W), got {arr.shape}")
+    return arr.astype(dtype, copy=False)
+
+
 def _write_numpy(path: Union[str, BinaryIO], value: Any) -> None:
     """Write an array to ``.npy`` or ``.npz`` based on extension."""
     ensure_parent(path)
@@ -116,6 +132,28 @@ def map_2d(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None, *, at
     """
     arr = _load_numpy(path)
     return torch.from_numpy(arr).contiguous()
+
+
+@modality_meta(
+    modality_type="semantic_segmentation",
+    dtype="uint8",
+    shape="HW",
+    file_formats=[".npy", ".npz"],
+)
+def semantic_segmentation(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None, *, attributes: dict[str, Any] | None = None) -> torch.Tensor:
+    """Load an HW uint8 class-id map; 255 is the standardized void id."""
+    return torch.from_numpy(_load_label_map(path, np.dtype(np.uint8))).contiguous()
+
+
+@modality_meta(
+    modality_type="instance_segmentation",
+    dtype="uint16",
+    shape="HW",
+    file_formats=[".npy", ".npz"],
+)
+def instance_segmentation(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None, *, attributes: dict[str, Any] | None = None) -> torch.Tensor:
+    """Load an HW uint16 instance-id map; 0 denotes stuff or void."""
+    return torch.from_numpy(_load_label_map(path, np.dtype(np.uint16))).contiguous()
 
 
 @modality_meta(
@@ -242,6 +280,30 @@ def write_map_2d(path: Union[str, BinaryIO], value: Any, meta: dict[str, Any] | 
     """
     arr = to_hw(value, name="map_2d")
     _write_numpy(path, arr)
+
+
+def _write_segmentation(path: Union[str, BinaryIO], value: Any, dtype: np.dtype, name: str) -> None:
+    arr = to_hw(value, name=name).astype(dtype, copy=False)
+    ensure_parent(path)
+    ext = os.path.splitext(_get_name(path))[1].lower()
+    if ext == _NPY_EXTENSION:
+        np.save(path, arr)
+    elif ext == _NPZ_EXTENSION:
+        np.savez_compressed(path, data=arr)
+    else:
+        raise ValueError(f"Unsupported output extension: {ext}")
+
+
+@mark_stream_supported
+def write_semantic_segmentation(path: Union[str, BinaryIO], value: Any, meta: dict[str, Any] | None = None) -> None:
+    """Write the standardized HW uint8 semantic map (255 means void)."""
+    _write_segmentation(path, value, np.dtype(np.uint8), "semantic_segmentation")
+
+
+@mark_stream_supported
+def write_instance_segmentation(path: Union[str, BinaryIO], value: Any, meta: dict[str, Any] | None = None) -> None:
+    """Write the standardized HW uint16 instance map (0 means stuff/void)."""
+    _write_segmentation(path, value, np.dtype(np.uint16), "instance_segmentation")
 
 
 @mark_stream_supported

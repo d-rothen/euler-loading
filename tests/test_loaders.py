@@ -1179,6 +1179,8 @@ class TestRDSWriters:
 GENERIC_LOADER_NAMES = [
     "map_2d",
     "map_3d",
+    "semantic_segmentation",
+    "instance_segmentation",
     "points_3d",
     "scattering_coefficient",
     "atmospheric_light",
@@ -1187,6 +1189,8 @@ GENERIC_LOADER_NAMES = [
 GENERIC_WRITER_NAMES = [
     "write_map_2d",
     "write_map_3d",
+    "write_semantic_segmentation",
+    "write_instance_segmentation",
     "write_points_3d",
     "write_scattering_coefficient",
     "write_atmospheric_light",
@@ -1343,6 +1347,43 @@ class TestGenericBackwardCompat:
         top = generic_top.spherical_map(path)
         gpu = gpu_generic.spherical_map(path)
         assert torch.equal(top, gpu)
+
+
+class TestGenericSegmentation:
+    """Generic segmentation codecs preserve the standardized CUPS format."""
+
+    @pytest.mark.parametrize(
+        ("function", "writer", "dtype", "torch_dtype", "values"),
+        [
+            ("semantic_segmentation", "write_semantic_segmentation", np.uint8, torch.uint8, [[0, 18], [255, 7]]),
+            ("instance_segmentation", "write_instance_segmentation", np.uint16, torch.uint16, [[0, 1], [257, 65535]]),
+        ],
+    )
+    def test_cpu_gpu_npy_roundtrip(self, tmp_path, function, writer, dtype, torch_dtype, values):
+        expected = np.asarray(values, dtype=dtype)
+        path = tmp_path / f"{function}.npy"
+        getattr(cpu_generic, writer)(str(path), expected)
+
+        cpu_value = getattr(cpu_generic, function)(str(path))
+        gpu_value = getattr(gpu_generic, function)(str(path))
+        assert cpu_value.dtype == dtype
+        assert np.array_equal(cpu_value, expected)
+        assert gpu_value.dtype == torch_dtype
+        assert torch.equal(gpu_value, torch.from_numpy(expected))
+
+    def test_writer_accepts_singleton_channel(self, tmp_path):
+        value = np.array([[[0, 1], [2, 255]]], dtype=np.uint8)
+        path = tmp_path / "semantic.npz"
+        cpu_generic.write_semantic_segmentation(str(path), value)
+        loaded = cpu_generic.semantic_segmentation(str(path))
+        assert loaded.shape == (2, 2)
+        assert np.array_equal(loaded, value[0])
+
+    def test_loader_rejects_non_hw_storage(self, tmp_path):
+        path = tmp_path / "semantic.npy"
+        np.save(path, np.zeros((1, 2, 3), dtype=np.uint8))
+        with pytest.raises(ValueError, match=r"must have shape \(H, W\)"):
+            cpu_generic.semantic_segmentation(str(path))
 
 
 # ---------------------------------------------------------------------------
