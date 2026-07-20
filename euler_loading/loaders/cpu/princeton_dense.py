@@ -24,6 +24,13 @@ import numpy as np
 from PIL import Image
 
 from euler_loading.loaders._annotations import modality_meta
+from euler_loading.loaders._writer_utils import (
+    ensure_parent,
+    mark_stream_supported,
+    save_image,
+    to_hwc_rgb,
+    to_uint8,
+)
 from euler_loading.loaders._princeton_dense import DEFAULT_CAMERA_FRAME
 from euler_loading.loaders._princeton_dense import DEFAULT_LIDAR_FRAME
 from euler_loading.loaders._princeton_dense import LIDAR_COLUMNS
@@ -71,6 +78,18 @@ def rgb(
 ) -> np.ndarray:
     """Load a SeeingThroughFog plain 8-bit PNG as RGB float32 in ``[0, 1]``."""
     return np.array(Image.open(path).convert("RGB"), dtype=np.float32) / 255.0
+
+
+@mark_stream_supported
+def write_rgb(
+    path: Union[str, BinaryIO],
+    value: Any,
+    meta: dict[str, Any] | None = None,
+) -> None:
+    """Write an RGB array/tensor as an 8-bit PNG."""
+    ensure_parent(path)
+    arr = to_uint8(to_hwc_rgb(value, name="rgb"), scale_unit_range=True)
+    save_image(path, Image.fromarray(arr, mode="RGB"), format="PNG")
 
 
 @modality_meta(

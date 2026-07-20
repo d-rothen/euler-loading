@@ -14,6 +14,7 @@ from PIL import Image
 
 from euler_loading import Modality, MultiModalDataset, resolve_writer_module
 from euler_loading.loaders.gpu import vkitti2 as gpu_vkitti2
+from euler_loading.loaders.gpu import princeton_dense as gpu_princeton_dense
 
 from .conftest import dummy_loader
 
@@ -91,6 +92,55 @@ class TestWriterResolution:
             )
 
         assert ds.get_writer("intrinsics") is gpu_vkitti2.write_intrinsics
+
+    def test_auto_resolves_princeton_dense_rgb_writer(self):
+        index = _flat_index(
+            "png",
+            ["f001"],
+            euler_loading={"loader": "princeton_dense", "function": "rgb"},
+        )
+        with patch(
+            "euler_loading.dataset.index_dataset_from_path",
+            return_value=index,
+        ):
+            ds = MultiModalDataset(modalities={"rgb": Modality("/data/rgb")})
+
+        assert ds.get_writer("rgb") is gpu_princeton_dense.write_rgb
+
+    @pytest.mark.parametrize(
+        "writer,chw",
+        [
+            (gpu_princeton_dense.write_rgb, True),
+            pytest.param(None, False, id="cpu"),
+        ],
+    )
+    def test_princeton_dense_rgb_writer_round_trip(self, tmp_path, writer, chw):
+        if writer is None:
+            from euler_loading.loaders.cpu import princeton_dense as cpu_princeton_dense
+
+            writer = cpu_princeton_dense.write_rgb
+        expected = np.array(
+            [[[0.0, 0.5, 1.0], [1.0, 0.25, 0.0]]],
+            dtype=np.float32,
+        )
+        value = np.transpose(expected, (2, 0, 1)) if chw else expected
+        path = tmp_path / ("gpu.png" if chw else "cpu.png")
+
+        writer(path, value)
+
+        actual = np.asarray(Image.open(path).convert("RGB"), dtype=np.float32) / 255.0
+        np.testing.assert_allclose(actual, expected, atol=1.0 / 255.0)
+
+    def test_princeton_dense_rgb_writer_supports_binary_stream(self):
+        stream = io.BytesIO()
+        gpu_princeton_dense.write_rgb(
+            stream,
+            np.ones((3, 2, 2), dtype=np.float32),
+        )
+        stream.seek(0)
+        image = Image.open(stream)
+        assert image.format == "PNG"
+        assert image.size == (2, 2)
 
 
 class TestWriteSample:

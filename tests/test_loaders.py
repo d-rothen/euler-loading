@@ -165,6 +165,8 @@ PRINCETON_DENSE_LOADER_NAMES = [
     "read_extrinsics",
 ]
 
+PRINCETON_DENSE_WRITER_NAMES = ["write_rgb"]
+
 
 @pytest.fixture()
 def princeton_dense_rgb_path(tmp_path):
@@ -259,6 +261,18 @@ class TestPrincetonDenseModuleContents:
 
     @pytest.mark.parametrize("name", PRINCETON_DENSE_LOADER_NAMES)
     def test_cpu_has_callable(self, name):
+        assert callable(getattr(cpu_princeton_dense, name))
+
+    @pytest.mark.parametrize("name", PRINCETON_DENSE_WRITER_NAMES)
+    def test_top_level_has_writer(self, name):
+        assert callable(getattr(princeton_dense_top, name))
+
+    @pytest.mark.parametrize("name", PRINCETON_DENSE_WRITER_NAMES)
+    def test_gpu_has_writer(self, name):
+        assert callable(getattr(gpu_princeton_dense, name))
+
+    @pytest.mark.parametrize("name", PRINCETON_DENSE_WRITER_NAMES)
+    def test_cpu_has_writer(self, name):
         assert callable(getattr(cpu_princeton_dense, name))
 
     def test_auto_resolution_uses_gpu_module(self):

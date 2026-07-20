@@ -25,6 +25,13 @@ from PIL import Image
 import torch
 
 from euler_loading.loaders._annotations import modality_meta
+from euler_loading.loaders._writer_utils import (
+    ensure_parent,
+    mark_stream_supported,
+    save_image,
+    to_hwc_rgb,
+    to_uint8,
+)
 from euler_loading.loaders._princeton_dense import DEFAULT_CAMERA_FRAME
 from euler_loading.loaders._princeton_dense import DEFAULT_LIDAR_FRAME
 from euler_loading.loaders._princeton_dense import LIDAR_COLUMNS
@@ -74,6 +81,18 @@ def rgb(
     """Load a SeeingThroughFog plain 8-bit PNG as an RGB tensor."""
     arr = np.array(Image.open(path).convert("RGB"), dtype=np.float32) / 255.0
     return torch.from_numpy(arr).permute(2, 0, 1).contiguous()
+
+
+@mark_stream_supported
+def write_rgb(
+    path: Union[str, BinaryIO],
+    value: Any,
+    meta: dict[str, Any] | None = None,
+) -> None:
+    """Write an RGB tensor/array as an 8-bit PNG."""
+    ensure_parent(path)
+    arr = to_uint8(to_hwc_rgb(value, name="rgb"), scale_unit_range=True)
+    save_image(path, Image.fromarray(arr, mode="RGB"), format="PNG")
 
 
 @modality_meta(
