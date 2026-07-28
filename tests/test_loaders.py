@@ -1111,6 +1111,89 @@ class TestRDSCPUCalibration:
         assert K[0, 0] == 0.0
 
 
+class TestRDSReadExtrinsics:
+    """Real Drive Sim composes sensor-to-sensor transforms from per-sensor poses.
+
+    The dataset stores one pose per sensor in a shared vehicle frame, so the
+    directed transform is derived: ``X_target = inv(T_target) @ T_source @ X_source``.
+    """
+
+    def test_defaults_to_lidar_to_front_camera(self):
+        T = cpu_rds.read_extrinsics(_RDS_CALIB_PATH)
+        assert T.shape == (4, 4)
+        assert T.dtype == np.float32
+        assert np.array_equal(T[3], np.array([0.0, 0.0, 0.0, 1.0], dtype=np.float32))
+
+    def test_matches_explicit_composition(self):
+        sensors = cpu_rds.calibration(_RDS_CALIB_PATH)
+        expected = np.linalg.inv(
+            sensors["CS_FRONT"]["T"].astype(np.float64)
+        ) @ sensors["HDL_64E"]["T"].astype(np.float64)
+        result = cpu_rds.read_extrinsics(_RDS_CALIB_PATH)
+        assert np.allclose(result, expected, atol=1e-6)
+
+    def test_same_source_and_target_is_identity(self):
+        T = cpu_rds.read_extrinsics(
+            _RDS_CALIB_PATH,
+            {"source_frame": "CS_FRONT", "target_frame": "CS_FRONT"},
+        )
+        assert np.allclose(T, np.eye(4), atol=1e-6)
+
+    def test_reversed_direction_is_the_inverse(self):
+        forward = cpu_rds.read_extrinsics(
+            _RDS_CALIB_PATH,
+            {"source_frame": "HDL_64E", "target_frame": "CS_FRONT"},
+        )
+        backward = cpu_rds.read_extrinsics(
+            _RDS_CALIB_PATH,
+            {"source_frame": "CS_FRONT", "target_frame": "HDL_64E"},
+        )
+        assert np.allclose(forward @ backward, np.eye(4), atol=1e-6)
+
+    def test_rotation_block_stays_orthonormal(self):
+        R = cpu_rds.read_extrinsics(_RDS_CALIB_PATH)[:3, :3]
+        assert np.allclose(R @ R.T, np.eye(3), atol=1e-6)
+        assert np.isclose(np.linalg.det(R), 1.0, atol=1e-6)
+
+    def test_sensor_aliases_resolve_to_canonical_names(self):
+        aliased = cpu_rds.read_extrinsics(
+            _RDS_CALIB_PATH, {"source_frame": "lidar", "target_frame": "camera"}
+        )
+        canonical = cpu_rds.read_extrinsics(
+            _RDS_CALIB_PATH,
+            {"source_frame": "HDL_64E", "target_frame": "CS_FRONT"},
+        )
+        assert np.array_equal(aliased, canonical)
+
+    def test_attributes_take_priority_over_meta(self):
+        result = cpu_rds.read_extrinsics(
+            _RDS_CALIB_PATH,
+            {"source_frame": "HDL_64E"},
+            attributes={"source_frame": "HDL_32E"},
+        )
+        expected = cpu_rds.read_extrinsics(_RDS_CALIB_PATH, {"source_frame": "HDL_32E"})
+        assert np.array_equal(result, expected)
+
+    def test_unknown_sensor_names_the_available_ones(self):
+        with pytest.raises(KeyError) as excinfo:
+            cpu_rds.read_extrinsics(_RDS_CALIB_PATH, {"target_frame": "NOT_A_SENSOR"})
+        message = str(excinfo.value)
+        assert "NOT_A_SENSOR" in message
+        assert "CS_FRONT" in message
+
+    def test_gpu_matches_cpu(self):
+        for kwargs in (
+            None,
+            {"source_frame": "HDL_32E"},
+            {"source_frame": "CS_FRONT", "target_frame": "HDL_64E"},
+        ):
+            cpu_result = cpu_rds.read_extrinsics(_RDS_CALIB_PATH, kwargs)
+            gpu_result = gpu_rds.read_extrinsics(_RDS_CALIB_PATH, kwargs)
+            assert gpu_result.shape == (4, 4)
+            assert gpu_result.dtype == torch.float32
+            assert np.allclose(cpu_result, gpu_result.numpy(), atol=1e-6)
+
+
 # ---------------------------------------------------------------------------
 # Writer round-trip tests
 # ---------------------------------------------------------------------------

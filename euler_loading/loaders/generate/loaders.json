@@ -21,6 +21,23 @@
                     }
                 },
                 {
+                    "type": "instance_segmentation",
+                    "function": "instance_segmentation",
+                    "hierarchical": false,
+                    "dtype": "uint16",
+                    "access": "key",
+                    "file_formats": [
+                        ".npy",
+                        ".npz"
+                    ],
+                    "cpu": {
+                        "shape": "HW"
+                    },
+                    "gpu": {
+                        "shape": "HW"
+                    }
+                },
+                {
                     "type": "intrinsics",
                     "function": "intrinsics",
                     "hierarchical": false,
@@ -93,6 +110,23 @@
                     "function": "scattering_coefficient",
                     "hierarchical": false,
                     "dtype": "float32",
+                    "access": "key",
+                    "file_formats": [
+                        ".npy",
+                        ".npz"
+                    ],
+                    "cpu": {
+                        "shape": "HW"
+                    },
+                    "gpu": {
+                        "shape": "HW"
+                    }
+                },
+                {
+                    "type": "semantic_segmentation",
+                    "function": "semantic_segmentation",
+                    "hierarchical": false,
+                    "dtype": "uint8",
                     "access": "key",
                     "file_formats": [
                         ".npy",
@@ -678,6 +712,28 @@
                     },
                     "gpu": {
                         "shape": "1HW"
+                    }
+                },
+                {
+                    "type": "camera_extrinsics",
+                    "function": "read_extrinsics",
+                    "hierarchical": true,
+                    "dtype": "float32",
+                    "access": "key",
+                    "file_formats": [
+                        ".json"
+                    ],
+                    "meta": {
+                        "dataset": "RealDriveSim",
+                        "default_source_frame": "HDL_64E",
+                        "default_target_frame": "CS_FRONT",
+                        "transform_direction": "source_frame_to_target_frame"
+                    },
+                    "cpu": {
+                        "shape": "4x4"
+                    },
+                    "gpu": {
+                        "shape": "4x4"
                     }
                 },
                 {

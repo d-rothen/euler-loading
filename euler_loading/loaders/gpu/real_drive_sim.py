@@ -230,8 +230,103 @@ def all_intrinsics(path: Union[str, BinaryIO], meta: dict[str, Any] | None = Non
 )
 def read_intrinsics(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None, *, attributes: dict[str, Any] | None = None) -> torch.Tensor:
     """Load the intrinsics for a specific sensor from a Real Drive Sim calibration JSON."""
+    sensor = (attributes or {}).get("sensor") or (meta or {}).get("sensor") or "CS_FRONT"
     all_intrinsics_data = all_intrinsics(path)
-    return all_intrinsics_data["CS_FRONT"]
+    if sensor not in all_intrinsics_data:
+        raise KeyError(
+            f"Real Drive Sim calibration has no intrinsics for sensor {sensor!r}. "
+            f"Available sensors: {sorted(all_intrinsics_data)}"
+        )
+    return all_intrinsics_data[sensor]
+
+
+DEFAULT_CAMERA_SENSOR = "CS_FRONT"
+DEFAULT_LIDAR_SENSOR = "HDL_64E"
+
+_SENSOR_ALIASES = {
+    "camera": DEFAULT_CAMERA_SENSOR,
+    "cam": DEFAULT_CAMERA_SENSOR,
+    "rgb": DEFAULT_CAMERA_SENSOR,
+    "front": DEFAULT_CAMERA_SENSOR,
+    "lidar": DEFAULT_LIDAR_SENSOR,
+    "hdl64": DEFAULT_LIDAR_SENSOR,
+    "hdl_64": DEFAULT_LIDAR_SENSOR,
+    "hdl32": "HDL_32E",
+    "hdl_32": "HDL_32E",
+}
+
+
+def _select_sensor(
+    meta: dict[str, Any] | None,
+    attributes: dict[str, Any] | None,
+    keys: tuple[str, ...],
+    default: str,
+) -> str:
+    """Resolve a sensor name from ``attributes`` (highest priority) or ``meta``."""
+    for source in (attributes, meta):
+        if not isinstance(source, dict):
+            continue
+        for key in keys:
+            value = source.get(key)
+            if isinstance(value, str) and value:
+                return _SENSOR_ALIASES.get(value.lower(), value)
+    return default
+
+
+@modality_meta(
+    modality_type="camera_extrinsics",
+    dtype="float32",
+    hierarchical=True,
+    shape="4x4",
+    file_formats=[".json"],
+    meta={
+        "dataset": "RealDriveSim",
+        "default_source_frame": DEFAULT_LIDAR_SENSOR,
+        "default_target_frame": DEFAULT_CAMERA_SENSOR,
+        "transform_direction": "source_frame_to_target_frame",
+    },
+)
+def read_extrinsics(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None, *, attributes: dict[str, Any] | None = None) -> torch.Tensor:
+    """Load a directed ``source -> target`` sensor transform.
+
+    Real Drive Sim stores one pose per sensor, each mapping that sensor's
+    coordinates into the shared vehicle frame. There is therefore no stored
+    sensor-to-sensor matrix; it is composed here::
+
+        X_target = inv(T_target) @ T_source @ X_source
+
+    The default is ``HDL_64E -> CS_FRONT``, suitable for projecting Real Drive
+    Sim lidar/sparse-depth points into the front camera. Override it with
+    ``meta`` or per-file ``attributes`` using ``source_frame`` /
+    ``source_sensor`` and ``target_frame`` / ``target_sensor``.
+
+    Returns a ``(4, 4)`` float32 homogeneous tensor, row-major.
+    """
+    sensors = calibration(path)
+
+    source = _select_sensor(
+        meta,
+        attributes,
+        ("source_frame", "source_sensor", "from_frame", "from_sensor", "source"),
+        DEFAULT_LIDAR_SENSOR,
+    )
+    target = _select_sensor(
+        meta,
+        attributes,
+        ("target_frame", "target_sensor", "to_frame", "to_sensor", "target", "camera"),
+        DEFAULT_CAMERA_SENSOR,
+    )
+
+    for role, sensor in (("source", source), ("target", target)):
+        if sensor not in sensors:
+            raise KeyError(
+                f"Real Drive Sim calibration has no {role} sensor {sensor!r}. "
+                f"Available sensors: {sorted(sensors)}"
+            )
+
+    T_source = sensors[source]["T"].to(torch.float64)
+    T_target = sensors[target]["T"].to(torch.float64)
+    return (torch.linalg.inv(T_target) @ T_source).to(torch.float32).contiguous()
 
 
 # ---------------------------------------------------------------------------
