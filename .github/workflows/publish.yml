@@ -32,8 +32,13 @@ jobs:
           fi
           echo "Publishing version $version"
 
+      # rm -rf first: uv build adds to dist/ rather than replacing it, and
+      # uv publish uploads everything it finds there. On a runner with a reused
+      # workspace that would mean re-uploading a previous run's artifacts.
       - name: Build package
-        run: uv build
+        run: |
+          rm -rf dist
+          uv build
 
       - name: Publish to PyPI
         # uv publish automatically detects it is in GitHub Actions and uses OIDC

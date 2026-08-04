@@ -33,9 +33,11 @@ jobs:
           enable-cache: true
 
       # A venv, not `uv pip install --system`: the interpreter uv manages is
-      # marked externally managed and refuses to be installed into.
+      # marked externally managed and refuses to be installed into. --clear so
+      # a runner with a reused workspace starts from a clean environment
+      # instead of failing on, or silently inheriting, the previous run's.
       - name: Create the test environment
-        run: uv venv --python ${{ matrix.python-version }}
+        run: uv venv --clear --python ${{ matrix.python-version }}
 
       # CPU-only torch, installed first so it is the build that satisfies the
       # package's torch requirement. The default index would pull the
@@ -59,8 +61,12 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v5
 
+      # uv build adds to dist/ rather than replacing it, so a reused workspace
+      # would leave artifacts from earlier runs for twine to check.
       - name: Build package
-        run: uv build
+        run: |
+          rm -rf dist
+          uv build
 
       - name: Check metadata
         run: uvx twine check dist/*
