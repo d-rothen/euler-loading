@@ -1,6 +1,6 @@
 [project]
 name = "euler-loading"
-version = "2.21.0"
+version = "2.22.0"
 description = "Multi-modal PyTorch dataloader using ds-crawler indices"
 readme = "README.md"
 requires-python = ">=3.9"
