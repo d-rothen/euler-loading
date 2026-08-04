@@ -301,28 +301,29 @@ class Modality:
 
     Attributes:
         path: Absolute path to the dataset root directory for this modality.
-              Must contain a ``ds-crawler.config`` file (or a cached
-              ``output.json`` from a prior indexing run).  A colon-separated
-              split suffix is also accepted (e.g. ``/data/ds.zip:train``);
-              the suffix is extracted and used as the ``split`` parameter.
-              A metadata scope may also be selected inline with
-              ``#scope=<metadata_scope>``, including after a split suffix
-              (e.g. ``/data/ds.zip:train#scope=rgb``).
-        origin_path: Optional original path string before any copying or symlinking for i.e. slurm staging.  
-                This is not used by euler-loading itself but can be useful for experiment 
+              Must contain ds-crawler metadata under ``.ds_crawler/`` or the
+              selected metadata scope. A colon-separated split suffix is also
+              accepted (e.g. ``/data/ds.zip:train``); the suffix is extracted
+              and used as the ``split`` parameter. A metadata scope may also
+              be selected inline with ``#scope=<metadata_scope>``, including
+              after a split suffix (e.g. ``/data/ds.zip:train#scope=rgb``).
+        origin_path: Optional original path string before any copying or
+                symlinking for i.e. slurm staging. This is not used by
+                euler-loading itself but can be useful for experiment
                 logging to retain references to the original dataset location.
         loader: Optional callable that takes an absolute file path and returns
                 the loaded data (e.g. a numpy array, a PIL Image, a tensor).
                 When *None* (the default), the loader is resolved automatically
-                from ``euler_loading.loader`` and ``euler_loading.function`` in
-                the ds-crawler index, using the GPU variant of the matching
-                predefined loader.
+                from ``addons.euler_loading.loader`` and
+                ``addons.euler_loading.function`` in the modality's
+                ``dataset-head.json`` contract, using the GPU variant of the
+                matching predefined loader.
         writer: Optional callable that writes a loaded/predicted modality back
                 to disk. Expected signature is
                 ``(target: str | BinaryIO, value: Any, meta: dict[str, Any] | None) -> None``.
                 When *None* (the default), the writer is resolved automatically
-                from ``euler_loading.loader`` + ``euler_loading.function`` using
-                writer naming conventions (e.g. ``write_depth`` for ``depth``,
+                from the same ``addons.euler_loading`` contract using writer
+                naming conventions (e.g. ``write_depth`` for ``depth``,
                 ``write_intrinsics`` for ``read_intrinsics``).
         used_as: Optional semantic role for experiment logging
                  (e.g. ``"input"``, ``"target"``, ``"condition"``).
@@ -362,9 +363,10 @@ class Modality:
                  ``{file_id: value}`` dict.  This is useful for shared GT
                  tensors loaded once per source sample across augmentations.
                  A sample with more than one matched file raises.
-        metadata: Optional arbitrary metadata. Keys under
-                  ``metadata["euler_loading"]`` are treated as
-                  euler-loading-specific defaults.
+        metadata: Optional arbitrary per-instance metadata. Semantic keys under
+                  ``metadata["euler_loading"]`` are treated as defaults for
+                  roles and run logging. They do not select a loader; automatic
+                  loader resolution uses the dataset-head addon described above.
     """
 
     path: str

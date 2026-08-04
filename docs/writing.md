@@ -18,11 +18,16 @@ writer(path: str, value: Any, meta: dict | None = None) -> None
 ```
 
 Set it explicitly with `Modality(..., writer=...)`, or leave it `None` and let
-euler-loading resolve a built-in writer from ds-crawler metadata:
+euler-loading resolve a built-in writer from the `euler_loading` addon in the
+modality's `dataset-head.json` contract:
 
-1. the explicit `euler_loading.writer_function` key,
-2. `write_<function>`,
-3. for read-style names, `write_<suffix>` of `read_<suffix>`.
+1. the explicit `addons.euler_loading.writer_function` field,
+2. for `function: "read_<suffix>"`, `write_<suffix>`,
+3. `write_<function>`.
+
+The same addon supplies the required `loader` and `function` fields used for
+automatic loading. See [Automatic loader resolution](loaders.md#automatic-loader-resolution)
+for a complete `dataset-head.json` example.
 
 ```python
 writer = dataset.get_writer("depth")
@@ -83,8 +88,9 @@ writer.save_index()
 ```
 
 `create_output_writer(modality_name, root, *, zip=False, metadata_scope=None)`
-mirrors the source modality's index metadata onto the output, so the new dataset
-describes itself the same way the input did.
+mirrors the source modality's dataset-head contract and index metadata onto the
+output, including its `addons.euler_loading` entry, so the new dataset describes
+itself the same way the input did.
 
 Pass `zip=True` for a `ZipDatasetWriter`. **One `ZipDatasetWriter` owns and
 finalises one archive** — never open two concurrently for the same path.

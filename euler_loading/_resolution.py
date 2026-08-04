@@ -110,16 +110,16 @@ def _resolve_loader(
     if not isinstance(euler_loading_meta, Mapping):
         raise ValueError(
             f"Modality {modality_name!r}: no explicit loader provided and the "
-            f"ds-crawler index at {modality.path!r} does not contain an "
-            f"'euler_loading' property."
+            f"dataset-head contract at {modality.path!r} does not contain an "
+            f"'addons.euler_loading' entry."
         )
 
     for key in ("loader", "function"):
         if key not in euler_loading_meta:
             raise ValueError(
                 f"Modality {modality_name!r}: no explicit loader provided and "
-                f"'euler_loading.{key}' is missing from the ds-crawler index "
-                f"at {modality.path!r}."
+                f"'addons.euler_loading.{key}' is missing from the "
+                f"dataset-head contract at {modality.path!r}."
             )
 
     module_name: str = euler_loading_meta["loader"]

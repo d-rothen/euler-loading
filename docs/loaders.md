@@ -69,25 +69,65 @@ All built-in loaders accept `attributes=None`. Most ignore it;
 ## Automatic loader resolution
 
 Leave `Modality.loader` as `None` and euler-loading resolves it from the
-ds-crawler index, which must contain:
+modality's canonical ds-crawler dataset contract. That contract lives at
+`.ds_crawler/dataset-head.json`, or at
+`.ds_crawler/<metadata_scope>/dataset-head.json` for a scoped modality.
+
+`dataset-head.json` has an `addons` object whose keys name addon contracts. For
+automatic loading it must contain an `euler_loading` entry with both `loader`
+and `function`. For example:
 
 ```json
 {
-  "euler_loading": {
-    "loader": "vkitti2",
-    "function": "rgb"
+  "contract": {
+    "kind": "dataset_head",
+    "version": "1.0"
+  },
+  "dataset": {
+    "id": "vkitti2_rgb",
+    "name": "Virtual KITTI 2 RGB"
+  },
+  "modality": {
+    "key": "rgb",
+    "meta": {
+      "range": [0, 255]
+    }
+  },
+  "addons": {
+    "euler_loading": {
+      "version": "1.0",
+      "loader": "vkitti2",
+      "function": "rgb"
+    }
   }
 }
 ```
 
-`loader` is one of the module names below; `function` is the function inside it.
-The GPU variant is used by default.
+The `euler_loading` addon fields are:
 
-Writers resolve from the same metadata, in this order:
+| Field | Required | Meaning |
+|---|---|---|
+| `version` | yes | Version of the addon contract, currently `"1.0"`. |
+| `loader` | for automatic loading | One of the built-in module names below, such as `vkitti2`. |
+| `function` | for automatic loading | Callable within that module, such as `rgb`. It must be declared together with `loader`. |
+| `writer_function` | no | Explicit writer callable name when the naming conventions below are not sufficient. |
 
-1. the explicit `euler_loading.writer_function` key,
-2. `write_<function>`,
-3. for read-style names, `write_<suffix>` of `read_<suffix>`.
+ds-crawler carries the dataset head into its generated index. euler-loading
+reads that contract and asks for the named `euler_loading` addon; `loader` and
+`function` therefore do not belong at the top level of a newly authored index.
+An explicit `Modality.loader` always takes precedence. Automatic resolution
+uses the GPU variant; import and pass a CPU loader explicitly when NumPy output
+is required.
+
+For compatibility, euler-loading can still read the legacy top-level
+`euler_loading` mapping from older indexes. New datasets should declare the
+addon in `dataset-head.json` as shown above.
+
+Writers resolve from the same `addons.euler_loading` entry, in this order:
+
+1. the explicit `writer_function` field,
+2. for `function: "read_<suffix>"`, `write_<suffix>`,
+3. `write_<function>`.
 
 ## Loader protocols
 

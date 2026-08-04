@@ -27,6 +27,8 @@ every sample beneath it.
 contents. It resolves which file to read and passes a path — or an in-memory
 buffer, for zip-backed modalities — to a loader function.
 
-**Metadata drives resolution.** Loader and writer choice, modality roles and
-logging slots can all come from the index, so a dataset can describe how it
-should be read.
+**The dataset-head contract drives resolution.** Each modality can declare an
+`addons.euler_loading` entry in `.ds_crawler/dataset-head.json`. Its `loader`
+and `function` fields select the built-in reader, while the same addon can
+describe writer choice, modality roles and logging slots. See
+[Automatic loader resolution](loaders.md#automatic-loader-resolution).

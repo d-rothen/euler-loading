@@ -61,6 +61,29 @@ class TestWriterResolution:
         module = resolve_writer_module("vkitti2")
         assert module.__name__ == "euler_loading.loaders.gpu.vkitti2"
 
+    def test_auto_resolves_from_dataset_head_addon(self):
+        index = _flat_index("png", ["f001"])
+        index["head"] = {
+            "contract": {"kind": "dataset_head", "version": "1.0"},
+            "dataset": {"id": "vkitti2_rgb", "name": "Virtual KITTI 2 RGB"},
+            "modality": {"key": "rgb", "meta": {"range": [0, 255]}},
+            "addons": {
+                "euler_loading": {
+                    "version": "1.0",
+                    "loader": "vkitti2",
+                    "function": "rgb",
+                }
+            },
+        }
+        with patch(
+            "euler_loading.dataset.index_dataset_from_path",
+            return_value=index,
+        ):
+            ds = MultiModalDataset(modalities={"rgb": Modality("/data/rgb")})
+
+        assert ds._resolved_loaders["rgb"] is gpu_vkitti2.rgb
+        assert ds.get_writer("rgb") is gpu_vkitti2.write_rgb
+
     def test_auto_resolves_writer_from_loader_metadata(self):
         index = _flat_index(
             "png",

@@ -34,7 +34,8 @@ flowchart LR
 
 It never interprets file contents. It resolves *which* file to load and hands
 the path — or an in-memory buffer, for zip-backed modalities — to a loader
-function, which you supply or let euler-loading resolve from the index.
+function, which you supply or let euler-loading resolve from the dataset's
+`dataset-head.json` contract.
 
 ## Install
 
@@ -75,8 +76,54 @@ Drop it straight into a `DataLoader` — it is a standard `torch.utils.data.Data
 loader = DataLoader(dataset, batch_size=16, num_workers=4, pin_memory=True)
 ```
 
-Omit `loader=` entirely and euler-loading resolves the right function from the
-ds-crawler index. See [Automatic loader resolution](docs/loaders.md#automatic-loader-resolution).
+## Automatic loader resolution
+
+Omit `loader=` and euler-loading resolves the loader declared by that
+modality's ds-crawler dataset contract:
+
+```python
+dataset = MultiModalDataset(
+    modalities={
+        "rgb": Modality("/data/vkitti2/rgb", split="train"),
+    },
+)
+```
+
+The modality root must contain `.ds_crawler/dataset-head.json` (or the scoped
+equivalent) with a named `euler_loading` entry in its `addons` object. A minimal
+RGB contract looks like this:
+
+```json
+{
+  "contract": {
+    "kind": "dataset_head",
+    "version": "1.0"
+  },
+  "dataset": {
+    "id": "vkitti2_rgb",
+    "name": "Virtual KITTI 2 RGB"
+  },
+  "modality": {
+    "key": "rgb",
+    "meta": {
+      "range": [0, 255]
+    }
+  },
+  "addons": {
+    "euler_loading": {
+      "version": "1.0",
+      "loader": "vkitti2",
+      "function": "rgb"
+    }
+  }
+}
+```
+
+`loader` selects a built-in loader module and `function` selects the callable
+inside it. Automatic resolution uses the GPU variant; pass a loader explicitly
+when you want the CPU variant or a custom callable. See
+[Automatic loader resolution](docs/loaders.md#automatic-loader-resolution) for
+the full contract and writer rules.
 
 ## What you get
 
@@ -87,7 +134,7 @@ ds-crawler index. See [Automatic loader resolution](docs/loaders.md#automatic-lo
 | **Zip-native** | Point a modality at a `.zip` and files are read from the archive without extraction. One handle per worker. |
 | **Splits** | `Modality(path, split="train")` overlays a ds-crawler inline split on the canonical index. |
 | **Scoped metadata** | Several logical modalities can share one physical root or archive via `metadata_scope`. |
-| **Loader resolution** | Loaders and writers can be resolved from index metadata, so datasets describe how to read themselves. |
+| **Loader resolution** | Loaders and writers resolve from the `dataset-head.json` `addons.euler_loading` contract, so datasets describe how to read themselves. |
 | **Writing back** | Resolved writers put inference outputs back in dataset-native formats, re-indexable with matching IDs. |
 | **Spatial preprocessing** | `SamplePreprocessor` resizes and crops consistently across images, depth, masks, ray maps *and* intrinsics. |
 

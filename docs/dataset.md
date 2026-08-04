@@ -25,8 +25,8 @@ Modality(path, *, loader=None, writer=None, split=None, metadata_scope=None, ...
 |---|---|---|
 | `path` | `str` | Path to the modality root directory or `.zip` archive. Must carry ds-crawler metadata, either at `.ds_crawler/` or under the configured `metadata_scope`. Inline selectors are accepted: `/data/ds.zip:train`, `/data/ds.zip#scope=rgb`, `/data/ds.zip:train#scope=rgb`. |
 | `origin_path` | `str \| None` | Original path before copying or symlinking (e.g. for SLURM staging). Unused by euler-loading — carried through so experiment logs can reference the original location. |
-| `loader` | `Callable \| None` | Receives the file path (or a `BinaryIO` buffer for zip-backed modalities) and an optional `meta` dict. When `None`, resolved from the ds-crawler index — see [Automatic loader resolution](loaders.md#automatic-loader-resolution). |
-| `writer` | `Callable \| None` | Receives `(path, value, meta)`. When `None`, euler-loading tries to resolve a built-in writer from ds-crawler metadata. See [Writing outputs](writing.md). |
+| `loader` | `Callable \| None` | Receives the file path (or a `BinaryIO` buffer for zip-backed modalities) and an optional `meta` dict. When `None`, resolved from `dataset-head.json` `addons.euler_loading` — see [Automatic loader resolution](loaders.md#automatic-loader-resolution). |
+| `writer` | `Callable \| None` | Receives `(path, value, meta)`. When `None`, euler-loading tries to resolve a built-in writer from the same `addons.euler_loading` contract. See [Writing outputs](writing.md). |
 | `used_as` | `str \| None` | Experiment role: `input`, `target`, `condition` or `output`. |
 | `slot` | `str \| None` | Fully-qualified logging slot, e.g. `dehaze.input.rgb`. |
 | `modality_type` | `str \| None` | Modality type override, e.g. `rgb`, `depth`. Also used as a hint by [`SamplePreprocessor`](preprocessing.md). |
@@ -36,12 +36,14 @@ Modality(path, *, loader=None, writer=None, split=None, metadata_scope=None, ...
 | `metadata_scope` | `str \| None` | Namespace below `.ds_crawler`, e.g. `.ds_crawler/camera_extrinsics/index.json`. See [Scoped ds-crawler metadata](#scoped-ds-crawler-metadata). |
 | `cache` | `bool \| None` | In-memory caching of decoded values. Only meaningful for hierarchical modalities — regular modalities are never cached. `None` (default) means hierarchical modalities cache, because small shared calibration files benefit. |
 | `collapse_single` | `bool` | Hierarchical modalities only. When `True` and exactly one hierarchical file matches, the loaded value is returned directly instead of `{file_id: value}`. |
-| `metadata` | `dict[str, Any]` | Arbitrary metadata. Keys under `metadata["euler_loading"]` are treated as euler-loading defaults. |
+| `metadata` | `dict[str, Any]` | Arbitrary per-instance metadata. Semantic fields under `metadata["euler_loading"]` act as defaults for roles and run logging; automatic loader resolution comes from the dataset-head addon. |
 
-`used_as`, `slot`, `modality_type`, `hierarchy_scope` and `applies_to` are
-resolved in this order: explicit `Modality` field →
-`Modality.metadata["euler_loading"]` → ds-crawler config
-`properties["euler_loading"]` → heuristics.
+`used_as`, `slot`, `hierarchy_scope` and `applies_to` are resolved in this
+order: explicit `Modality` field → `Modality.metadata["euler_loading"]` →
+`dataset-head.json` `addons.euler_loading` (surfaced by ds-crawler as config
+properties) → heuristics. For `modality_type`, the canonical contract value is
+`dataset-head.json` `modality.key`; a legacy namespaced `modality_type` is still
+honoured before that value and the naming heuristics.
 
 ## `MultiModalDataset`
 
@@ -163,8 +165,9 @@ dataset = MultiModalDataset(
 Path-only callers can use the colon form: `Modality("/data/rgb:train")`.
 
 This works for directory- and zip-backed modalities alike. The split file only
-replaces the `dataset` payload — top-level metadata such as dataset type and
-loader hints still come from the canonical ds-crawler index.
+replaces the `dataset` payload — the canonical dataset-head contract, including
+its `addons.euler_loading` loader declaration, still comes from the full
+ds-crawler index.
 
 ## Scoped ds-crawler metadata
 
