@@ -12,4 +12,7 @@ Available submodules:
 - :mod:`euler_loading.loaders.cpu.muses` — MUSES
 - :mod:`euler_loading.loaders.cpu.princeton_dense` — Princeton DENSE /
   SeeingThroughFog
+- :mod:`euler_loading.loaders.cpu.generic` — format-agnostic NumPy modalities
+- :mod:`euler_loading.loaders.cpu.generic_dense_depth` — format-agnostic
+  dense-depth modalities
 """

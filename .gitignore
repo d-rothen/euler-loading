@@ -1,2 +1,44 @@
-__pycache__
-.vscode
+# Byte-compiled / optimized
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Test / coverage artifacts
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+.tox/
+.nox/
+
+# Type checkers / linters
+.mypy_cache/
+.ruff_cache/
+.pytype/
+
+# Editors and OS cruft
+.vscode/
+.idea/
+.DS_Store
+
+# Local agent / assistant scratch (never part of a release)
+.claude/
+.ao-mcp/
+.ao-provider-auth/
+CLAUDE.md
+TASK.md
+
+# uv
+uv.lock

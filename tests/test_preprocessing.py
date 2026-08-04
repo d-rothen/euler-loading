@@ -6,7 +6,6 @@ import logging
 from unittest.mock import patch
 
 import numpy as np
-import pytest
 import torch
 
 from euler_loading import MaskedValueOverride, Modality, MultiModalDataset

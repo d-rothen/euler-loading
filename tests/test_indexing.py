@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from euler_loading.indexing import (
-    FileRecord,
     collect_files,
     collect_hierarchical_files,
     match_hierarchical_files,

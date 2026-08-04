@@ -19,16 +19,17 @@ Usage::
     # Default (GPU) – backward-compatible shorthand
     from euler_loading.loaders import vkitti2
 
-Available submodules:
+Every submodule exists under both ``gpu`` and ``cpu``:
 
-- :mod:`euler_loading.loaders.gpu.vkitti2` — Virtual KITTI 2 (torch)
-- :mod:`euler_loading.loaders.cpu.vkitti2` — Virtual KITTI 2 (numpy)
-- :mod:`euler_loading.loaders.gpu.real_drive_sim` — Real Drive Sim (torch)
-- :mod:`euler_loading.loaders.cpu.real_drive_sim` — Real Drive Sim (numpy)
-- :mod:`euler_loading.loaders.gpu.muses` — MUSES (torch)
-- :mod:`euler_loading.loaders.cpu.muses` — MUSES (numpy)
-- :mod:`euler_loading.loaders.gpu.princeton_dense` — Princeton DENSE /
-  SeeingThroughFog (torch)
-- :mod:`euler_loading.loaders.cpu.princeton_dense` — Princeton DENSE /
-  SeeingThroughFog (numpy)
+- ``vkitti2`` — Virtual KITTI 2
+- ``real_drive_sim`` — Real Drive Sim
+- ``muses`` — MUSES
+- ``princeton_dense`` — Princeton DENSE / SeeingThroughFog
+- ``generic`` — format-agnostic NumPy modalities
+- ``generic_dense_depth`` — format-agnostic dense-depth modalities
+
+``euler_loading/loaders/generate/loaders.json`` is the machine-readable
+inventory of every annotated loader function, its output shape per variant,
+dtype, unit and accepted file formats. Regenerate it with
+``./gen_loaders.sh`` after adding or changing a loader.
 """

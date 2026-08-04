@@ -1,12 +1,18 @@
 """Tests for real on-disk datasets — run on demand with ``pytest -m real``.
 
+These tests are deselected by default and never run in CI. To run them, point
+the relevant environment variable at your local copy of the dataset::
+
+    export VKITTI2_ROOT=/path/to/vkitti2
+    pytest -m real
+
 Each entry in :data:`REAL_DATASETS` defines a complete configuration for a
 :class:`~euler_loading.MultiModalDataset`.  Add or modify entries to cover
 additional databases — the test suite parametrises over every *configured*
 entry automatically.
 
-Entries whose ``modalities`` dict is empty are silently skipped so that
-unconfigured stubs never cause failures.
+Entries whose ``modalities`` dict is empty are silently skipped, so a dataset
+whose environment variable is unset never causes a failure.
 """
 
 from __future__ import annotations
@@ -21,25 +27,39 @@ from euler_loading.loaders import vkitti2
 
 
 # ---------------------------------------------------------------------------
-# Dataset configurations  (stubs — fill in per database)
+# Dataset configurations
 # ---------------------------------------------------------------------------
 #
 # Each value is a dict with the keys accepted by ``MultiModalDataset``:
 #
-#   modalities                : dict[str, Modality]                       — REQUIRED
+#   modalities                : dict[str, Modality]                      — REQUIRED
 #   hierarchical_modalities   : dict[str, Modality] | None               — optional
-#   transforms                : list[Callable[[dict], dict]] | None       — optional
+#   transforms                : list[Callable[[dict], dict]] | None      — optional
 #
-# Leave ``modalities`` empty (``{}``) for databases that are not yet wired up;
-# those entries are silently skipped by the test suite.
+# Leave ``modalities`` empty (``{}``) for databases that are not wired up on
+# this machine; those entries are silently skipped by the test suite.
+
+VKITTI2_ROOT = os.environ.get("VKITTI2_ROOT")
+
+
+def _vkitti2_modalities() -> dict[str, Modality]:
+    """Build the VKITTI2 modality set, or an empty dict when unconfigured."""
+    if not VKITTI2_ROOT:
+        return {}
+    root = VKITTI2_ROOT.rstrip("/")
+    return {
+        "rgb": Modality(f"{root}/vkitti_2.0.3_rgb", loader=vkitti2.rgb),
+        "depth": Modality(f"{root}/vkitti_2.0.3_depth", loader=vkitti2.depth),
+        "classSegmentation": Modality(
+            f"{root}/vkitti_2.0.3_classSegmentation",
+            loader=vkitti2.class_segmentation,
+        ),
+    }
+
 
 REAL_DATASETS: dict[str, dict[str, Any]] = {
     "VKITTI2": {
-        "modalities": {
-            "rgb":   Modality("/Volumes/Volume/Datasets/vkitti2/vkitti_2.0.3_rgb",   loader=vkitti2.rgb),
-            "depth": Modality("/Volumes/Volume/Datasets/vkitti2/vkitti_2.0.3_depth", loader=vkitti2.depth),
-            "classSegmentation": Modality("/Volumes/Volume/Datasets/vkitti2/vkitti_2.0.3_classSegmentation", loader=vkitti2.class_segmentation),
-        },
+        "modalities": _vkitti2_modalities(),
         "hierarchical_modalities": None,
         "transforms": None,
     },
@@ -196,12 +216,13 @@ class TestRealBoundaryAccess:
 class TestRealFullIteration:
     """Every sample in the dataset can be loaded without error."""
 
-    def log_first_example(self, real_dataset):
+    @staticmethod
+    def log_first_example(real_dataset):
+        """Print the first sample's key/type map (visible with ``pytest -s``)."""
         sample = real_dataset[0]
         print("First sample keys:", list(sample.keys()))
-        #print object
-        for k, v in sample.items():
-            print(f"  {k}: {type(v)}")
+        for key, value in sample.items():
+            print(f"  {key}: {type(value)}")
 
     def test_iterate_all_samples(self, real_dataset, real_config):
         modality_names = list(real_config["modalities"])

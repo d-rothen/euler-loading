@@ -129,12 +129,6 @@ def parse_modality_path(path: str) -> tuple[str, str | None, str | None]:
     return parsed_path, split, metadata_scope
 
 
-def parse_path_with_split(path: str) -> tuple[str, str | None]:
-    """Extract an optional inline split suffix from a colon-separated path."""
-    parsed_path, split, _ = parse_modality_path(path)
-    return parsed_path, split
-
-
 def _read_metadata_json_safe(
     dataset_path: Path,
     filename: str,
