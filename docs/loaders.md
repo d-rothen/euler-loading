@@ -185,6 +185,51 @@ annotations on the loader functions themselves.
 
 Writers exist for every modality above.
 
+### Synscapes — `synscapes`
+
+| Function | Shape | dtype | Notes |
+|---|---|---|---|
+| `rgb` | CHW / HWC | float32 | `img/rgb/<id>.png`, normalised to `[0, 1]` |
+| `depth` | 1HW / HW | float32 | `img/depth/<id>.exr`, `Z` channel, planar depth in metres |
+| `class_segmentation` | 1HW / HW | int64 | `img/class/<id>.png`, original Cityscapes label IDs |
+| `instance_segmentation` | 1HW / HW | int64 | `img/instance/<id>.png`, decoded as `R + 256 * G + 65536 * B` |
+| `sky_mask` | 1HW / HW | bool | Sky label ID `23` in `img/class/<id>.png` |
+| `read_intrinsics` | 3×3 | float32 | `camera.intrinsic` from `meta/<id>.json`: `fx`, `fy`, `u0`, `v0` |
+
+Formats follow the [Synscapes dataset reference](https://synscapes.on.liu.se/features.html)
+and [FoggySynscapes EXR reader](https://github.com/MartinHahner/FoggySynscapes/blob/main/source/Depth_processing/exr_to_mat.py).
+Depth values are already in metres, so they are returned unchanged, including
+non-finite values. Semantic labels retain the original IDs, including void
+labels, without remapping to training IDs.
+
+EXR loading needs the optional OpenEXR dependency:
+
+```bash
+pip install "euler-loading[gpu,synscapes]"  # omit gpu for NumPy-only use
+```
+
+RGB, segmentation and intrinsics work without OpenEXR. All six functions
+accept paths and binary streams. Intrinsics are stored in per-image files,
+so the native `meta` directory is a regular modality:
+
+```python
+from euler_loading import Modality, MultiModalDataset
+from euler_loading.loaders.gpu import synscapes  # or loaders.cpu for NumPy
+
+dataset = MultiModalDataset(modalities={
+    "rgb": Modality("/data/Synscapes/img/rgb", loader=synscapes.rgb),
+    "depth": Modality("/data/Synscapes/img/depth", loader=synscapes.depth),
+    "segmentation": Modality("/data/Synscapes/img/class", loader=synscapes.class_segmentation),
+    "intrinsics": Modality("/data/Synscapes/meta", loader=synscapes.read_intrinsics),
+})
+```
+
+Automatic resolution uses `loader="synscapes"` in the dataset contract.
+Intrinsics describe the metadata's image resolution (native 1440×720).
+When using `img/rgb-2k` at 2048×1024, scale the camera matrix with
+[`resize_intrinsics`](preprocessing.md) and align the other modalities to the
+same resolution. Loaders preserve the stored resolution.
+
 ### MUSES — `muses`
 
 | Function | Shape | dtype | Notes |

@@ -52,6 +52,10 @@ pip install "euler-loading[gpu]"
 Requires Python 3.9+. The `[gpu]` extra pulls in PyTorch for the tensor loaders;
 without it the package still works using the CPU (NumPy) loaders.
 
+For Synscapes EXR depth files, install `euler-loading[synscapes]` (NumPy) or
+`euler-loading[gpu,synscapes]` (tensors). See the
+[Synscapes loaders](docs/loaders.md#synscapes--synscapes) for formats and usage.
+
 ## Quick start
 
 ```python

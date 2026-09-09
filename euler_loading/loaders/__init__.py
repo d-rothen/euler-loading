@@ -22,6 +22,7 @@ Usage::
 Every submodule exists under both ``gpu`` and ``cpu``:
 
 - ``vkitti2`` — Virtual KITTI 2
+- ``synscapes`` — Synscapes
 - ``real_drive_sim`` — Real Drive Sim
 - ``muses`` — MUSES
 - ``princeton_dense`` — Princeton DENSE / SeeingThroughFog
