@@ -16,8 +16,30 @@ from .preprocessing import (
     infer_field_spec,
     resize_intrinsics,
 )
+from .transform_descriptors import (
+    ResolvedOperation,
+    ResolvedTransform,
+    SerializableTransform,
+    execution_profile,
+    export_preprocessor,
+    resolve_transform_descriptor,
+)
 
 __all__ = [
+    'CalibrationView',
+    'DatasetCapture',
+    'execute_with_receipt',
+    'replay_from_arrays',
+    'output_encoding',
+    'create_materialized_writer',
+    'write_materialized',
+
+    "ResolvedOperation",
+    "ResolvedTransform",
+    "SerializableTransform",
+    "execution_profile",
+    "export_preprocessor",
+    "resolve_transform_descriptor",
     "DenseDepthCodec",
     "DenseDepthLoader",
     "DenseDepthWriter",
@@ -36,3 +58,12 @@ __all__ = [
     "resolve_writer_module",
     "resize_intrinsics",
 ]
+
+from .materialization import create_materialized_writer, write_materialized
+from .output_encoding import output_encoding
+from .receipts import (
+    CalibrationView,
+    DatasetCapture,
+    execute_with_receipt,
+    replay_from_arrays,
+)

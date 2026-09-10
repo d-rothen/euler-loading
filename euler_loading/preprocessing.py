@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -675,33 +676,8 @@ def resize_intrinsics(
 ) -> np.ndarray | "torch.Tensor":
     """Scale pinhole intrinsics for an ``align_corners=False`` image resize."""
 
-    source_h, source_w = source_size
-    target_h, target_w = target_size
-    scale_x = float(target_w) / float(source_w)
-    scale_y = float(target_h) / float(source_h)
-
-    if _is_torch_tensor(intrinsics):
-        K = intrinsics.clone()
-    else:
-        K = np.array(intrinsics, copy=True)
-
-    if K.ndim == 2:
-        if K.shape != (3, 3):
-            raise ValueError(f"Expected intrinsics with shape (3, 3), got {tuple(K.shape)}")
-        K[0, 0] = K[0, 0] * scale_x
-        K[1, 1] = K[1, 1] * scale_y
-        K[0, 2] = (K[0, 2] + 0.5) * scale_x - 0.5
-        K[1, 2] = (K[1, 2] + 0.5) * scale_y - 0.5
-        return K
-
-    if K.ndim == 3 and K.shape[-2:] == (3, 3):
-        K[..., 0, 0] = K[..., 0, 0] * scale_x
-        K[..., 1, 1] = K[..., 1, 1] * scale_y
-        K[..., 0, 2] = (K[..., 0, 2] + 0.5) * scale_x - 0.5
-        K[..., 1, 2] = (K[..., 1, 2] + 0.5) * scale_y - 0.5
-        return K
-
-    raise ValueError(f"Expected intrinsics with shape (3, 3) or (N, 3, 3), got {tuple(K.shape)}")
+    from .geometry import resize_matrix, transform_intrinsics
+    return transform_intrinsics(intrinsics, resize_matrix(source_size, target_size))
 
 
 def crop_intrinsics(
@@ -712,24 +688,8 @@ def crop_intrinsics(
 ) -> np.ndarray | "torch.Tensor":
     """Adjust pinhole intrinsics after cropping pixels from the image border."""
 
-    if _is_torch_tensor(intrinsics):
-        K = intrinsics.clone()
-    else:
-        K = np.array(intrinsics, copy=True)
-
-    if K.ndim == 2:
-        if K.shape != (3, 3):
-            raise ValueError(f"Expected intrinsics with shape (3, 3), got {tuple(K.shape)}")
-        K[0, 2] = K[0, 2] - float(left)
-        K[1, 2] = K[1, 2] - float(top)
-        return K
-
-    if K.ndim == 3 and K.shape[-2:] == (3, 3):
-        K[..., 0, 2] = K[..., 0, 2] - float(left)
-        K[..., 1, 2] = K[..., 1, 2] - float(top)
-        return K
-
-    raise ValueError(f"Expected intrinsics with shape (3, 3) or (N, 3, 3), got {tuple(K.shape)}")
+    from .geometry import crop_matrix, transform_intrinsics
+    return transform_intrinsics(intrinsics, crop_matrix(top, left))
 
 
 def _crop_spatial_value(
@@ -758,6 +718,17 @@ class SamplePreprocessor:
     reference_field: str | None = None
     infer_fields: bool = True
     _bound_field_specs: dict[str, FieldSpec] = field(default_factory=dict, init=False, repr=False)
+    _authoring_config: dict[str, Any] | None = field(default=None, init=False, repr=False)
+
+    def export_descriptor(self, **bindings: Any) -> Any:
+        """Export a frozen Phase 1 plan; see transform_descriptors.export_preprocessor.
+
+        Requires declared source/profile/plane bindings and an explicit execution
+        profile. The legacy callable behavior is independent of this opt-in plan.
+        """
+        from .transform_descriptors import export_preprocessor
+
+        return export_preprocessor(self, **bindings)
 
     @classmethod
     def from_config(cls, cfg: Mapping[str, Any] | None) -> "SamplePreprocessor":
@@ -803,12 +774,14 @@ class SamplePreprocessor:
                         "Available operations: resize, crop"
                     )
 
-        return cls(
+        result = cls(
             operations=operations,
             field_specs=field_specs,
             reference_field=cfg.get("reference_field"),
             infer_fields=bool(cfg.get("infer_fields", True)),
         )
+        result._authoring_config = deepcopy(dict(cfg))
+        return result
 
     def bind_to_dataset(self, dataset: Any) -> None:
         """Optionally enrich field specs from dataset modality metadata."""

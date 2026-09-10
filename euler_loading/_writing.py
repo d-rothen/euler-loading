@@ -17,7 +17,6 @@ from ._ds_crawler_utils import (
 )
 from .loaders._writer_utils import supports_stream_target
 
-
 logger = logging.getLogger(__name__)
 
 _DEFAULT_WRITER_INDEX_FILENAME = "output.json"
@@ -128,6 +127,14 @@ def create_dataset_writer_from_index(
     root: str | os.PathLike[str],
     zip: bool = False,
     metadata_scope: str | None = None,
+    derivation=None,
+    field=None,
+    dataset_id=None,
+    revision=None,
+    encoding=None,
+    expected_full_ids=None,
+    resume=False,
+    capture=None,
 ) -> DatasetWriter | ZipDatasetWriter:
     """Create a ds-crawler writer that mirrors an existing index's metadata.
 
@@ -136,12 +143,38 @@ def create_dataset_writer_from_index(
     ``.ds_crawler/scopes.json`` manifest.  This is useful when several logical
     modalities share one physical output root or archive.
     """
+    if derivation is not None:
+        from .materialization import create_materialized_writer
+
+        if zip and Path(root).suffix.lower() != ".zip":
+            raise ValueError("validated ZIP output requires a .zip destination")
+        if not dataset_id or not revision or not field:
+            raise ValueError(
+                "materialization requires dataset_id, revision and selected field"
+            )
+        return create_materialized_writer(
+            index_output=index_output,
+            root=root,
+            derivation=derivation,
+            field=field,
+            dataset_id=dataset_id,
+            revision=revision,
+            encoding=encoding,
+            metadata_scope=metadata_scope,
+            expected_full_ids=expected_full_ids,
+            resume=resume,
+            capture=capture,
+        )
     indexing = index_output.get("indexing")
     hierarchy = indexing.get("hierarchy") if isinstance(indexing, Mapping) else None
     id_cfg = indexing.get("id") if isinstance(indexing, Mapping) else None
     separator = first_non_empty(
-        as_non_empty_str(hierarchy.get("separator")) if isinstance(hierarchy, Mapping) else None,
-        as_non_empty_str(id_cfg.get("join_char")) if isinstance(id_cfg, Mapping) else None,
+        as_non_empty_str(hierarchy.get("separator"))
+        if isinstance(hierarchy, Mapping)
+        else None,
+        as_non_empty_str(id_cfg.get("join_char"))
+        if isinstance(id_cfg, Mapping)
+        else None,
     )
     writer_cls = ZipDatasetWriter if zip else DatasetWriter
     try:

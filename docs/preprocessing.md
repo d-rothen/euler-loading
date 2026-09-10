@@ -1,5 +1,9 @@
 # Preprocessing & transforms
 
+The opt-in [serializable resize/crop APIs](transform-descriptors.md) freeze these
+authoring choices into validated Phase 1 descriptors. The callable path below
+retains its legacy inference and numerical behavior.
+
 - [Transforms](#transforms)
 - [`MaskedValueOverride`](#maskedvalueoverride)
 - [`SamplePreprocessor`](#samplepreprocessor)

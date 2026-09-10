@@ -4,10 +4,11 @@ import io
 import json
 import logging
 import os
-from pathlib import Path
 import zipfile
 from collections.abc import Mapping
+from copy import deepcopy
 from dataclasses import dataclass, field, replace
+from pathlib import Path
 from typing import Any, Callable
 
 try:
@@ -882,6 +883,16 @@ class MultiModalDataset(_BaseDataset):
                 modality.cache if modality.cache is not None else True
             ) else None
 
+        # Materialized histories are checked as records, never executed on load.
+        from .materialization import validate_materialized_output
+
+        for name, modality in {**self._modalities, **self._hierarchical_modalities}.items():
+            validate_materialized_output(
+                modality.path, self.get_modality_index(name),
+                metadata_scope=modality.metadata_scope,
+                subset=modality.split is not None,
+            )
+
         # -- Optional transform binding -------------------------------------
         for transform in self._transforms:
             bind = getattr(transform, "bind_to_dataset", None)
@@ -960,9 +971,9 @@ class MultiModalDataset(_BaseDataset):
     def get_modality_index(self, modality_name: str) -> dict[str, Any]:
         """Return the cached ds-crawler index for a modality."""
         if modality_name in self._modalities:
-            return dict(self._index_outputs[modality_name])
+            return deepcopy(self._index_outputs[modality_name])
         if modality_name in self._hierarchical_modalities:
-            return dict(self._hierarchical_index_outputs[modality_name])
+            return deepcopy(self._hierarchical_index_outputs[modality_name])
         raise KeyError(f"Unknown modality {modality_name!r}")
 
     def create_output_writer(
@@ -972,6 +983,12 @@ class MultiModalDataset(_BaseDataset):
         *,
         zip: bool = False,
         metadata_scope: str | None = None,
+        derivation=None,
+        dataset_id=None,
+        revision=None,
+        encoding=None,
+        expected_full_ids=None,
+        resume=False,
     ) -> DatasetWriter | ZipDatasetWriter:
         """Create a ds-crawler writer preconfigured from a modality's index.
 
@@ -988,6 +1005,14 @@ class MultiModalDataset(_BaseDataset):
             root=root,
             zip=zip,
             metadata_scope=metadata_scope,
+            derivation=derivation,
+            field=modality_name,
+            dataset_id=dataset_id,
+            revision=revision,
+            encoding=encoding,
+            expected_full_ids=expected_full_ids,
+            resume=resume,
+            capture=getattr(self, "_capture_reader", None),
         )
 
     def get_writer(self, modality_name: str) -> Callable[..., Any]:
@@ -1020,6 +1045,10 @@ class MultiModalDataset(_BaseDataset):
         *,
         create_dirs: bool = True,
         overwrite: bool = True,
+        provenance=None,
+        output_full_ids=None,
+        output_basenames=None,
+        sidecar=False,
         attributes: Mapping[str, Mapping[str, Any]] | None = None,
     ) -> dict[str, str]:
         """Write model outputs for one sample to disk or a dataset writer.
@@ -1060,11 +1089,49 @@ class MultiModalDataset(_BaseDataset):
         written_paths: dict[str, str] = {}
 
         for modality_name, value in outputs.items():
+            from ds_crawler import ValidatedDatasetWriter
+
+            from .materialization import write_materialized
+
+            destination = _resolve_output_destination(
+                output_root=output_root, modality_name=modality_name
+            )
+            if isinstance(destination, ValidatedDatasetWriter):
+                if provenance is None:
+                    raise ValueError("missing captured execution provenance")
+                if (
+                    destination.output_plan is None
+                    or destination.output_plan["field"] != modality_name
+                ):
+                    raise ValueError("writer selected output field disagrees with modality")
+                recipe = provenance["descriptor"]["recipe"]
+                source_field = (
+                    modality_name
+                    if modality_name in self._lookups
+                    else recipe["reference_field"]
+                )
+                actual_id = self.sample_full_id(sample_index, source_field)
+                binding = recipe["fields"][source_field]
+                if (
+                    provenance["execution"]["source_full_ids"][binding["source"]]
+                    != actual_id
+                ):
+                    raise ValueError(
+                        "receipt source ID disagrees with requested sample index"
+                    )
+                written_paths[modality_name] = write_materialized(
+                    destination,
+                    value,
+                    provenance,
+                    output_full_id=(output_full_ids or {}).get(modality_name, actual_id),
+                    output_basename=(output_basenames or {}).get(modality_name),
+                    attributes=(attributes or {}).get(modality_name),
+                    sidecar=sidecar,
+                )
+                continue
             if modality_name in self._lookups:
                 record = self._lookups[modality_name][sample_id]
-                modality_meta = _get_index_meta(
-                    self._index_outputs[modality_name]
-                )
+                modality_meta = _get_index_meta(self._index_outputs[modality_name])
             else:
                 raise KeyError(
                     f"Modality {modality_name!r} is not a regular "
@@ -1168,10 +1235,54 @@ class MultiModalDataset(_BaseDataset):
 
     # -- Dataset interface ---------------------------------------------------
 
+    def export_transform_plan(self, **bindings: Any) -> Any:
+        """Export the complete supported sample chain against declared inputs.
+
+        Phase 1 supports one SamplePreprocessor or one already resolved plan.
+        Per-modality and opaque sample callables remain usable through normal
+        loading, but cannot silently disappear from a serialized plan.
+        """
+        from .preprocessing import SamplePreprocessor
+        from .transform_descriptors import ResolvedTransform
+
+        for name, modality in {**self._modalities, **self._hierarchical_modalities}.items():
+            if getattr(modality, "transform", None) is not None or getattr(modality, "transforms", None):
+                raise ValueError(f"Unknown callable effects for modality {name!r}")
+        if len(self._transforms) != 1 or type(self._transforms[0]) not in {SamplePreprocessor, ResolvedTransform}:
+            raise ValueError("Export requires one supported transform and no unknown callable effects")
+        from .transform_descriptors import _check_dataset_bindings
+
+        descriptor = self._transforms[0].export_descriptor(**bindings)
+        _check_dataset_bindings(self, descriptor)
+        return descriptor
+
     def __len__(self) -> int:
         return len(self._common_ids)
 
+    def sample_full_id(self, index, modality_name=None):
+        """Actual qualified source ID, without decoding or filename inference."""
+        modality_name = modality_name or next(iter(self._lookups))
+        record = self._lookups[modality_name][self._common_ids[index]]
+        return "/" + "/".join((*record.hierarchy_path, record.file_entry["id"]))
+
+    def describe_transform_sources(self, fields, *, revisions):
+        from .receipts import describe_sources
+
+        return describe_sources(self, fields, revisions=revisions)
+
+    def enable_transform_capture(self, variants):
+        """Explicitly enable bound execution; each sample carries its own receipt."""
+        from .receipts import DatasetCapture
+
+        self._capture_reader = DatasetCapture(self, variants)
+        return self._capture_reader
+
+    def capture_sample(self, index, *, variant_id=None):
+        return self._capture_reader(index, variant_id)
+
     def __getitem__(self, index: int) -> dict[str, Any]:
+        if getattr(self, "_capture_reader", None) is not None:
+            return self._capture_reader(index)
         sample_id = self._common_ids[index]
         sample: dict[str, Any] = {}
 

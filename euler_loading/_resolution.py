@@ -19,6 +19,7 @@ logger = logging.getLogger(__name__)
 
 
 _LOADER_MODULES: dict[str, str] = {
+    "materialized": "euler_loading.loaders.materialized",
     "vkitti2": "euler_loading.loaders.gpu.vkitti2",
     "real_drive_sim": "euler_loading.loaders.gpu.real_drive_sim",
     "generic_dense_depth": "euler_loading.loaders.gpu.generic_dense_depth",
@@ -68,6 +69,22 @@ def resolve_writer_module(name: str) -> ModuleType:
     Writers live next to loader functions in the same modules.
     """
     return resolve_loader_module(name)
+
+
+def _builtin_loader_id(loader: Callable[..., Any]) -> str | None:
+    """Identify an actual supported decoder, not a callable borrowing its name."""
+    module_name = getattr(loader, "__module__", "")
+    name = getattr(loader, "__qualname__", "")
+    supported = set(_LOADER_MODULES.values())
+    supported.update(path.replace(".gpu.", ".cpu.") for path in _LOADER_MODULES.values())
+    if module_name not in supported:
+        return None
+    # Only import the installed built-in modules, never paths from a descriptor.
+    module = importlib.import_module(module_name)
+    if getattr(module, name, None) is not loader or not hasattr(loader, "_modality_meta"):
+        return None
+    # Do not unwrap decorators: their effects are not part of the built-in.
+    return f"{module_name}.{name}"
 
 
 def loader_accepts_attributes(loader: Callable[..., Any]) -> bool:

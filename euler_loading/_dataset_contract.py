@@ -4,6 +4,7 @@ from typing import Any
 
 from euler_dataset_contract import (
     register_addon_validator,
+    register_descriptor_validators,
     validate_addon_version,
     validate_slot,
     validate_string_list,
@@ -89,3 +90,4 @@ def validate_euler_loading_addon(value: Any, context: str) -> None:
 
 
 register_addon_validator("euler_loading", validate_euler_loading_addon, overwrite=True)
+register_descriptor_validators()

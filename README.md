@@ -165,6 +165,9 @@ The machine-readable version is
 
 ## Documentation
 
+- [Serializable resize/crop plans](docs/transform-descriptors.md): Phase 1 export,
+  explicit backend and calibration bindings, resolution, and output profiles.
+
 | Guide | Covers |
 |---|---|
 | [Dataset & modalities](docs/dataset.md) | `Modality` and `MultiModalDataset` reference, the sample dict, splits, scoped metadata, zip archives, layout-aware loading |
@@ -188,3 +191,5 @@ release process.
 ## License
 
 [MIT](LICENSE) © Daniel Rothenpieler
+
+See [Phase 2 materialization](docs/materialization.md) for the opt-in captured spatial workflow (2.24.0, unreleased).
