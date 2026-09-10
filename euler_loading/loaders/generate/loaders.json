@@ -797,6 +797,132 @@
             ]
         },
         {
+            "name": "synscapes",
+            "modalities": [
+                {
+                    "type": "semantic_segmentation",
+                    "function": "class_segmentation",
+                    "hierarchical": false,
+                    "dtype": "int64",
+                    "access": "key",
+                    "file_formats": [
+                        ".png"
+                    ],
+                    "meta": {
+                        "encoding": "single_channel",
+                        "label_ids": "cityscapes",
+                        "sky_class_id": 23
+                    },
+                    "cpu": {
+                        "shape": "HW"
+                    },
+                    "gpu": {
+                        "shape": "1HW"
+                    }
+                },
+                {
+                    "type": "depth",
+                    "function": "depth",
+                    "hierarchical": false,
+                    "dtype": "float32",
+                    "access": "key",
+                    "output_unit": "meters",
+                    "file_formats": [
+                        ".exr"
+                    ],
+                    "meta": {
+                        "channel": "Z",
+                        "radial_depth": false,
+                        "scale_to_meters": 1.0
+                    },
+                    "cpu": {
+                        "shape": "HW"
+                    },
+                    "gpu": {
+                        "shape": "1HW"
+                    }
+                },
+                {
+                    "type": "instance_segmentation",
+                    "function": "instance_segmentation",
+                    "hierarchical": false,
+                    "dtype": "int64",
+                    "access": "key",
+                    "file_formats": [
+                        ".png"
+                    ],
+                    "meta": {
+                        "encoding": "rgb",
+                        "id_formula": "R + 256 * G + 65536 * B"
+                    },
+                    "cpu": {
+                        "shape": "HW"
+                    },
+                    "gpu": {
+                        "shape": "1HW"
+                    }
+                },
+                {
+                    "type": "intrinsics",
+                    "function": "read_intrinsics",
+                    "hierarchical": false,
+                    "dtype": "float32",
+                    "access": "key",
+                    "file_formats": [
+                        ".json"
+                    ],
+                    "meta": {
+                        "source": "camera.intrinsic"
+                    },
+                    "cpu": {
+                        "shape": "3x3"
+                    },
+                    "gpu": {
+                        "shape": "3x3"
+                    }
+                },
+                {
+                    "type": "rgb",
+                    "function": "rgb",
+                    "hierarchical": false,
+                    "dtype": "float32",
+                    "access": "key",
+                    "output_range": [
+                        0.0,
+                        1.0
+                    ],
+                    "file_formats": [
+                        ".png"
+                    ],
+                    "cpu": {
+                        "shape": "HWC"
+                    },
+                    "gpu": {
+                        "shape": "CHW"
+                    }
+                },
+                {
+                    "type": "sky_mask",
+                    "function": "sky_mask",
+                    "hierarchical": false,
+                    "dtype": "bool",
+                    "access": "key",
+                    "file_formats": [
+                        ".png"
+                    ],
+                    "meta": {
+                        "sky_class_id": 23
+                    },
+                    "cpu": {
+                        "shape": "HW"
+                    },
+                    "gpu": {
+                        "shape": "1HW"
+                    }
+                }
+            ]
+        },
+        {
             "name": "vkitti2",
             "modalities": [
                 {

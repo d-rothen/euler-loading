@@ -21,6 +21,7 @@ logger = logging.getLogger(__name__)
 _LOADER_MODULES: dict[str, str] = {
     "materialized": "euler_loading.loaders.materialized",
     "vkitti2": "euler_loading.loaders.gpu.vkitti2",
+    "synscapes": "euler_loading.loaders.gpu.synscapes",
     "real_drive_sim": "euler_loading.loaders.gpu.real_drive_sim",
     "generic_dense_depth": "euler_loading.loaders.gpu.generic_dense_depth",
     "generic": "euler_loading.loaders.gpu.generic",

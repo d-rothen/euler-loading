@@ -38,7 +38,8 @@ dependencies = [
 
 [project.optional-dependencies]
 gpu = ["torch"]
-dev = ["pytest", "jsonschema>=4.18"]
+synscapes = ["OpenEXR>=3.2"]
+dev = ["pytest", "OpenEXR>=3.2", "jsonschema>=4.18"]
 
 [project.urls]
 Homepage = "https://github.com/d-rothen/euler-loading"
