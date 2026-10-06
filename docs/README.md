@@ -3,7 +3,7 @@
 | Guide | Covers |
 |---|---|
 | [Dataset & modalities](dataset.md) | `Modality` and `MultiModalDataset` reference, the sample dict, hierarchical modalities, splits, scoped metadata, zip archives, layout-aware loading |
-| [Loaders & writers](loaders.md) | The loader contract, per-file attributes, automatic resolution, protocols, and the full built-in loader inventory |
+| [Loaders & writers](loaders.md) | The loader contract, per-file attributes, automatic resolution, the `euler-loading` dry run, protocols, and the full built-in loader inventory |
 | [Preprocessing & transforms](preprocessing.md) | Cross-modal transforms, `SamplePreprocessor`, field kinds, calibration-aware resize and crop |
 | [Writing outputs](writing.md) | Writing predictions back in dataset-native formats and re-indexing them |
 

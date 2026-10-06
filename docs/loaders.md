@@ -7,6 +7,7 @@ that file means.
 - [The contract](#the-contract)
 - [Per-file attributes](#per-file-attributes)
 - [Automatic loader resolution](#automatic-loader-resolution)
+- [Dry-running loaders](#dry-running-loaders)
 - [Loader protocols](#loader-protocols)
 - [Built-in loaders](#built-in-loaders)
 
@@ -128,6 +129,102 @@ Writers resolve from the same `addons.euler_loading` entry, in this order:
 1. the explicit `writer_function` field,
 2. for `function: "read_<suffix>"`, `write_<suffix>`,
 3. `write_<function>`.
+
+## Dry-running loaders
+
+Resolution only pays off if the loader a dataset names can really read its
+files. Point the bundled command at a path to find out, before a training run
+depends on it:
+
+```bash
+euler-loading /data/vkitti2
+python -m euler_loading /data/vkitti2   # same thing, no console script needed
+```
+
+It takes one path — a modality root, a `.zip` archive, or a folder holding
+several of them — and for every ds-crawler artifact set below it:
+
+1. loads the index, or a named split,
+2. resolves the loader its `addons.euler_loading` entry declares,
+3. decodes a sample of the indexed files with that loader,
+4. reports the shape, dtype and value range of what came back.
+
+Nothing is written and no dataset is constructed. A modality that cannot be
+read is reported, not raised, so one broken archive does not hide the rest.
+
+```text
+euler-loading dry-run: /data/vkitti2
+loader variant: gpu (torch tensors)
+
+vkitti_2.0.3_rgb  [ok]
+  path      /data/vkitti2/vkitti_2.0.3_rgb
+  contract  vkitti2_rgb, "Virtual KITTI 2 RGB", modality key: rgb
+  loader    vkitti2.rgb -> euler_loading.loaders.gpu.vkitti2.rgb
+  writer    write_rgb
+  index     21260 files; available splits: train, val
+  decoded   1/1
+    Scene01/clone/frames/rgb/Camera_0/rgb_00000.jpg  ->  Tensor (3, 375, 1242) float32 in [0, 1]  (11.4 ms)
+
+vkitti_2.0.3_textgt  [ok]
+  path      /data/vkitti2/vkitti_2.0.3_textgt
+  contract  vkitti2_intrinsics, "Virtual KITTI 2 intrinsics", modality key: camera_intrinsics
+  loader    vkitti2.read_intrinsics -> euler_loading.loaders.gpu.vkitti2.read_intrinsics (hierarchical)
+  writer    write_intrinsics
+  index     50 files
+  decoded   1/1
+    Scene01/clone/intrinsic.txt  ->  Tensor (3, 3) float32 in [0, 725]  (0.6 ms)
+
+2 modalities checked: 2 ok, 0 failed; 2/2 files decoded
+```
+
+The exit status is 0 when every modality resolved a loader and decoded every
+file it was asked to, and 1 otherwise, so the command works as a CI step or a
+job prologue.
+
+| Flag | Effect |
+|---|---|
+| `-n, --samples N` | Files to decode per modality, spread evenly across the index (default 1). `0` resolves loaders without decoding anything. |
+| `--all` | Decode every indexed file. Slow, but checks the whole archive. |
+| `--split NAME` | Dry-run a named ds-crawler split instead of the canonical index. |
+| `--scope SCOPE` | Read `.ds_crawler/SCOPE/` only, instead of every artifact set a root carries. |
+| `--cpu` | Resolve the NumPy loaders instead of the torch ones. Works on an install without PyTorch. |
+| `--max-depth N` | Directory levels below the path to search for dataset roots (default 3). |
+| `--json` | Print the report as JSON instead of text. |
+| `-v, --verbose` | Log debug output, including a traceback for every failed load. |
+
+The path takes the same inline selectors as `Modality`, so
+`euler-loading /data/muses.zip:train#scope=rgb` checks one split of one scope.
+
+Discovery stops at the first dataset root down each branch: a directory
+carrying its own `.ds_crawler/` is checked, never descended into, so a
+dataset's own scene directories are never walked. A root with several
+metadata scopes contributes one entry per scope, labelled with the selector
+that addresses it.
+
+### Reading the report
+
+| Line | What it is telling you |
+|---|---|
+| `error loader: ... no 'addons.euler_loading' entry` | the dataset head declares no loader, so only an explicit `Modality(..., loader=...)` can read it |
+| `loader vkitti2.rgb (unresolved)` plus an `error` | the contract names a loader that is unknown, misspelled, or needs a dependency this install lacks — `--cpu` resolves the torch-free variant |
+| `decoded 0/2` with per-file `FAILED` | the files are indexed and present, but the declared loader cannot decode them |
+| `(hierarchical)` after the loader | the declared function reads per-scene data; pass that modality as `hierarchical_modalities`, not `modalities` |
+| `error index: ...` | ds-crawler could not produce an index — a missing split, an unreadable archive, or a dataset head the contract rejects |
+| a warning about shared file IDs | the modalities below the path have no file ID in common, so they cannot be intersected into one `MultiModalDataset` |
+
+The same report is available as an API, which is what the command is a thin
+shell around:
+
+```python
+from euler_loading.dry_run import dry_run
+
+report = dry_run("/data/vkitti2", samples=3)
+if not report.ok:
+    for modality in report.modalities:
+        print(modality.label, modality.errors)
+
+report.to_dict()   # the same structure --json prints
+```
 
 ## Loader protocols
 

@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- Add a dry-run command: `euler-loading <path>` (also `python -m
+  euler_loading <path>`) walks the ds-crawler artifact sets at or below one
+  folder, resolves the loader each dataset head declares in
+  `addons.euler_loading`, decodes a sample of the indexed files with it, and
+  reports shapes, dtypes and value ranges. Directories and `.zip` archives
+  are treated alike, nothing is written, and the exit status is non-zero when
+  a modality fails to resolve or decode. `euler_loading.dry_run.dry_run()`
+  exposes the same report to Python.
+- `resolve_loader_module` and `resolve_writer_module` take a
+  `variant="gpu"|"cpu"` keyword, so the CPU modules can be resolved through
+  the same contract pathway as the torch ones. This is what the dry run's
+  `--cpu` uses to check archives on a torch-free install.
 - Add `read_extrinsics` to the Synscapes loaders, building a 4x4 rigid
   transform from the six `camera.extrinsic` scalars. `transform_direction`
   and `camera_axes` select the pose, its inverse, and vehicle or optical

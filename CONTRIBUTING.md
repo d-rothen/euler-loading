@@ -57,7 +57,14 @@ layout, `cpu` returns `numpy.ndarray` in HWC.
    annotations. Commit the result — it is checked in on purpose, so consumers
    can read the loader inventory without importing torch.
 5. **Add tests** in `tests/test_loaders.py`, covering both variants.
-6. **Update [`docs/loaders.md`](docs/loaders.md)** with the new functions.
+6. **Check it against real data** with the dry run, which resolves the loader
+   the dataset's `dataset-head.json` declares and decodes files with it:
+
+   ```bash
+   euler-loading /path/to/dataset --all
+   ```
+
+7. **Update [`docs/loaders.md`](docs/loaders.md)** with the new functions.
 
 ## Style
 

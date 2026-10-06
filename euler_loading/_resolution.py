@@ -18,6 +18,10 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+#: Built-in loader variants. ``gpu`` returns torch tensors, ``cpu`` NumPy
+#: arrays; automatic resolution from a dataset contract uses ``gpu``.
+LOADER_VARIANTS = ("gpu", "cpu")
+
 _LOADER_MODULES: dict[str, str] = {
     "materialized": "euler_loading.loaders.materialized",
     "vkitti2": "euler_loading.loaders.gpu.vkitti2",
@@ -46,30 +50,45 @@ def _get_euler_loading_meta(index: Mapping[str, Any]) -> Mapping[str, Any] | Non
     return None
 
 
-def resolve_loader_module(name: str) -> ModuleType:
-    """Import and return the GPU loader module for *name*.
+def resolve_loader_module(name: str, *, variant: str = "gpu") -> ModuleType:
+    """Import and return the loader module for *name*.
 
     Example::
 
         module = resolve_loader_module("vkitti2")
         sky_fn = module.sky_mask  # get a specific function
 
+    Args:
+        name: Loader name, as declared by ``addons.euler_loading.loader``.
+        variant: ``"gpu"`` for the torch loaders (the default, and what
+            automatic resolution uses) or ``"cpu"`` for the NumPy ones.
+
     Raises:
-        ValueError: If *name* does not match any known loader.
+        ValueError: If *name* does not match any known loader, or *variant*
+            is neither ``"gpu"`` nor ``"cpu"``.
     """
+    if variant not in LOADER_VARIANTS:
+        available = ", ".join(LOADER_VARIANTS)
+        raise ValueError(
+            f"Unknown loader variant {variant!r}. Available variants: {available}"
+        )
     module_path = _LOADER_MODULES.get(name)
     if module_path is None:
         available = ", ".join(sorted(_LOADER_MODULES))
         raise ValueError(f"Unknown loader {name!r}. Available loaders: {available}")
+    if variant == "cpu":
+        # Loaders that exist in one variant only (``materialized``) are not
+        # registered under ``.gpu.`` and therefore stay as they are.
+        module_path = module_path.replace(".loaders.gpu.", ".loaders.cpu.")
     return importlib.import_module(module_path)
 
 
-def resolve_writer_module(name: str) -> ModuleType:
+def resolve_writer_module(name: str, *, variant: str = "gpu") -> ModuleType:
     """Import and return the writer module for *name*.
 
     Writers live next to loader functions in the same modules.
     """
-    return resolve_loader_module(name)
+    return resolve_loader_module(name, variant=variant)
 
 
 def _builtin_loader_id(loader: Callable[..., Any]) -> str | None:
@@ -119,8 +138,13 @@ def _resolve_loader(
     modality_name: str,
     modality: Modality,
     index: dict[str, Any],
+    variant: str = "gpu",
 ) -> Callable[..., Any]:
-    """Return the effective loader for a modality."""
+    """Return the effective loader for a modality.
+
+    An explicit ``Modality.loader`` always wins; *variant* only selects
+    between the built-in GPU and CPU modules during automatic resolution.
+    """
     if modality.loader is not None:
         return modality.loader
 
@@ -143,7 +167,7 @@ def _resolve_loader(
     module_name: str = euler_loading_meta["loader"]
     func_name: str = euler_loading_meta["function"]
 
-    module = resolve_loader_module(module_name)
+    module = resolve_loader_module(module_name, variant=variant)
 
     func = getattr(module, func_name, None)
     if func is None or not callable(func):
@@ -185,6 +209,7 @@ def _resolve_writer(
     modality_name: str,
     modality: Modality,
     index: dict[str, Any],
+    variant: str = "gpu",
 ) -> Callable[..., Any] | None:
     """Return the effective writer for a modality, if available."""
     if modality.writer is not None:
@@ -200,7 +225,7 @@ def _resolve_writer(
         return None
 
     try:
-        module = resolve_writer_module(module_name)
+        module = resolve_writer_module(module_name, variant=variant)
     except ValueError:
         logger.warning(
             "Modality '%s': cannot resolve writer module %r.",

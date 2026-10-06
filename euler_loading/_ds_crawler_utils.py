@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import io
+import zipfile
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -20,6 +22,22 @@ from ds_crawler.zip_utils import (
     read_metadata_json,
     validate_split_name,
 )
+
+
+def read_zip_member(
+    archive: zipfile.ZipFile,
+    prefix: str,
+    relative_path: str,
+) -> io.BytesIO:
+    """Read one member of a zip-backed modality into an in-memory buffer.
+
+    The buffer carries the modality-relative path as its ``name`` so loaders
+    that branch on the file extension behave the same as for a filesystem
+    path.
+    """
+    buffer = io.BytesIO(archive.read(prefix + relative_path))
+    buffer.name = relative_path
+    return buffer
 
 
 def as_non_empty_str(value: Any) -> str | None:

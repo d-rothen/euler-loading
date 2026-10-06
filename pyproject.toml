@@ -41,6 +41,9 @@ gpu = ["torch"]
 synscapes = ["OpenEXR>=3.2"]
 dev = ["pytest", "OpenEXR>=3.2", "jsonschema>=4.18"]
 
+[project.scripts]
+euler-loading = "euler_loading.cli:main"
+
 [project.urls]
 Homepage = "https://github.com/d-rothen/euler-loading"
 Repository = "https://github.com/d-rothen/euler-loading"

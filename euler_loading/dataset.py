@@ -36,6 +36,7 @@ from ._ds_crawler_utils import (
     infer_metadata_scope,
     load_index_output,
     parse_modality_path,
+    read_zip_member,
     validate_metadata_scope,
 )
 from ._metadata import _build_runlog_entry, _get_ds_crawler_descriptor
@@ -1226,12 +1227,11 @@ class MultiModalDataset(_BaseDataset):
 
     def _open_from_zip(self, name: str, modality_path: str, relative_path: str) -> io.BytesIO:
         """Read a file from a zip-backed modality into an in-memory buffer."""
-        entry_name = self._zip_prefixes[name] + relative_path
-        zf = self._get_zip_handle(modality_path)
-        data = zf.read(entry_name)
-        buf = io.BytesIO(data)
-        buf.name = relative_path
-        return buf
+        return read_zip_member(
+            self._get_zip_handle(modality_path),
+            self._zip_prefixes[name],
+            relative_path,
+        )
 
     # -- Dataset interface ---------------------------------------------------
 

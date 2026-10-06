@@ -135,6 +135,36 @@ when you want the CPU variant or a custom callable. See
 [Automatic loader resolution](docs/loaders.md#automatic-loader-resolution) for
 the full contract and writer rules.
 
+## Checking a dataset
+
+Before any of that runs, point the bundled command at a folder to see what
+euler-loading would make of it:
+
+```bash
+euler-loading /data/vkitti2
+```
+
+For every ds-crawler artifact set below that path it resolves the loader the
+dataset declares, decodes a sample of the indexed files with it, and prints
+the shape, dtype and value range that came back:
+
+```text
+vkitti_2.0.3_rgb  [ok]
+  path      /data/vkitti2/vkitti_2.0.3_rgb
+  contract  vkitti2_rgb, "Virtual KITTI 2 RGB", modality key: rgb
+  loader    vkitti2.rgb -> euler_loading.loaders.gpu.vkitti2.rgb
+  index     21260 files; available splits: train, val
+  decoded   1/1
+    Scene01/clone/frames/rgb/Camera_0/rgb_00000.jpg  ->  Tensor (3, 375, 1242) float32 in [0, 1]  (11.4 ms)
+```
+
+Nothing is written, directories and `.zip` archives are treated alike, and the
+exit status is non-zero if any modality failed to resolve or decode — so it
+also works as a CI step. `--all` decodes every file instead of a sample,
+`--cpu` checks the NumPy loaders on a torch-free install, and `--json` prints
+the same report for a machine. See
+[Dry-running loaders](docs/loaders.md#dry-running-loaders).
+
 ## What you get
 
 | | |
@@ -147,6 +177,7 @@ the full contract and writer rules.
 | **Loader resolution** | Loaders and writers resolve from the `dataset-head.json` `addons.euler_loading` contract, so datasets describe how to read themselves. |
 | **Writing back** | Resolved writers put inference outputs back in dataset-native formats, re-indexable with matching IDs. |
 | **Spatial preprocessing** | `SamplePreprocessor` resizes and crops consistently across images, depth, masks, ray maps *and* intrinsics. |
+| **Dry runs** | `euler-loading <folder>` resolves and exercises every loader a dataset declares, without writing anything. |
 
 ## Built-in loaders
 
