@@ -2,12 +2,17 @@
 
 Loaders return contiguous torch tensors: RGB is ``(3, H, W)`` float32 in
 ``[0, 1]``, depth is ``(1, H, W)`` float32 planar depth in metres, class and
-instance IDs are ``(1, H, W)`` int64, sky masks are ``(1, H, W)`` bool, and
-intrinsics are ``(3, 3)`` float32. Tensors are created on the CPU for transfer
-to the training device, as with the other GPU-oriented loaders.
+instance IDs are ``(1, H, W)`` int64, sky masks are ``(1, H, W)`` bool,
+intrinsics are ``(3, 3)`` float32 and extrinsics ``(4, 4)`` float32. Tensors
+are created on the CPU for transfer to the training device, as with the other
+GPU-oriented loaders.
 
-See :mod:`euler_loading.loaders.cpu.synscapes` for native file formats and
-the optional OpenEXR dependency required by depth loading.
+The writers are shared with the CPU module, which accepts tensors directly,
+so writing is identical from either entry point.
+
+See :mod:`euler_loading.loaders.cpu.synscapes` for native file formats, the
+extrinsics conventions, and the optional OpenEXR dependency required by depth
+loading and writing.
 """
 
 from __future__ import annotations
@@ -27,7 +32,25 @@ __all__ = [
     "instance_segmentation",
     "sky_mask",
     "read_intrinsics",
+    "read_extrinsics",
+    "write_rgb",
+    "write_depth",
+    "write_class_segmentation",
+    "write_instance_segmentation",
+    "write_sky_mask",
+    "write_intrinsics",
+    "write_extrinsics",
 ]
+
+# The writers convert tensors through ``to_numpy``, so the CPU implementations
+# are reused verbatim rather than duplicated here.
+write_rgb = _cpu.write_rgb
+write_depth = _cpu.write_depth
+write_class_segmentation = _cpu.write_class_segmentation
+write_instance_segmentation = _cpu.write_instance_segmentation
+write_sky_mask = _cpu.write_sky_mask
+write_intrinsics = _cpu.write_intrinsics
+write_extrinsics = _cpu.write_extrinsics
 
 
 @modality_meta(
@@ -144,3 +167,34 @@ def read_intrinsics(
     ``img/rgb-2k`` with :func:`~euler_loading.resize_intrinsics`.
     """
     return torch.from_numpy(_cpu.read_intrinsics(path, meta, attributes=attributes)).contiguous()
+
+
+@modality_meta(
+    modality_type="camera_extrinsics",
+    dtype="float32",
+    shape="4x4",
+    file_formats=[".json"],
+    meta={
+        "source": "camera.extrinsic",
+        "dataset": "Synscapes",
+        "angle_unit": "radians",
+        "translation_unit": "meters",
+        "ego_frame": _cpu._EGO_FRAME,
+        "rotation_order": _cpu._ROTATION_ORDER,
+        "default_transform_direction": "camera_to_ego",
+        "default_camera_axes": "vehicle",
+    },
+)
+def read_extrinsics(
+    path: Union[str, BinaryIO],
+    meta: dict[str, Any] | None = None,
+    *,
+    attributes: dict[str, Any] | None = None,
+) -> torch.Tensor:
+    """Build a ``(4, 4)`` float32 rigid transform from ``camera.extrinsic``.
+
+    Returns the camera's pose on the ego vehicle by default. Select another
+    convention with the ``transform_direction`` and ``camera_axes`` keys
+    documented on :func:`euler_loading.loaders.cpu.synscapes.read_extrinsics`.
+    """
+    return torch.from_numpy(_cpu.read_extrinsics(path, meta, attributes=attributes)).contiguous()

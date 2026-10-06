@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+- Add `read_extrinsics` to the Synscapes loaders, building a 4x4 rigid
+  transform from the six `camera.extrinsic` scalars. `transform_direction`
+  and `camera_axes` select the pose, its inverse, and vehicle or optical
+  camera axes; the assumed `Rz(yaw) @ Ry(pitch) @ Rx(roll)` order is recorded
+  in the modality metadata because the dataset does not document it.
+- Add Synscapes writers for every modality, making the loader a
+  `DenseDepthCodec`. Depth writes a float32 EXR `Z` channel and needs a
+  filesystem path; the intrinsics and extrinsics writers merge into a single
+  `meta/<id>.json`.
+- Accept the plural `camera.intrinsics` / `camera.extrinsics` spellings and
+  report missing camera fields by name instead of raising `KeyError`.
+
 ## 2.24.0 (unreleased)
 
 Add source-backed capture, strict per-output writers, explicit NPY/PNG encoding, typed calibration views and replay. Consolidate pinhole geometry and correct legacy skew scaling.

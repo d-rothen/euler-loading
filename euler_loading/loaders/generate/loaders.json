@@ -863,6 +863,32 @@
                     }
                 },
                 {
+                    "type": "camera_extrinsics",
+                    "function": "read_extrinsics",
+                    "hierarchical": false,
+                    "dtype": "float32",
+                    "access": "key",
+                    "file_formats": [
+                        ".json"
+                    ],
+                    "meta": {
+                        "source": "camera.extrinsic",
+                        "dataset": "Synscapes",
+                        "angle_unit": "radians",
+                        "translation_unit": "meters",
+                        "ego_frame": "x_forward_y_left_z_up",
+                        "rotation_order": "Rz(yaw) @ Ry(pitch) @ Rx(roll)",
+                        "default_transform_direction": "camera_to_ego",
+                        "default_camera_axes": "vehicle"
+                    },
+                    "cpu": {
+                        "shape": "4x4"
+                    },
+                    "gpu": {
+                        "shape": "4x4"
+                    }
+                },
+                {
                     "type": "intrinsics",
                     "function": "read_intrinsics",
                     "hierarchical": false,

@@ -195,6 +195,14 @@ Writers exist for every modality above.
 | `instance_segmentation` | 1HW / HW | int64 | `img/instance/<id>.png`, decoded as `R + 256 * G + 65536 * B` |
 | `sky_mask` | 1HW / HW | bool | Sky label ID `23` in `img/class/<id>.png` |
 | `read_intrinsics` | 3×3 | float32 | `camera.intrinsic` from `meta/<id>.json`: `fx`, `fy`, `u0`, `v0` |
+| `read_extrinsics` | 4×4 | float32 | `camera.extrinsic` from `meta/<id>.json`: `x`, `y`, `z`, `pitch`, `roll`, `yaw` |
+
+Writers exist for every modality above. `write_depth` needs a filesystem path
+because OpenEXR cannot write to a stream; dataset writers hand it a temporary
+file automatically, so zip outputs work unchanged. `write_sky_mask` emits a
+class image that labels sky with ID 23, and `write_intrinsics` and
+`write_extrinsics` merge into one `meta/<id>.json` rather than overwriting each
+other.
 
 Formats follow the [Synscapes dataset reference](https://synscapes.on.liu.se/features.html)
 and [FoggySynscapes EXR reader](https://github.com/MartinHahner/FoggySynscapes/blob/main/source/Depth_processing/exr_to_mat.py).
@@ -202,14 +210,14 @@ Depth values are already in metres, so they are returned unchanged, including
 non-finite values. Semantic labels retain the original IDs, including void
 labels, without remapping to training IDs.
 
-EXR loading needs the optional OpenEXR dependency:
+EXR depth loading and writing need the optional OpenEXR dependency:
 
 ```bash
 pip install "euler-loading[gpu,synscapes]"  # omit gpu for NumPy-only use
 ```
 
-RGB, segmentation and intrinsics work without OpenEXR. All six functions
-accept paths and binary streams. Intrinsics are stored in per-image files,
+RGB, segmentation, intrinsics and extrinsics work without OpenEXR; only depth
+loading and writing need it. All readers accept paths and binary streams. Intrinsics are stored in per-image files,
 so the native `meta` directory is a regular modality:
 
 ```python
@@ -223,6 +231,37 @@ dataset = MultiModalDataset(modalities={
     "intrinsics": Modality("/data/Synscapes/meta", loader=synscapes.read_intrinsics),
 })
 ```
+
+#### Extrinsics conventions
+
+Synscapes records the camera mount as six scalars — `x`, `y`, `z` in metres and
+`pitch`, `roll`, `yaw` in radians — in the ego-vehicle frame, which the dataset
+defines as x forward, y left, z up. `read_extrinsics` composes them into a
+rigid 4×4 matrix, by default the camera's pose on the vehicle
+(`X_ego = T @ X_camera`). Two keys, taken from per-file `attributes` first and
+then from `meta`, select the other useful conventions:
+
+| Key | Values | Meaning |
+|---|---|---|
+| `transform_direction` | `camera_to_ego` (default), `ego_to_camera` | Direction of the returned transform |
+| `camera_axes` | `vehicle` (default), `optical` | Camera axes: vehicle-aligned, or x right / y down / z forward |
+
+Combine `ego_to_camera` with `optical` to project ego-frame points — such as
+the 3D bounding boxes in the instance metadata — through `read_intrinsics`:
+
+```python
+T = synscapes.read_extrinsics(
+    "/data/Synscapes/meta/1.json",
+    {"transform_direction": "ego_to_camera", "camera_axes": "optical"},
+)
+```
+
+The dataset documents the six fields and the ego frame but not the order in
+which the angles compose, so the loaders apply the usual automotive
+`Rz(yaw) @ Ry(pitch) @ Rx(roll)` and record that in `loaders.json` under the
+modality's `rotation_order`. The values are constant across the released
+dataset. `write_extrinsics` reads the same two keys, so a matrix loaded with
+one set of options writes back unchanged with the same options.
 
 Automatic resolution uses `loader="synscapes"` in the dataset contract.
 Intrinsics describe the metadata's image resolution (native 1440×720).
