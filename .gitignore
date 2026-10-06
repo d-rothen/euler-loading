@@ -42,3 +42,8 @@ TASK.md
 
 # uv
 uv.lock
+
+# Stray npm lockfile. Nothing in this package is built with npm, and worktree
+# tooling rewrites its "name" field to the branch directory on every branch,
+# so tracking it produced a merge conflict on every quick-merge.
+package-lock.json
