@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 2.27.0 (unreleased)
 
 - Add a dry-run command: `euler-loading <path>` (also `python -m
   euler_loading <path>`) walks the ds-crawler artifact sets at or below one
@@ -14,6 +14,9 @@
   `variant="gpu"|"cpu"` keyword, so the CPU modules can be resolved through
   the same contract pathway as the torch ones. This is what the dry run's
   `--cpu` uses to check archives on a torch-free install.
+
+## 2.26.0
+
 - Add `read_extrinsics` to the Synscapes loaders, building a 4x4 rigid
   transform from the six `camera.extrinsic` scalars. `transform_direction`
   and `camera_axes` select the pose, its inverse, and vehicle or optical
