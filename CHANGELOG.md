@@ -10,7 +10,11 @@
 - Add Synscapes writers for every modality, making the loader a
   `DenseDepthCodec`. Depth writes a float32 EXR `Z` channel and needs a
   filesystem path; the intrinsics and extrinsics writers merge into a single
-  `meta/<id>.json`.
+  `meta/<id>.json`, replacing it in one step and keeping its permissions,
+  symlink and unmodelled fields rather than truncating it in place.
+- `sky_mask` now honours `meta['sky_class_id']`, or the same key in per-file
+  attributes, instead of hardcoding Cityscapes ID 23, so a dataset that
+  relabels sky round-trips through `write_sky_mask`.
 - Accept the plural `camera.intrinsics` / `camera.extrinsics` spellings and
   report missing camera fields by name instead of raising `KeyError`.
 

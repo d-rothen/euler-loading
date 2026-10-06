@@ -21,8 +21,11 @@ https://github.com/MartinHahner/FoggySynscapes/blob/main/source/Depth_processing
 
 from __future__ import annotations
 
+import errno
 import json
 import os
+import shutil
+import tempfile
 from typing import Any, BinaryIO, Union
 
 import numpy as np
@@ -143,11 +146,18 @@ def _rotation_from_euler(yaw: float, pitch: float, roll: float) -> np.ndarray:
 
 
 def _euler_from_rotation(R: np.ndarray) -> tuple[float, float, float]:
-    """Recover ``(yaw, pitch, roll)`` from a ``Rz @ Ry @ Rx`` rotation."""
-    # Clip guards against a rotation that is a hair outside [-1, 1] after
-    # round-tripping through float32 storage.
-    pitch = float(np.arcsin(-np.clip(R[2, 0], -1.0, 1.0)))
-    if np.isclose(abs(R[2, 0]), 1.0):
+    """Recover ``(yaw, pitch, roll)`` from a ``Rz @ Ry @ Rx`` rotation.
+
+    ``cos(pitch)`` is recovered as a magnitude rather than from
+    ``arcsin(-R[2, 0])``, which keeps the pitch accurate as the pose
+    approaches vertical and confines the degenerate branch to the poses that
+    are genuinely singular.
+    """
+    cos_pitch = float(np.hypot(R[0, 0], R[1, 0]))
+    pitch = float(np.arctan2(-R[2, 0], cos_pitch))
+    # Only a pose within float32 rounding of vertical is actually degenerate.
+    # A wider band would silently fold real yaw into roll.
+    if cos_pitch <= 1e-7:
         # Gimbal lock: yaw and roll are no longer separable, so attribute the
         # whole remaining rotation to roll and leave yaw at zero. The sign of
         # the first term follows sin(pitch), which is -R[2, 0].
@@ -158,6 +168,36 @@ def _euler_from_rotation(R: np.ndarray) -> tuple[float, float, float]:
         pitch,
         float(np.arctan2(R[2, 1], R[2, 2])),
     )
+
+
+def _select_int(
+    meta: dict[str, Any] | None,
+    attributes: dict[str, Any] | None,
+    key: str,
+    default: int,
+) -> int:
+    """Return an integer option from *attributes*, *meta*, or *default*."""
+    for source in (attributes, meta):
+        if not isinstance(source, dict):
+            continue
+        value = source.get(key)
+        if value is None:
+            continue
+        # numpy scalars are not int/float subclasses, but a label ID read off
+        # an array is a natural thing to pass.
+        if isinstance(value, bool) or not isinstance(
+            value, (int, float, np.integer, np.floating)
+        ):
+            raise ValueError(f"Synscapes {key!r} must be an integer, got {value!r}")
+        if not np.isfinite(value):
+            raise ValueError(f"Synscapes {key!r} must be finite, got {value!r}")
+        as_int = int(value)
+        if as_int != value:
+            raise ValueError(
+                f"Synscapes {key!r} must be a whole number, got {value!r}"
+            )
+        return as_int
+    return default
 
 
 def _select_option(
@@ -315,8 +355,14 @@ def sky_mask(
     *,
     attributes: dict[str, Any] | None = None,
 ) -> np.ndarray:
-    """Return ``(H, W)`` bool, true where ``img/class`` has sky label ID 23."""
-    return class_segmentation(path, meta, attributes=attributes) == _SKY_CLASS_ID
+    """Return ``(H, W)`` bool, true where ``img/class`` holds the sky label.
+
+    Cityscapes ID ``23`` is the default; ``meta['sky_class_id']``, or the same
+    key in per-file ``attributes``, selects another. :func:`write_sky_mask`
+    reads the same key, so one modality configuration round-trips.
+    """
+    sky_id = _select_int(meta, attributes, "sky_class_id", _SKY_CLASS_ID)
+    return class_segmentation(path, meta, attributes=attributes) == sky_id
 
 
 @modality_meta(
@@ -446,25 +492,92 @@ def _write_camera_json(
     One Synscapes JSON file holds both the intrinsics and the extrinsics, so
     writing to an existing file merges into it rather than dropping the other
     block. Stream targets cannot be read back, so they receive only *key*.
+
+    The replace is atomic against concurrent readers, so no one observes a
+    half-written file, and the target's permissions and symlink are preserved.
+    It is not an fsync, so an abrupt power loss can still truncate the file --
+    a later write then refuses it rather than silently discarding the rest.
+    The merge is also still a read-modify-write: writing both camera modalities
+    to one path *concurrently* can drop one of them. Write them in sequence,
+    which is what a dataset writer does.
     """
     document: dict[str, Any] = {}
     if isinstance(path, (str, os.PathLike)) and os.path.exists(path):
         try:
             existing = _load_json(path)
-        except (OSError, ValueError):
-            existing = None
-        if isinstance(existing, dict):
-            document = existing
+        except ValueError as exc:
+            raise ValueError(
+                f"Refusing to overwrite {os.fspath(path)!r}: it exists but is not "
+                f"readable JSON, so its contents cannot be preserved ({exc})."
+            ) from exc
+        if not isinstance(existing, dict):
+            raise ValueError(
+                f"Refusing to overwrite {os.fspath(path)!r}: expected a JSON "
+                f"object to merge into, found {type(existing).__name__}."
+            )
+        document = existing
 
     camera = document.get("camera")
     if not isinstance(camera, dict):
         camera = {}
-    # Replace the block being written, and drop the plural spelling so a
-    # re-read cannot pick up a stale duplicate.
-    camera[key] = payload
+    # Update the fields this writer owns and leave the rest of the block in
+    # place, so values it does not model -- the recorded resolution, say --
+    # survive a write. Drop the plural spelling so a re-read cannot pick up a
+    # stale duplicate.
+    block = camera.get(key)
+    if not isinstance(block, dict):
+        # The file may use the plural spelling the readers also accept.
+        block = camera.get(f"{key}s")
+    merged = dict(block) if isinstance(block, dict) else {}
+    merged.update(payload)
+    camera[key] = merged
     camera.pop(f"{key}s", None)
     document["camera"] = camera
-    write_json(path, document)
+
+    if not isinstance(path, (str, os.PathLike)):
+        write_json(path, document)
+        return
+    # This writer reads the file back to merge into it, so a torn file would
+    # be read by the next write. Replace it in one step instead. The temporary
+    # lands beside the target so the replace stays on one filesystem, which
+    # means the parent has to exist first.
+    ensure_parent(path)
+    # Replacing a symlink would substitute a regular file for the link and
+    # leave whatever it pointed at behind, so operate on the real file. The
+    # constant Synscapes pose makes one canonical metadata file a plausible
+    # layout.
+    target = os.path.realpath(os.fspath(path))
+    existed = os.path.exists(target)
+    # ``rename`` only needs write permission on the directory, so without this
+    # a read-only file would be replaced rather than refused.
+    if existed and not os.access(target, os.W_OK):
+        raise PermissionError(errno.EACCES, os.strerror(errno.EACCES), target)
+
+    handle, temporary = tempfile.mkstemp(
+        dir=os.path.dirname(target) or ".", suffix=".tmp"
+    )
+    try:
+        try:
+            stream = os.fdopen(handle, "w", encoding="utf-8")
+        except BaseException:
+            os.close(handle)
+            raise
+        with stream:
+            json.dump(document, stream)
+        # mkstemp creates 0600; carry over the mode the file had, or the one a
+        # plain open() would have produced, so a written dataset stays as
+        # readable as the rest of it.
+        if existed:
+            shutil.copymode(target, temporary)
+        else:
+            umask = os.umask(0o077)
+            os.umask(umask)
+            os.chmod(temporary, 0o666 & ~umask)
+        os.replace(temporary, target)
+    except BaseException:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+        raise
 
 
 @mark_stream_supported
@@ -502,6 +615,10 @@ def write_depth(path: Union[str, BinaryIO], value: Any, meta: dict[str, Any] | N
     ensure_parent(path)
     arr = np.ascontiguousarray(to_hw(value, name="depth"), dtype=np.float32)
     height, width = arr.shape
+    if not arr.size:
+        # OpenEXR rejects a zero-sized display window by aborting the process
+        # from C++, which no caller can catch.
+        raise ValueError(f"cannot write empty image, got shape {arr.shape}")
     header = OpenEXR.Header(width, height)
     header["channels"] = {"Z": Imath.Channel(Imath.PixelType(Imath.PixelType.FLOAT))}
     output = OpenEXR.OutputFile(os.fspath(path), header)
@@ -559,9 +676,8 @@ def write_sky_mask(path: Union[str, BinaryIO], value: Any, meta: dict[str, Any] 
     IDs with ``meta['sky_class_id']`` and ``meta['non_sky_class_id']``.
     """
     mask = to_bool_mask(value)
-    options = meta or {}
-    sky_id = int(options.get("sky_class_id", _SKY_CLASS_ID))
-    non_sky_id = int(options.get("non_sky_class_id", 0))
+    sky_id = _select_int(meta, None, "sky_class_id", _SKY_CLASS_ID)
+    non_sky_id = _select_int(meta, None, "non_sky_class_id", 0)
     labels = np.where(mask, sky_id, non_sky_id).astype(np.int64)
     _save_label_png(path, labels, "sky_mask")
 
@@ -571,11 +687,19 @@ def write_intrinsics(path: Union[str, BinaryIO], value: Any, meta: dict[str, Any
     """Write a ``(3, 3)`` camera matrix to ``camera.intrinsic`` JSON.
 
     ``meta['resx']`` and ``meta['resy']`` are recorded alongside the matrix
-    when given, matching the resolution fields Synscapes stores.
+    when given, matching the resolution fields Synscapes stores. Fields this
+    writer does not model are preserved, so writing a **rescaled** matrix into
+    an existing file without supplying the new resolution leaves the old
+    ``resx``/``resy`` in place and describing the wrong image. Pass them
+    whenever the matrix no longer matches the file's recorded resolution.
     """
     K = to_numpy(value).astype(np.float64)
     if K.shape != (3, 3):
         raise ValueError(f"intrinsics must have shape (3, 3), got {K.shape}")
+    # A non-finite entry would serialise as a bare NaN/Infinity token, which
+    # is not valid JSON and which strict parsers reject.
+    if not np.all(np.isfinite(K)):
+        raise ValueError("intrinsics must be finite")
 
     payload: dict[str, float] = {
         "fx": float(K[0, 0]),
@@ -601,6 +725,22 @@ def write_extrinsics(path: Union[str, BinaryIO], value: Any, meta: dict[str, Any
     T = to_numpy(value).astype(np.float64)
     if T.shape != (4, 4):
         raise ValueError(f"extrinsics must have shape (4, 4), got {T.shape}")
+
+    # Six Euler scalars can only describe a rigid transform, so anything else
+    # -- a scale, a shear, a non-finite entry, a projective bottom row --
+    # would be silently dropped on the way out. The tolerance absorbs a matrix
+    # that has been through float32 storage.
+    if not np.all(np.isfinite(T)):
+        raise ValueError("extrinsics must be finite")
+    if not np.allclose(T[3], [0.0, 0.0, 0.0, 1.0], atol=1e-5):
+        raise ValueError(f"extrinsics must be rigid; bottom row is {T[3].tolist()}")
+    if not np.allclose(T[:3, :3] @ T[:3, :3].T, np.eye(3), atol=1e-5):
+        raise ValueError(
+            "extrinsics rotation must be orthonormal; a scaled, sheared or "
+            "mirrored transform cannot be stored as pitch/roll/yaw"
+        )
+    if np.linalg.det(T[:3, :3]) <= 0.0:
+        raise ValueError("extrinsics rotation must be right-handed (det > 0)")
 
     direction = _select_option(
         meta, None, "transform_direction", "camera_to_ego", _TRANSFORM_DIRECTIONS

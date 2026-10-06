@@ -5,7 +5,9 @@ from __future__ import annotations
 import importlib
 import io
 import json
+import os
 from pathlib import Path
+import stat
 import subprocess
 import sys
 import zipfile
@@ -659,3 +661,289 @@ def test_dataset_auto_resolves_synscapes_writers(monkeypatch, function, writer):
 
     assert dataset._resolved_loaders["modality"] is getattr(gpu_synscapes, function)
     assert dataset.get_writer("modality") is getattr(gpu_synscapes, writer)
+
+
+def test_depth_writes_into_a_zip_dataset_through_a_temp_file(tmp_path, monkeypatch):
+    """EXR writing is not stream-capable, so zip output must use a temp file.
+
+    This exercises the whole path: read the source EXR, write the result into a
+    zip-backed output dataset, and decode it again from the archive.
+    """
+    source = tmp_path / "src"
+    (source / "scene").mkdir(parents=True)
+    values = np.array([[1.5, 2.5], [np.inf, np.nan]], dtype=np.float32)
+    cpu_synscapes.write_depth(str(source / "scene" / "f001.exr"), values)
+
+    index = {
+        "name": "depth",
+        "type": "depth",
+        "euler_train": {"used_as": "input", "modality_type": "depth"},
+        "euler_loading": {"loader": "synscapes", "function": "depth"},
+        "head": {
+            "contract": {"kind": "dataset_head", "version": "1.0"},
+            "dataset": {"id": "synscapes_depth", "name": "Synscapes depth"},
+            "modality": {
+                "key": "depth",
+                "meta": {"radial_depth": False, "range": [0, 1000], "scale_to_meters": 1.0},
+            },
+            "addons": {
+                "euler_loading": {"version": "1.0", "loader": "synscapes", "function": "depth"}
+            },
+        },
+        "dataset": {
+            "files": [
+                {
+                    "id": "f001",
+                    "path": "scene/f001.exr",
+                    "path_properties": {},
+                    "basename_properties": {},
+                }
+            ]
+        },
+    }
+    monkeypatch.setattr(
+        "euler_loading.dataset.index_dataset_from_path",
+        lambda path, **kwargs: index,
+    )
+    dataset = MultiModalDataset(modalities={"depth": Modality(str(source))})
+
+    archive = tmp_path / "out.zip"
+    output_writer = dataset.create_output_writer("depth", archive, zip=True)
+    dataset.write_sample(0, {"depth": dataset[0]["depth"] * 2.0}, output_writer)
+    output_writer.save_index()
+
+    with zipfile.ZipFile(archive) as bundle:
+        name = next(n for n in bundle.namelist() if n.endswith(".exr"))
+        buffer = io.BytesIO(bundle.read(name))
+        buffer.name = name
+        decoded = cpu_synscapes.depth(buffer)
+
+    np.testing.assert_allclose(decoded, values * 2.0, equal_nan=True)
+
+
+# ---------------------------------------------------------------------------
+# Regressions
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("offset", [0.0, 1e-7, 1e-5, 1e-4, 4.47e-3, 1e-2])
+@pytest.mark.parametrize("sign", [1, -1])
+def test_extrinsics_roundtrip_near_vertical_keeps_yaw(loaders, tmp_path, offset, sign):
+    """A near-vertical pose must not have its yaw folded into roll.
+
+    Guarding the degenerate branch with a relative tolerance made it fire for
+    any pitch within 0.26 deg of vertical, which silently zeroed yaw and cost
+    up to half a degree of rotation.
+    """
+    extrinsic = {
+        "pitch": sign * (np.pi / 2 - offset),
+        "roll": -2.0944,
+        "yaw": -3.14159,
+        "x": 1.7,
+        "y": 0.1,
+        "z": 1.22,
+    }
+    source_meta = _meta_file(tmp_path, extrinsic=extrinsic)
+    original = loaders.read_extrinsics(source_meta)
+
+    written = tmp_path / "written.json"
+    loaders.write_extrinsics(str(written), original)
+    _assert_matrix_close(loaders.read_extrinsics(written), original)
+
+    stored = json.loads(written.read_text())["camera"]["extrinsic"]
+    if offset > 1e-7:
+        # Still separable, so the recorded angles survive rather than collapsing.
+        assert stored["yaw"] == pytest.approx(extrinsic["yaw"], abs=1e-5)
+
+
+def test_sky_mask_class_id_override_roundtrips(loaders, tmp_path):
+    """The reader must honour the class ID the writer accepts."""
+    expected = np.array([[True, False], [False, True]])
+    options = {"sky_class_id": 30}
+    path = tmp_path / "sky.png"
+    loaders.write_sky_mask(str(path), _to_native(loaders, expected, "hw"), options)
+
+    _assert_loaded(loaders.sky_mask(str(path), options), expected)
+    _assert_loaded(
+        loaders.sky_mask(str(path), {}, attributes=options), expected
+    )
+    # The default ID is a different label, so it must not match.
+    assert not _as_array(loaders.sky_mask(str(path))).any()
+
+
+def test_write_intrinsics_preserves_the_rest_of_the_metadata_file(loaders, tmp_path):
+    """Rewriting one camera block must not drop fields it does not model."""
+    path = tmp_path / "1.json"
+    path.write_text(
+        json.dumps(
+            {
+                "camera": {
+                    "intrinsic": {
+                        "fx": 1590.83, "fy": 1592.79, "u0": 771.31, "v0": 360.79,
+                        "resx": 1440, "resy": 720,
+                    },
+                    "extrinsic": _EXTRINSIC,
+                },
+                "scene": {"ego_speed": 2.0},
+                "instance": {"class": {"1": 26}},
+            }
+        ),
+        encoding="utf-8",
+    )
+    loaders.write_intrinsics(str(path), loaders.read_intrinsics(path))
+
+    document = json.loads(path.read_text())
+    assert document["scene"] == {"ego_speed": 2.0}
+    assert document["instance"] == {"class": {"1": 26}}
+    assert document["camera"]["intrinsic"]["resx"] == 1440
+    assert document["camera"]["intrinsic"]["resy"] == 720
+    assert set(document["camera"]) == {"intrinsic", "extrinsic"}
+
+
+@pytest.mark.parametrize("content", ["[1, 2, 3]", '{"camera": {"intri', '"text"'])
+def test_camera_writers_refuse_to_clobber_unreadable_metadata(loaders, tmp_path, content):
+    path = tmp_path / "existing.json"
+    path.write_text(content, encoding="utf-8")
+    with pytest.raises(ValueError, match="Refusing to overwrite"):
+        loaders.write_extrinsics(str(path), np.eye(4, dtype=np.float32))
+    assert path.read_text() == content
+
+
+def test_write_depth_rejects_an_empty_image(loaders, tmp_path):
+    """OpenEXR aborts the process on a zero-sized window, so catch it first."""
+    with pytest.raises(ValueError, match="empty image"):
+        loaders.write_depth(str(tmp_path / "empty.exr"), np.zeros((0, 0), dtype=np.float32))
+
+
+@pytest.mark.parametrize(
+    "matrix, match",
+    [
+        (np.diag([2.0, 2.0, 2.0, 1.0]), "orthonormal"),
+        (np.array([[1, .5, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]], dtype=float), "orthonormal"),
+        (np.diag([1.0, 1.0, -1.0, 1.0]), "right-handed"),
+        (np.vstack([np.eye(4)[:3], [9.0, 9.0, 9.0, 9.0]]), "bottom row"),
+        (np.where(np.eye(4) > 0, np.nan, 0.0), "finite"),
+    ],
+)
+def test_write_extrinsics_rejects_non_rigid_transforms(loaders, tmp_path, matrix, match):
+    """Six Euler scalars cannot carry a scale, shear or mirror."""
+    with pytest.raises(ValueError, match=match):
+        loaders.write_extrinsics(str(tmp_path / "bad.json"), matrix.astype(np.float32))
+
+
+def test_camera_merge_keeps_fields_written_under_the_plural_spelling(loaders, tmp_path):
+    """The merge must find the block the readers accept, not just the singular."""
+    path = tmp_path / "plural.json"
+    path.write_text(
+        json.dumps(
+            {"camera": {"intrinsics": {
+                "fx": 1.0, "fy": 2.0, "u0": 3.0, "v0": 4.0, "resx": 1440, "resy": 720}}}
+        ),
+        encoding="utf-8",
+    )
+    loaders.write_intrinsics(
+        str(path), np.array([[9, 0, 8], [0, 7, 6], [0, 0, 1]], dtype=np.float32)
+    )
+
+    camera = json.loads(path.read_text())["camera"]
+    # Normalised onto the spelling the dataset uses, without losing the rest.
+    assert set(camera) == {"intrinsic"}
+    assert camera["intrinsic"]["resx"] == 1440
+    assert camera["intrinsic"]["resy"] == 720
+    assert camera["intrinsic"]["fx"] == 9.0
+
+
+def test_class_id_options_accept_numpy_scalars_and_reject_fractions(loaders, tmp_path):
+    path = tmp_path / "sky.png"
+    mask = np.array([[True, False]])
+    loaders.write_sky_mask(str(path), mask, {"sky_class_id": np.int64(30)})
+    _assert_loaded(loaders.sky_mask(str(path), {"sky_class_id": np.int64(30)}), mask)
+    # A whole-valued float is fine; a fractional one is a mistake, not a floor.
+    _assert_loaded(loaders.sky_mask(str(path), {"sky_class_id": 30.0}), mask)
+    for bad in (30.7, -1.9):
+        with pytest.raises(ValueError, match="whole number"):
+            loaders.sky_mask(str(path), {"sky_class_id": bad})
+    for bad in (True, "30", [30]):
+        with pytest.raises(ValueError, match="must be an integer"):
+            loaders.sky_mask(str(path), {"sky_class_id": bad})
+
+
+def test_write_intrinsics_rejects_non_finite_like_write_extrinsics(loaders, tmp_path):
+    """Both camera writers must refuse values that cannot be valid JSON."""
+    with pytest.raises(ValueError, match="finite"):
+        loaders.write_intrinsics(
+            str(tmp_path / "m.json"),
+            np.array([[np.nan, 0, 1], [0, 2, 3], [0, 0, 1]], dtype=np.float32),
+        )
+
+
+def test_camera_json_write_is_atomic_and_leaves_no_residue(loaders, tmp_path):
+    path = tmp_path / "meta.json"
+    loaders.write_intrinsics(str(path), np.eye(3, dtype=np.float32))
+    loaders.write_extrinsics(str(path), np.eye(4, dtype=np.float32))
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["meta.json"]
+
+    before = path.read_text()
+    with pytest.raises(ValueError):
+        loaders.write_extrinsics(str(path), np.diag([2.0, 2.0, 2.0, 1.0]).astype(np.float32))
+    # A rejected write leaves neither a damaged file nor a stray temporary.
+    assert path.read_text() == before
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["meta.json"]
+
+
+def test_camera_json_write_preserves_file_permissions(loaders, tmp_path):
+    """Replacing via a temporary must not inherit mkstemp's private mode."""
+    umask = os.umask(0o077)
+    os.umask(umask)
+
+    fresh = tmp_path / "fresh.json"
+    loaders.write_intrinsics(str(fresh), np.eye(3, dtype=np.float32))
+    assert stat.S_IMODE(fresh.stat().st_mode) == 0o666 & ~umask
+
+    existing = tmp_path / "existing.json"
+    existing.write_text(json.dumps({"camera": {}, "scene": {"a": 1}}), encoding="utf-8")
+    existing.chmod(0o640)
+    loaders.write_extrinsics(str(existing), np.eye(4, dtype=np.float32))
+    assert stat.S_IMODE(existing.stat().st_mode) == 0o640
+    assert json.loads(existing.read_text())["scene"] == {"a": 1}
+
+
+def test_camera_json_write_follows_a_symlinked_metadata_file(loaders, tmp_path):
+    """The pose is constant across Synscapes, so one shared file is plausible."""
+    canonical = tmp_path / "canonical.json"
+    canonical.write_text(
+        json.dumps({"camera": {}, "scene": {"shared": True}}), encoding="utf-8"
+    )
+    link = tmp_path / "1.json"
+    link.symlink_to(canonical)
+
+    loaders.write_extrinsics(str(link), np.eye(4, dtype=np.float32))
+
+    assert link.is_symlink()
+    document = json.loads(canonical.read_text())
+    assert "extrinsic" in document["camera"]
+    assert document["scene"] == {"shared": True}
+
+
+@pytest.mark.skipif(os.getuid() == 0, reason="root bypasses file permissions")
+def test_camera_json_write_refuses_a_read_only_target(loaders, tmp_path):
+    """rename only needs a writable directory, so check the file itself."""
+    path = tmp_path / "ro.json"
+    path.write_text('{"scene": {"keep": 1}}', encoding="utf-8")
+    path.chmod(0o444)
+    try:
+        with pytest.raises(PermissionError):
+            loaders.write_extrinsics(str(path), np.eye(4, dtype=np.float32))
+        assert path.read_text() == '{"scene": {"keep": 1}}'
+        assert not list(tmp_path.glob("*.tmp"))
+    finally:
+        path.chmod(0o644)
+
+
+@pytest.mark.parametrize("value", [float("inf"), float("nan")])
+def test_class_id_options_report_non_finite_as_a_loader_error(loaders, tmp_path, value):
+    """A bad option must not surface as a bare int() OverflowError."""
+    path = tmp_path / "sky.png"
+    loaders.write_sky_mask(str(path), np.array([[True, False]]))
+    with pytest.raises(ValueError, match="finite"):
+        loaders.sky_mask(str(path), {"sky_class_id": value})

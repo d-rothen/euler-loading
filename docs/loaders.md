@@ -193,16 +193,26 @@ Writers exist for every modality above.
 | `depth` | 1HW / HW | float32 | `img/depth/<id>.exr`, `Z` channel, planar depth in metres |
 | `class_segmentation` | 1HW / HW | int64 | `img/class/<id>.png`, original Cityscapes label IDs |
 | `instance_segmentation` | 1HW / HW | int64 | `img/instance/<id>.png`, decoded as `R + 256 * G + 65536 * B` |
-| `sky_mask` | 1HW / HW | bool | Sky label ID `23` in `img/class/<id>.png` |
+| `sky_mask` | 1HW / HW | bool | Sky label in `img/class/<id>.png`; ID `23` by default, or `meta['sky_class_id']` |
 | `read_intrinsics` | 3×3 | float32 | `camera.intrinsic` from `meta/<id>.json`: `fx`, `fy`, `u0`, `v0` |
 | `read_extrinsics` | 4×4 | float32 | `camera.extrinsic` from `meta/<id>.json`: `x`, `y`, `z`, `pitch`, `roll`, `yaw` |
 
 Writers exist for every modality above. `write_depth` needs a filesystem path
 because OpenEXR cannot write to a stream; dataset writers hand it a temporary
 file automatically, so zip outputs work unchanged. `write_sky_mask` emits a
-class image that labels sky with ID 23, and `write_intrinsics` and
-`write_extrinsics` merge into one `meta/<id>.json` rather than overwriting each
-other.
+class image labelling sky with `meta['sky_class_id']`, default 23, and
+`write_intrinsics` and `write_extrinsics` merge into one `meta/<id>.json`
+rather than overwriting each other or the file's `scene` and `instance`
+blocks.
+
+That merge reads the file back, so it applies to filesystem destinations and
+replaces the file atomically. A zip destination is handed a fresh stream per
+modality instead, so writing both camera modalities into the **same** archive
+produces two entries with the same name, of which only the last is
+retrievable — give each modality its own output writer. Because the merge
+keeps fields it does not model, writing a rescaled matrix without passing
+`meta['resx']`/`['resy']` leaves the previous resolution in place; supply them
+whenever the matrix no longer matches the recorded resolution.
 
 Formats follow the [Synscapes dataset reference](https://synscapes.on.liu.se/features.html)
 and [FoggySynscapes EXR reader](https://github.com/MartinHahner/FoggySynscapes/blob/main/source/Depth_processing/exr_to_mat.py).

@@ -143,7 +143,11 @@ def sky_mask(
     *,
     attributes: dict[str, Any] | None = None,
 ) -> torch.Tensor:
-    """Return ``(1, H, W)`` bool, true where ``img/class`` has sky label ID 23."""
+    """Return ``(1, H, W)`` bool, true where ``img/class`` holds the sky label.
+
+    Cityscapes ID ``23`` is the default; ``meta['sky_class_id']`` or the same
+    key in per-file ``attributes`` selects another.
+    """
     arr = _cpu.sky_mask(path, meta, attributes=attributes)
     return torch.from_numpy(arr).unsqueeze(0).contiguous()
 
