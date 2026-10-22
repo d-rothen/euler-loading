@@ -16,7 +16,7 @@ Return types
 - **rgb** – ``torch.FloatTensor`` of shape ``(3, H, W)`` in ``[0, 1]``.
 - **depth** – ``torch.FloatTensor`` of shape ``(1, H, W)``.
 - **sky_mask** – ``torch.BoolTensor`` of shape ``(1, H, W)``.
-  Requires ``meta["sky_mask"]`` → ``[R, G, B]`` identifying the sky class.
+  Requires ``meta["skyclass"]`` → ``[R, G, B]`` identifying the sky class.
 - **read_intrinsics** – ``torch.FloatTensor`` of shape ``(3, 3)``.
   Ignores *path*; returns ``meta["intrinsics"]`` directly.
 
@@ -39,12 +39,12 @@ import torch
 from PIL import Image
 
 from euler_loading.loaders._annotations import modality_meta
+from euler_loading.loaders.cpu import generic_dense_depth as _cpu
 from euler_loading.loaders._writer_utils import (
     ensure_parent,
     get_target_name,
     mark_stream_supported,
     save_image,
-    to_bool_mask,
     to_hwc_rgb,
     to_hw,
     to_numpy,
@@ -143,25 +143,15 @@ def depth(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None, *, att
     dtype="bool",
     shape="1HW",
     file_formats=[".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff"],
-    requires_meta=["sky_mask"],
+    requires_meta=["skyclass"],
 )
 def sky_mask(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None, *, attributes: dict[str, Any] | None = None) -> torch.Tensor:
     """Load a sky mask as a ``(1, H, W)`` bool tensor.
 
-    Reads the file as an RGB image and compares each pixel against the sky
-    colour provided in ``meta["sky_mask"]`` (an ``[R, G, B]`` list/array).
+    Torch counterpart of :func:`euler_loading.loaders.cpu.generic_dense_depth.sky_mask`:
+    ``True`` where the image has the ``skyclass`` colour.
     """
-    if meta is None or "sky_mask" not in meta:
-        raise ValueError(
-            "sky_mask requires meta['sky_mask'] to be set to an [R, G, B] array"
-        )
-    sky_color = meta["sky_mask"]
-    arr = np.array(Image.open(path).convert("RGB"), dtype=np.uint8)
-    mask = (
-        (arr[:, :, 0] == sky_color[0])
-        & (arr[:, :, 1] == sky_color[1])
-        & (arr[:, :, 2] == sky_color[2])
-    )
+    mask = _cpu.sky_mask(path, meta, attributes=attributes)
     return torch.from_numpy(mask).unsqueeze(0).contiguous()
 
 
@@ -249,31 +239,7 @@ def write_depth(path: Union[str, BinaryIO], value: Any, meta: dict[str, Any] | N
     raise ValueError(f"Unsupported depth output extension: {ext}")
 
 
-@mark_stream_supported
-def write_sky_mask(path: Union[str, BinaryIO], value: Any, meta: dict[str, Any] | None = None) -> None:
-    """Write a sky mask using either RGB encoding or NumPy formats."""
-    ensure_parent(path)
-    ext = os.path.splitext(_get_name(path))[1].lower()
-    mask = to_bool_mask(value)
-
-    if ext in _IMAGE_EXTENSIONS:
-        sky_color_raw = (meta or {}).get("sky_mask", [255, 255, 255])
-        sky_color = np.asarray(sky_color_raw, dtype=np.uint8)
-        if sky_color.shape != (3,):
-            raise ValueError("meta['sky_mask'] must be a 3-element RGB color")
-        rgb = np.zeros(mask.shape + (3,), dtype=np.uint8)
-        rgb[mask] = sky_color
-        save_image(path, Image.fromarray(rgb, mode="RGB"))
-        return
-
-    if ext == _NPY_EXTENSION:
-        np.save(path, mask.astype(np.bool_))
-        return
-    if ext == _NPZ_EXTENSION:
-        np.savez_compressed(path, data=mask.astype(np.bool_))
-        return
-
-    raise ValueError(f"Unsupported sky-mask output extension: {ext}")
+write_sky_mask = _cpu.write_sky_mask
 
 
 @mark_stream_supported

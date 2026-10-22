@@ -16,7 +16,7 @@ Return types
 - **rgb** – ``np.ndarray`` of shape ``(H, W, 3)`` float32 in ``[0, 1]``.
 - **depth** – ``np.ndarray`` of shape ``(H, W)`` float32.
 - **sky_mask** – ``np.ndarray`` of shape ``(H, W)`` bool.
-  Requires ``meta["sky_mask"]`` → ``[R, G, B]`` identifying the sky class.
+  Requires ``meta["skyclass"]`` → ``[R, G, B]`` identifying the sky class.
 - **read_intrinsics** – ``np.ndarray`` of shape ``(3, 3)`` float32.
   Ignores *path*; returns ``meta["intrinsics"]`` directly.
 
@@ -38,6 +38,7 @@ import numpy as np
 from PIL import Image
 
 from euler_loading.loaders._annotations import modality_meta
+from euler_loading.loaders._sky import RGB, as_rgb, match_rgb, resolve_skyclass
 from euler_loading.loaders._writer_utils import (
     ensure_parent,
     get_target_name,
@@ -140,24 +141,35 @@ def depth(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None, *, att
     dtype="bool",
     shape="HW",
     file_formats=[".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff"],
-    requires_meta=["sky_mask"],
+    requires_meta=["skyclass"],
 )
 def sky_mask(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None, *, attributes: dict[str, Any] | None = None) -> np.ndarray:
     """Load a sky mask as an ``(H, W)`` bool array.
 
-    Reads the file as an RGB image and compares each pixel against the sky
-    colour provided in ``meta["sky_mask"]`` (an ``[R, G, B]`` list/array).
+    Reads the file as an RGB image and compares each pixel against the
+    ``skyclass`` colour from the file's ``attributes`` or the dataset head's
+    ``meta``. There is no default; the deprecated ``meta["sky_mask"]`` is
+    still read when no ``skyclass`` is given.
     """
-    if meta is None or "sky_mask" not in meta:
-        raise ValueError(
-            "sky_mask requires meta['sky_mask'] to be set to an [R, G, B] array"
-        )
-    sky_color = meta["sky_mask"]
-    arr = np.array(Image.open(path).convert("RGB"), dtype=np.uint8)
-    return (
-        (arr[:, :, 0] == sky_color[0])
-        & (arr[:, :, 1] == sky_color[1])
-        & (arr[:, :, 2] == sky_color[2])
+    color = _sky_color(meta, attributes, default=None)
+    with Image.open(path) as image:
+        rgb = np.array(image.convert("RGB"), dtype=np.uint8)
+    return match_rgb(rgb, color)
+
+
+def _sky_color(
+    meta: dict[str, Any] | None,
+    attributes: dict[str, Any] | None,
+    *,
+    default: RGB | None,
+) -> RGB:
+    """Return the sky colour: ``skyclass``, the deprecated ``sky_mask``, or *default*."""
+    return resolve_skyclass(
+        meta,
+        attributes,
+        loader="generic_dense_depth sky_mask",
+        default=default,
+        legacy={"sky_mask": lambda value: as_rgb(value, what="'sky_mask'")},
     )
 
 
@@ -250,12 +262,8 @@ def write_sky_mask(path: Union[str, BinaryIO], value: Any, meta: dict[str, Any] 
     mask = to_bool_mask(value)
 
     if ext in _IMAGE_EXTENSIONS:
-        sky_color_raw = (meta or {}).get("sky_mask", [255, 255, 255])
-        sky_color = np.asarray(sky_color_raw, dtype=np.uint8)
-        if sky_color.shape != (3,):
-            raise ValueError("meta['sky_mask'] must be a 3-element RGB color")
         rgb = np.zeros(mask.shape + (3,), dtype=np.uint8)
-        rgb[mask] = sky_color
+        rgb[mask] = _sky_color(meta, None, default=(255, 255, 255))
         save_image(path, Image.fromarray(rgb, mode="RGB"))
         return
 

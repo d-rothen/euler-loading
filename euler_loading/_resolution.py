@@ -142,8 +142,10 @@ def _resolve_loader(
 ) -> Callable[..., Any]:
     """Return the effective loader for a modality.
 
-    An explicit ``Modality.loader`` always wins; *variant* only selects
-    between the built-in GPU and CPU modules during automatic resolution.
+    An explicit ``Modality.loader`` always wins; ``Modality.function`` replaces
+    the dataset head's function within its loader module. *variant* only
+    selects between the built-in GPU and CPU modules during automatic
+    resolution.
     """
     if modality.loader is not None:
         return modality.loader
@@ -156,7 +158,8 @@ def _resolve_loader(
             f"'addons.euler_loading' entry."
         )
 
-    for key in ("loader", "function"):
+    required = ("loader",) if modality.function is not None else ("loader", "function")
+    for key in required:
         if key not in euler_loading_meta:
             raise ValueError(
                 f"Modality {modality_name!r}: no explicit loader provided and "
@@ -165,7 +168,7 @@ def _resolve_loader(
             )
 
     module_name: str = euler_loading_meta["loader"]
-    func_name: str = euler_loading_meta["function"]
+    func_name: str = modality.function or euler_loading_meta["function"]
 
     module = resolve_loader_module(module_name, variant=variant)
 
@@ -182,6 +185,24 @@ def _resolve_loader(
         )
 
     return func
+
+
+def describe_loader(
+    loader: Callable[..., Any],
+    *,
+    modality: Modality,
+    index: Mapping[str, Any],
+) -> str:
+    """Name the effective loader for logs, e.g. ``real_drive_sim.sky_mask``."""
+    module = getattr(loader, "__module__", None) or ""
+    name = getattr(loader, "__qualname__", None) or repr(loader)
+    label = f"{module.rsplit('.', 1)[-1]}.{name}" if module else name
+    if modality.loader is not None:
+        return f"{label} (explicit loader)"
+    declared = as_non_empty_str((_get_euler_loading_meta(index) or {}).get("function"))
+    if modality.function is not None and declared not in (None, modality.function):
+        return f"{label} (the index declares {declared!r})"
+    return label
 
 
 def _writer_name_candidates(read_function_name: str, explicit: Any) -> list[str]:
@@ -220,7 +241,9 @@ def _resolve_writer(
         return None
 
     module_name = as_non_empty_str(euler_loading_meta.get("loader"))
-    read_function_name = as_non_empty_str(euler_loading_meta.get("function"))
+    read_function_name = as_non_empty_str(
+        modality.function or euler_loading_meta.get("function")
+    )
     if module_name is None or read_function_name is None:
         return None
 
@@ -234,9 +257,12 @@ def _resolve_writer(
         )
         return None
 
+    # The head's writer_function pairs with its own function, not an override.
     writer_names = _writer_name_candidates(
         read_function_name,
-        euler_loading_meta.get("writer_function"),
+        None
+        if modality.function is not None
+        else euler_loading_meta.get("writer_function"),
     )
     for writer_name in writer_names:
         writer = getattr(module, writer_name, None)

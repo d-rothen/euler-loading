@@ -13,6 +13,8 @@ Return types
 - **map_2d** / **scattering_coefficient** -- ``torch.FloatTensor`` of shape ``(H, W)``.
 - **semantic_segmentation** / **instance_segmentation** -- integer
   ``torch.Tensor`` of shape ``(H, W)``.
+- **sky_mask** -- bool ``torch.BoolTensor`` of shape ``(1, H, W)``, where the class-id map holds the
+  dataset head's ``skyclass`` label.
 - **map_3d** / **atmospheric_light** -- ``torch.FloatTensor`` of shape ``(C, H, W)``.
 - **points_3d** -- ``torch.FloatTensor`` of shape ``(3, H, W)``.
 - **spherical_map** -- ``torch.FloatTensor`` of shape ``(C, H, W)``.
@@ -41,6 +43,7 @@ import numpy as np
 import torch
 
 from euler_loading.loaders._annotations import modality_meta
+from euler_loading.loaders.cpu import generic as _cpu
 from euler_loading.loaders._writer_utils import (
     ensure_parent,
     get_target_name,
@@ -143,6 +146,19 @@ def map_2d(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None, *, at
 def semantic_segmentation(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None, *, attributes: dict[str, Any] | None = None) -> torch.Tensor:
     """Load an HW uint8 class-id map; 255 is the standardized void id."""
     return torch.from_numpy(_load_label_map(path, np.dtype(np.uint8))).contiguous()
+
+
+@modality_meta(
+    modality_type="sky_mask",
+    dtype="bool",
+    shape="1HW",
+    file_formats=[".npy", ".npz"],
+    requires_meta=["skyclass"],
+)
+def sky_mask(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None, *, attributes: dict[str, Any] | None = None) -> torch.Tensor:
+    """Torch counterpart of :func:`euler_loading.loaders.cpu.generic.sky_mask`, ``(1, H, W)``."""
+    mask = _cpu.sky_mask(path, meta, attributes=attributes)
+    return torch.from_numpy(mask).unsqueeze(0).contiguous()
 
 
 @modality_meta(

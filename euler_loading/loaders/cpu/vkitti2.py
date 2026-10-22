@@ -13,7 +13,8 @@ Return types
 - **instance_segmentation** – ``np.ndarray`` of shape ``(H, W, 3)`` int64
   (RGB-encoded instance labels).
 - **sky_mask** – ``np.ndarray`` of shape ``(H, W)`` bool
-  (``True`` where the pixel is sky, i.e. RGB ``(90, 200, 255)``).
+  (``True`` where the pixel has the dataset head's ``skyclass`` colour,
+  RGB ``(90, 200, 255)`` by default).
 - **scene_flow** – ``np.ndarray`` of shape ``(H, W, 3)`` float32 in ``[0, 1]``.
 - **read_intrinsics** – ``np.ndarray`` of shape ``(3, 3)`` float32
   (the camera intrinsic matrix *K*).
@@ -36,6 +37,7 @@ import numpy as np
 from PIL import Image
 
 from euler_loading.loaders._annotations import modality_meta
+from euler_loading.loaders._sky import RGB, as_rgb, match_rgb, resolve_skyclass
 from euler_loading.loaders._writer_utils import (
     ensure_parent,
     mark_stream_supported,
@@ -110,25 +112,38 @@ def instance_segmentation(path: Union[str, BinaryIO], meta: dict[str, Any] | Non
 _SKY_COLOR = (90, 200, 255)
 
 
+def _sky_color(
+    meta: dict[str, Any] | None,
+    attributes: dict[str, Any] | None = None,
+) -> RGB:
+    """Return the sky colour: ``skyclass``, the deprecated ``sky_color``, or the default."""
+    return resolve_skyclass(
+        meta,
+        attributes,
+        loader="vkitti2 sky_mask",
+        default=_SKY_COLOR,
+        legacy={"sky_color": lambda value: as_rgb(value, what="'sky_color'")},
+    )
+
+
 @modality_meta(
     modality_type="sky_mask",
     dtype="bool",
     shape="HW",
     file_formats=[".png"],
-    meta={"sky_color": [90, 200, 255]},
+    meta={"skyclass": list(_SKY_COLOR)},
 )
 def sky_mask(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None, *, attributes: dict[str, Any] | None = None) -> np.ndarray:
     """Load a sky mask as an ``(H, W)`` bool array.
 
-    Reads the RGB class-segmentation PNG and returns ``True`` where the
-    pixel colour equals ``(90, 200, 255)`` (sky class in VKITTI2).
+    Returns ``True`` where the RGB class-segmentation PNG has the ``skyclass``
+    colour from the file's ``attributes`` or the dataset head's ``meta``,
+    ``(90, 200, 255)`` (VKITTI2 sky) by default. The deprecated ``sky_color``
+    is still read when no ``skyclass`` is given.
     """
-    arr = np.array(Image.open(path).convert("RGB"), dtype=np.uint8)
-    return (
-        (arr[:, :, 0] == _SKY_COLOR[0])
-        & (arr[:, :, 1] == _SKY_COLOR[1])
-        & (arr[:, :, 2] == _SKY_COLOR[2])
-    )
+    with Image.open(path) as image:
+        rgb = np.array(image.convert("RGB"), dtype=np.uint8)
+    return match_rgb(rgb, _sky_color(meta, attributes))
 
 
 @modality_meta(
@@ -236,12 +251,8 @@ def write_sky_mask(path: Union[str, BinaryIO], value: Any, meta: dict[str, Any] 
     """Write a sky-mask image in VKITTI2-compatible RGB encoding."""
     ensure_parent(path)
     mask = to_bool_mask(value)
-    sky_color_raw = (meta or {}).get("sky_color", _SKY_COLOR)
-    sky_color = np.asarray(sky_color_raw, dtype=np.uint8)
-    if sky_color.shape != (3,):
-        raise ValueError("meta['sky_color'] must be a 3-element RGB color")
     arr = np.zeros(mask.shape + (3,), dtype=np.uint8)
-    arr[mask] = sky_color
+    arr[mask] = _sky_color(meta)
     save_image(path, Image.fromarray(arr, mode="RGB"), format="PNG")
 
 

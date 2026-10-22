@@ -99,7 +99,7 @@ def depth(
     dtype="int64",
     shape="1HW",
     file_formats=[".png"],
-    meta={"encoding": "single_channel", "label_ids": "cityscapes", "sky_class_id": 23},
+    meta={"encoding": "single_channel", "label_ids": "cityscapes", "skyclass": [23, 23, 23]},
 )
 def class_segmentation(
     path: Union[str, BinaryIO],
@@ -135,7 +135,7 @@ def instance_segmentation(
     dtype="bool",
     shape="1HW",
     file_formats=[".png"],
-    meta={"sky_class_id": 23},
+    meta={"skyclass": [23, 23, 23]},
 )
 def sky_mask(
     path: Union[str, BinaryIO],
@@ -145,8 +145,9 @@ def sky_mask(
 ) -> torch.Tensor:
     """Return ``(1, H, W)`` bool, true where ``img/class`` holds the sky label.
 
-    Cityscapes ID ``23`` is the default; ``meta['sky_class_id']`` or the same
-    key in per-file ``attributes`` selects another.
+    Torch counterpart of :func:`euler_loading.loaders.cpu.synscapes.sky_mask`:
+    the label comes from the dataset head's ``skyclass``, Cityscapes ID ``23``
+    by default, with ``sky_class_id`` taking precedence.
     """
     arr = _cpu.sky_mask(path, meta, attributes=attributes)
     return torch.from_numpy(arr).unsqueeze(0).contiguous()

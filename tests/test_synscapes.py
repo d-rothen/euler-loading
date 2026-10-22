@@ -761,12 +761,19 @@ def test_sky_mask_class_id_override_roundtrips(loaders, tmp_path):
     expected = np.array([[True, False], [False, True]])
     options = {"sky_class_id": 30}
     path = tmp_path / "sky.png"
-    loaders.write_sky_mask(str(path), _to_native(loaders, expected, "hw"), options)
-
-    _assert_loaded(loaders.sky_mask(str(path), options), expected)
-    _assert_loaded(
-        loaders.sky_mask(str(path), {}, attributes=options), expected
-    )
+    with pytest.warns(DeprecationWarning, match="sky_class_id"):
+        loaders.write_sky_mask(str(path), _to_native(loaders, expected, "hw"), options)
+    with pytest.warns(DeprecationWarning, match="sky_class_id"):
+        _assert_loaded(loaders.sky_mask(str(path), options), expected)
+    with pytest.warns(DeprecationWarning, match="sky_class_id"):
+        _assert_loaded(
+            loaders.sky_mask(str(path), {}, attributes=options), expected
+        )
+    # skyclass, the contract field, round-trips the same way.
+    path = tmp_path / "sky_skyclass.png"
+    meta = {"skyclass": [30, 30, 30]}
+    loaders.write_sky_mask(str(path), _to_native(loaders, expected, "hw"), meta)
+    _assert_loaded(loaders.sky_mask(str(path), meta), expected)
     # The default ID is a different label, so it must not match.
     assert not _as_array(loaders.sky_mask(str(path))).any()
 
@@ -856,10 +863,11 @@ def test_camera_merge_keeps_fields_written_under_the_plural_spelling(loaders, tm
 def test_class_id_options_accept_numpy_scalars_and_reject_fractions(loaders, tmp_path):
     path = tmp_path / "sky.png"
     mask = np.array([[True, False]])
-    loaders.write_sky_mask(str(path), mask, {"sky_class_id": np.int64(30)})
-    _assert_loaded(loaders.sky_mask(str(path), {"sky_class_id": np.int64(30)}), mask)
-    # A whole-valued float is fine; a fractional one is a mistake, not a floor.
-    _assert_loaded(loaders.sky_mask(str(path), {"sky_class_id": 30.0}), mask)
+    with pytest.warns(DeprecationWarning, match="sky_class_id"):
+        loaders.write_sky_mask(str(path), mask, {"sky_class_id": np.int64(30)})
+        _assert_loaded(loaders.sky_mask(str(path), {"sky_class_id": np.int64(30)}), mask)
+        # A whole-valued float is fine; a fractional one is a mistake, not a floor.
+        _assert_loaded(loaders.sky_mask(str(path), {"sky_class_id": 30.0}), mask)
     for bad in (30.7, -1.9):
         with pytest.raises(ValueError, match="whole number"):
             loaders.sky_mask(str(path), {"sky_class_id": bad})

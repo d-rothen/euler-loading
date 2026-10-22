@@ -13,6 +13,8 @@ Return types
 - **map_2d** / **scattering_coefficient** -- ``np.ndarray`` of shape ``(H, W)`` float32.
 - **semantic_segmentation** / **instance_segmentation** -- integer
   ``np.ndarray`` of shape ``(H, W)``.
+- **sky_mask** -- bool ``np.ndarray`` of shape ``(H, W)``, where the class-id map holds the
+  dataset head's ``skyclass`` label.
 - **map_3d** / **atmospheric_light** -- ``np.ndarray`` of shape ``(H, W, C)`` float32.
 - **points_3d** -- ``np.ndarray`` of shape ``(3, H, W)`` float32.
 - **spherical_map** -- ``np.ndarray`` of shape ``(H, W, C)`` float32.
@@ -40,6 +42,7 @@ from typing import Any, BinaryIO, Union
 import numpy as np
 
 from euler_loading.loaders._annotations import modality_meta
+from euler_loading.loaders._sky import resolve_skyclass, skyclass_label
 from euler_loading.loaders._writer_utils import (
     ensure_parent,
     get_target_name,
@@ -141,6 +144,26 @@ def map_2d(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None, *, at
 def semantic_segmentation(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None, *, attributes: dict[str, Any] | None = None) -> np.ndarray:
     """Load an HW uint8 class-id map; 255 is the standardized void id."""
     return _load_label_map(path, np.dtype(np.uint8))
+
+
+@modality_meta(
+    modality_type="sky_mask",
+    dtype="bool",
+    shape="HW",
+    file_formats=[".npy", ".npz"],
+    requires_meta=["skyclass"],
+)
+def sky_mask(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None, *, attributes: dict[str, Any] | None = None) -> np.ndarray:
+    """Return HW bool, true where a :func:`semantic_segmentation` map holds sky.
+
+    The sky label is ``skyclass`` from the file's ``attributes`` or the
+    dataset head's ``meta``, a grey ``[v, v, v]`` for class id ``v`` as the
+    dataset contract stores single-channel classes. There is no default.
+    """
+    loader = "generic sky_mask"
+    color = resolve_skyclass(meta, attributes, loader=loader, default=None)
+    sky_id = skyclass_label(color, loader=loader)
+    return _load_label_map(path, np.dtype(np.uint8)) == sky_id
 
 
 @modality_meta(

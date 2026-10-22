@@ -43,6 +43,7 @@ from ._metadata import _build_runlog_entry, _get_ds_crawler_descriptor
 from ._resolution import (
     _resolve_loader,
     _resolve_writer,
+    describe_loader,
     loader_accepts_attributes,
     resolve_loader_module,
     resolve_writer_module,
@@ -369,6 +370,12 @@ class Modality:
                   ``metadata["euler_loading"]`` are treated as defaults for
                   roles and run logging. They do not select a loader; automatic
                   loader resolution uses the dataset-head addon described above.
+        function: Optional name of the loader function to use from the module
+                  that the dataset head's ``addons.euler_loading.loader``
+                  names, instead of its ``function``. For example
+                  ``"sky_mask"`` reads a ``class_segmentation`` index as
+                  boolean sky masks. The writer follows the same function.
+                  Mutually exclusive with *loader*.
     """
 
     path: str
@@ -385,8 +392,14 @@ class Modality:
     cache: bool | None = None
     collapse_single: bool = False
     metadata: dict[str, Any] = field(default_factory=dict)
+    function: str | None = None
 
     def __post_init__(self) -> None:
+        if self.loader is not None and self.function is not None:
+            raise ValueError(
+                f"Modality {self.path!r} sets both loader and function "
+                f"({self.function!r}); pass one of them."
+            )
         parsed_path, path_split, path_metadata_scope = parse_modality_path(self.path)
         if path_split is not None:
             if self.split is not None:
@@ -791,11 +804,14 @@ class MultiModalDataset(_BaseDataset):
             }
             self._lookups[name] = lookup
             logger.info(
-                "Modality '%s': indexed %d files from %s%s",
+                "Modality '%s': indexed %d files from %s%s, loaded with %s",
                 name,
                 len(lookup),
                 modality.path,
                 _modality_selector_suffix(modality),
+                describe_loader(
+                    self._resolved_loaders[name], modality=modality, index=index
+                ),
             )
 
         # -- Index hierarchical modalities -----------------------------------
@@ -825,12 +841,15 @@ class MultiModalDataset(_BaseDataset):
             total_files = sum(len(f) for f in files_by_level.values())
             logger.info(
                 "Hierarchical modality '%s': indexed %d files across %d "
-                "hierarchy levels from %s%s",
+                "hierarchy levels from %s%s, loaded with %s",
                 name,
                 total_files,
                 len(files_by_level),
                 modality.path,
                 _modality_selector_suffix(modality),
+                describe_loader(
+                    self._resolved_loaders[name], modality=modality, index=index
+                ),
             )
 
         # -- Compute common IDs (intersection across regular modalities) -----

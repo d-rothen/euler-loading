@@ -619,7 +619,8 @@ class TestMUSESGPULoaders:
 
     def test_sky_mask_uses_rgb_sky_class_meta(self, muses_sky_rgb_class_path):
         path, expected = muses_sky_rgb_class_path
-        result = gpu_muses.sky_mask(path, meta={"sky_class": [0, 0, 23]})
+        with pytest.warns(DeprecationWarning, match="sky_class"):
+            result = gpu_muses.sky_mask(path, meta={"sky_class": [0, 0, 23]})
         assert torch.equal(result, torch.from_numpy(expected).unsqueeze(0))
 
     def test_semantic_color_is_chw_uint8(self, muses_semantic_color_path):
@@ -709,7 +710,8 @@ class TestMUSESCPULoaders:
 
     def test_sky_mask_uses_rgb_sky_class_meta(self, muses_sky_rgb_class_path):
         path, expected = muses_sky_rgb_class_path
-        result = cpu_muses.sky_mask(path, meta={"sky_class": [0, 0, 23]})
+        with pytest.warns(DeprecationWarning, match="sky_class"):
+            result = cpu_muses.sky_mask(path, meta={"sky_class": [0, 0, 23]})
         assert np.array_equal(result, expected)
 
     def test_semantic_color_is_hwc_uint8(self, muses_semantic_color_path):

@@ -130,8 +130,11 @@ RGB contract looks like this:
 ```
 
 `loader` selects a built-in loader module and `function` selects the callable
-inside it. Automatic resolution uses the GPU variant; pass a loader explicitly
-when you want the CPU variant or a custom callable. See
+inside it. `Modality(path, function="sky_mask")` picks another callable from
+the same module, e.g. boolean sky masks from a `class_segmentation` index,
+with the sky taken from the head's `skyclass`. Automatic resolution uses the
+GPU variant; pass a loader explicitly when you want the CPU variant or a
+custom callable. See
 [Automatic loader resolution](docs/loaders.md#automatic-loader-resolution) for
 the full contract and writer rules.
 

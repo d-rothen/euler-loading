@@ -39,14 +39,17 @@ from ._ds_crawler_utils import (
     _has_root_metadata,
     _has_scoped_metadata,
     _list_metadata_scopes_safe,
+    as_non_empty_str,
     load_index_output,
     read_zip_member,
 )
 from ._resolution import (
     LOADER_VARIANTS,
+    _get_euler_loading_meta,
     _resolve_loader,
     _resolve_writer,
     loader_accepts_attributes,
+    resolve_loader_module,
 )
 from .dataset import (
     Modality,
@@ -54,6 +57,7 @@ from .dataset import (
     _get_index_meta,
     _get_index_tree,
     _load_with_optional_attributes,
+    _loader_modality_type,
     _resolve_metadata_scope,
 )
 from .indexing import FileRecord, collect_files
@@ -63,6 +67,7 @@ logger = logging.getLogger(__name__)
 __all__ = [
     "DEFAULT_MAX_DEPTH",
     "DEFAULT_SAMPLES",
+    "SKY_SAMPLES",
     "DryRunReport",
     "ModalityCheck",
     "SampleCheck",
@@ -76,6 +81,16 @@ DEFAULT_MAX_DEPTH = 3
 
 #: Files decoded per modality unless asked otherwise.
 DEFAULT_SAMPLES = 1
+
+#: Files a segmentation head's ``sky_mask`` decodes at least: enough to tell a
+#: wrong ``skyclass`` (no sky anywhere) from a frame that shows no sky.
+SKY_SAMPLES = 8
+
+#: Head modality keys whose contract requires ``skyclass``.
+_SKY_HEAD_KEYS = ("semantic_segmentation", "segmentation")
+
+#: A sky fraction above this marks a file as suspiciously sky-covered.
+_MOSTLY_SKY = 0.9
 
 
 # ---------------------------------------------------------------------------
@@ -122,6 +137,7 @@ class ModalityCheck:
     file_count: Optional[int] = None
     splits: list[str] = field(default_factory=list)
     samples: list[SampleCheck] = field(default_factory=list)
+    sky: Optional[str] = None
     errors: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
 
@@ -150,6 +166,7 @@ class ModalityCheck:
             "splits": list(self.splits),
             "ok": self.ok,
             "samples": [sample.to_dict() for sample in self.samples],
+            "sky": self.sky,
             "errors": list(self.errors),
             "warnings": list(self.warnings),
         }
@@ -412,6 +429,54 @@ def _loader_is_hierarchical(loader: Callable[..., Any]) -> Optional[bool]:
     return bool(meta.get("hierarchical"))
 
 
+def _open_archive(modality_path: str) -> tuple[Optional[zipfile.ZipFile], str]:
+    """Open *modality_path* when it is a zip archive; return it and its root prefix."""
+    if not is_zip_path(Path(modality_path)):
+        return None, ""
+    archive = zipfile.ZipFile(modality_path.rstrip("/"), "r")
+    try:
+        return archive, get_zip_root_prefix(Path(modality_path))
+    except Exception:
+        archive.close()
+        raise
+
+
+def _load_record(
+    record: FileRecord,
+    *,
+    archive: Optional[zipfile.ZipFile],
+    prefix: str,
+    modality_path: str,
+    loader: Callable[..., Any],
+    meta: Optional[dict[str, Any]],
+) -> tuple[str, Any, Optional[str], float]:
+    """Load one record, returning ``(relative_path, value, error, seconds)``."""
+    relative_path = record.file_entry.get("path")
+    if not isinstance(relative_path, str) or not relative_path:
+        return "", None, "index entry has no 'path'", 0.0
+
+    started = time.perf_counter()
+    try:
+        if archive is not None:
+            file_or_path: Any = read_zip_member(archive, prefix, relative_path)
+        else:
+            file_or_path = f"{modality_path}/{relative_path}"
+        value = _load_with_optional_attributes(
+            loader,
+            file_or_path,
+            meta,
+            _get_file_attributes(record.file_entry),
+            accepts_attributes=loader_accepts_attributes(loader),
+        )
+    except Exception as exc:
+        logger.debug(
+            "Loading %s from %s failed.", relative_path, modality_path,
+            exc_info=True,
+        )
+        return relative_path, None, _describe_exception(exc), time.perf_counter() - started
+    return relative_path, value, None, time.perf_counter() - started
+
+
 def _decode_records(
     check: ModalityCheck,
     *,
@@ -421,75 +486,127 @@ def _decode_records(
     meta: Optional[dict[str, Any]],
 ) -> None:
     """Load every record, recording one :class:`SampleCheck` per file."""
-    accepts_attributes = loader_accepts_attributes(loader)
-    archive: Optional[zipfile.ZipFile] = None
-    prefix = ""
-    if is_zip_path(Path(modality_path)):
-        try:
-            archive = zipfile.ZipFile(modality_path.rstrip("/"), "r")
-            prefix = get_zip_root_prefix(Path(modality_path))
-        except Exception as exc:
-            if archive is not None:
-                archive.close()
-            check.errors.append(f"archive: {_describe_exception(exc)}")
-            return
+    try:
+        archive, prefix = _open_archive(modality_path)
+    except Exception as exc:
+        check.errors.append(f"archive: {_describe_exception(exc)}")
+        return
 
     try:
         for record in records:
-            relative_path = record.file_entry.get("path")
-            full_id = _full_id(record)
-            if not isinstance(relative_path, str) or not relative_path:
-                check.samples.append(
-                    SampleCheck(
-                        path="",
-                        full_id=full_id,
-                        ok=False,
-                        error="index entry has no 'path'",
-                    )
-                )
-                continue
-
-            started = time.perf_counter()
-            try:
-                if archive is not None:
-                    file_or_path: Any = read_zip_member(archive, prefix, relative_path)
-                else:
-                    file_or_path = f"{modality_path}/{relative_path}"
-                value = _load_with_optional_attributes(
-                    loader,
-                    file_or_path,
-                    meta,
-                    _get_file_attributes(record.file_entry),
-                    accepts_attributes=accepts_attributes,
-                )
-            except Exception as exc:
-                logger.debug(
-                    "Loading %s from %s failed.", relative_path, modality_path,
-                    exc_info=True,
-                )
-                check.samples.append(
-                    SampleCheck(
-                        path=relative_path,
-                        full_id=full_id,
-                        ok=False,
-                        error=_describe_exception(exc),
-                        seconds=time.perf_counter() - started,
-                    )
-                )
-                continue
-
+            relative_path, value, error, seconds = _load_record(
+                record,
+                archive=archive,
+                prefix=prefix,
+                modality_path=modality_path,
+                loader=loader,
+                meta=meta,
+            )
             check.samples.append(
                 SampleCheck(
                     path=relative_path,
-                    full_id=full_id,
-                    ok=True,
-                    value=describe_value(value),
-                    seconds=time.perf_counter() - started,
+                    full_id=_full_id(record),
+                    ok=error is None,
+                    value=describe_value(value) if error is None else None,
+                    error=error,
+                    seconds=seconds,
                 )
             )
     finally:
         if archive is not None:
             archive.close()
+
+
+def _sky_loader(
+    check: ModalityCheck,
+    *,
+    index: Mapping[str, Any],
+    loader: Callable[..., Any],
+    variant: str,
+) -> Optional[Callable[..., Any]]:
+    """Return the loader that turns this artifact set into sky masks, if any."""
+    if _loader_modality_type(loader) == "sky_mask":
+        return loader
+    if check.modality_key not in _SKY_HEAD_KEYS:
+        return None
+    module_name = as_non_empty_str((_get_euler_loading_meta(index) or {}).get("loader"))
+    try:
+        module = resolve_loader_module(module_name or "", variant=variant)
+    except Exception:
+        return None
+    sky_mask = getattr(module, "sky_mask", None)
+    if not callable(sky_mask):
+        check.warnings.append(
+            f"loader module {module_name!r} has no sky_mask, so the head's "
+            "'skyclass' cannot be checked"
+        )
+        return None
+    return sky_mask
+
+
+def _check_sky(
+    check: ModalityCheck,
+    *,
+    records: list[FileRecord],
+    modality_path: str,
+    index: Mapping[str, Any],
+    loader: Callable[..., Any],
+    variant: str,
+) -> None:
+    """Decode a segmentation head's files as sky masks and check the sky fraction.
+
+    No sky in any sampled file, or a file that is almost all sky, is the mark
+    of a wrong ``skyclass``; both are reported as warnings. A ``skyclass`` the
+    ``sky_mask`` loader rejects is an error.
+    """
+    sky_loader = _sky_loader(check, index=index, loader=loader, variant=variant)
+    if sky_loader is None or not records:
+        return
+    meta = _get_index_meta(index)
+    try:
+        archive, prefix = _open_archive(modality_path)
+    except Exception:
+        return  # _decode_records has reported it.
+
+    fractions: list[tuple[str, float]] = []
+    try:
+        for record in records:
+            relative_path, value, error, _seconds = _load_record(
+                record,
+                archive=archive,
+                prefix=prefix,
+                modality_path=modality_path,
+                loader=sky_loader,
+                meta=meta,
+            )
+            name = relative_path or _full_id(record)
+            if error is not None:
+                check.errors.append(f"sky_mask: {name}: {error}")
+                return
+            mask = value.cpu().numpy() if hasattr(value, "cpu") else np.asarray(value)
+            fractions.append((name, float(np.mean(mask))))
+    finally:
+        if archive is not None:
+            archive.close()
+
+    skyclass = (meta or {}).get("skyclass")
+    declared = f"skyclass {list(skyclass)}" if skyclass is not None else "no skyclass"
+    values = [fraction for _name, fraction in fractions]
+    check.sky = (
+        f"{declared}: sky in {sum(value > 0 for value in values)}/{len(values)} "
+        f"files, {min(values):.1%}-{max(values):.1%} of pixels"
+    )
+    if not any(values):
+        check.warnings.append(
+            f"sky_mask finds no sky in any of the {len(values)} sampled files; "
+            f"check the dataset head's {declared}"
+        )
+    for name, fraction in fractions:
+        if fraction > _MOSTLY_SKY:
+            check.warnings.append(
+                f"sky_mask marks {fraction:.0%} of {name} as sky; check the "
+                f"dataset head's {declared}"
+            )
 
 
 def _read_contract(check: ModalityCheck, index: Mapping[str, Any]) -> None:
@@ -630,6 +747,17 @@ def _check_modality(
             modality_path=modality.path,
             loader=loader,
             meta=_get_index_meta(index),
+        )
+    if samples != 0:
+        _check_sky(
+            check,
+            records=_select_records(
+                records, None if samples is None else max(samples, SKY_SAMPLES)
+            ),
+            modality_path=modality.path,
+            index=index,
+            loader=loader,
+            variant=variant,
         )
     return check, ids
 

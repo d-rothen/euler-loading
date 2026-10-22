@@ -120,6 +120,14 @@ An explicit `Modality.loader` always takes precedence. Automatic resolution
 uses the GPU variant; import and pass a CPU loader explicitly when NumPy output
 is required.
 
+`Modality.function` keeps the head's `loader` module but picks another callable
+in it, and the writer follows it. `Modality(path, function="sky_mask")` reads a
+`class_segmentation` index as boolean sky masks, taking the sky definition from
+the head's `skyclass` (see [Sky masks](#sky-masks)). It cannot be combined with
+`Modality.loader`. Each modality's effective loader is logged when the dataset
+is built, e.g. `loaded with real_drive_sim.sky_mask (the index declares
+'class_segmentation')`.
+
 For compatibility, euler-loading can still read the legacy top-level
 `euler_loading` mapping from older indexes. New datasets should declare the
 addon in `dataset-head.json` as shown above.
@@ -210,6 +218,8 @@ that addresses it.
 | `decoded 0/2` with per-file `FAILED` | the files are indexed and present, but the declared loader cannot decode them |
 | `(hierarchical)` after the loader | the declared function reads per-scene data; pass that modality as `hierarchical_modalities`, not `modalities` |
 | `error index: ...` | ds-crawler could not produce an index — a missing split, an unreadable archive, or a dataset head the contract rejects |
+| `sky skyclass [29, 0, 0]: sky in 8/8 files, ...` | a segmentation head's files, decoded with its loader module's `sky_mask` (at least `SKY_SAMPLES` = 8 files) |
+| a warning that `sky_mask` finds no sky, or marks a file as more than 90% sky | the head's `skyclass` probably names the wrong label; an `error sky_mask: ...` means the loader rejects it outright |
 | a warning about shared file IDs | the modalities below the path have no file ID in common, so they cannot be intersected into one `MultiModalDataset` |
 
 The same report is available as an API, which is what the command is a thin
@@ -225,6 +235,41 @@ if not report.ok:
 
 report.to_dict()   # the same structure --json prints
 ```
+
+## Sky masks
+
+The dataset contract requires every `semantic_segmentation` head to declare
+`modality.meta.skyclass`: the sky label as it appears in the segmentation file
+viewed as RGB. That is the sky colour of a colour-coded map, and `[v, v, v]`
+for a single-channel label `v`:
+
+| Dataset | Encoding | `skyclass` |
+|---|---|---|
+| Virtual KITTI 2 | RGB class colours | `[90, 200, 255]` |
+| Real Drive Sim | class ID in the red channel of an RGBA PNG | `[29, 0, 0]` |
+| Synscapes | single-channel Cityscapes label IDs | `[23, 23, 23]` |
+| MUSES `labelIds` | single-channel Cityscapes label IDs | `[23, 23, 23]` |
+| Cityscapes train IDs, e.g. `generic` `.npy` maps | single-channel | `[10, 10, 10]` |
+
+Every `sky_mask` loader (and the matching `write_sky_mask`) resolves the sky in
+this order, and logs the definition it uses once:
+
+1. `skyclass` in the file's ds-crawler attributes,
+2. `skyclass` in the dataset head's meta,
+3. a deprecated per-loader key — `sky_class_id` (Synscapes, Real Drive Sim,
+   MUSES), `sky_color` (VKITTI2), `sky_class` / `sky_mask` (MUSES) or
+   `sky_mask` (generic dense depth) — which raises a `DeprecationWarning`,
+4. the loader's built-in default; `generic.sky_mask` and
+   `generic_dense_depth.sky_mask` have none and require `skyclass`.
+
+A deprecated key that `skyclass` overrides is logged as a warning, saying
+whether it named the same sky. So is a resolved sky that differs from the
+loader's default. Values a loader cannot match raise instead of silently
+finding no sky: a non-grey `skyclass` for single-channel maps (Synscapes,
+MUSES label PNGs, `generic`), and anything but `[id, 0, 0]` for Real Drive Sim,
+which stores class IDs in the red channel. The [dry run](#dry-running-loaders)
+decodes segmentation heads with `sky_mask` and warns about suspicious sky
+fractions.
 
 ## Loader protocols
 
@@ -276,7 +321,7 @@ annotations on the loader functions themselves.
 | `class_segmentation` | CHW / HWC | int64 | RGB-encoded class mask |
 | `instance_segmentation` | CHW / HWC | int64 | RGB-encoded instance mask |
 | `scene_flow` | CHW / HWC | float32 | Optical/scene flow, normalised to `[0, 1]` |
-| `sky_mask` | 1HW / HW | bool | Sky colour `[90, 200, 255]` in the class mask |
+| `sky_mask` | 1HW / HW | bool | Head `skyclass` colour in the class mask, default `[90, 200, 255]` |
 | `read_intrinsics` | 3×3 | float32 | From a `.txt` file · *hierarchical* |
 | `read_extrinsics` | N×1 | float32 | From a `.txt` file · *hierarchical* |
 
@@ -290,14 +335,14 @@ Writers exist for every modality above.
 | `depth` | 1HW / HW | float32 | `img/depth/<id>.exr`, `Z` channel, planar depth in metres |
 | `class_segmentation` | 1HW / HW | int64 | `img/class/<id>.png`, original Cityscapes label IDs |
 | `instance_segmentation` | 1HW / HW | int64 | `img/instance/<id>.png`, decoded as `R + 256 * G + 65536 * B` |
-| `sky_mask` | 1HW / HW | bool | Sky label in `img/class/<id>.png`; ID `23` by default, or `meta['sky_class_id']` |
+| `sky_mask` | 1HW / HW | bool | Sky label in `img/class/<id>.png`: the grey `skyclass`, ID `23` by default |
 | `read_intrinsics` | 3×3 | float32 | `camera.intrinsic` from `meta/<id>.json`: `fx`, `fy`, `u0`, `v0` |
 | `read_extrinsics` | 4×4 | float32 | `camera.extrinsic` from `meta/<id>.json`: `x`, `y`, `z`, `pitch`, `roll`, `yaw` |
 
 Writers exist for every modality above. `write_depth` needs a filesystem path
 because OpenEXR cannot write to a stream; dataset writers hand it a temporary
 file automatically, so zip outputs work unchanged. `write_sky_mask` emits a
-class image labelling sky with `meta['sky_class_id']`, default 23, and
+class image labelling sky with the label `sky_mask` reads, and
 `write_intrinsics` and `write_extrinsics` merge into one `meta/<id>.json`
 rather than overwriting each other or the file's `scene` and `instance`
 blocks.
@@ -384,7 +429,7 @@ same resolution. Loaders preserve the stored resolution.
 | `reference_rgb` | CHW / HWC | float32 | Clear-weather reference frame, `[0, 1]` |
 | `semantic_segmentation` | 1HW / HW | int64 | Cityscapes `labelIds` or `labelTrainIds` |
 | `semantic_segmentation_color` | CHW / HWC | uint8 | Cityscapes `labelColor` PNG |
-| `sky_mask` | 1HW / HW | bool | `trainId=10`, `labelId=23`, or RGB `meta["sky_class"]` |
+| `sky_mask` | 1HW / HW | bool | `skyclass` (grey for label PNGs, a colour for RGB class images); default `trainId=10` / `labelId=23` |
 | `panoptic_segmentation` | 1HW / HW | int64 | COCO-style RGB panoptic PNG → segment IDs |
 | `lidar_point_cloud` | (N, 6) | float64 | `.bin`: `x, y, z, intensity, ring, timestamp` |
 | `sparse_depth` | (N, 6) | float64 | Same points, for sparse-depth workflows |
@@ -400,7 +445,7 @@ same resolution. Loaders preserve the stored resolution.
 | `rgb` | CHW / HWC | float32 | PNG, `[0, 1]` |
 | `depth` | 1HW / HW | float32 | `.npz`, metres |
 | `class_segmentation` | 1HW / HW | int64 | Class IDs from the red channel of an RGBA PNG |
-| `sky_mask` | 1HW / HW | bool | Class ID `29` |
+| `sky_mask` | 1HW / HW | bool | Head `skyclass` colour, default `[29, 0, 0]` (class ID 29) |
 | `calibration` | dict | — | `{sensor: {"K": (3,3), "T": (4,4), "distortion": (8,)}}` · *hierarchical* |
 | `all_intrinsics` | dict | — | `{sensor: (3, 3)}` · *hierarchical* |
 | `read_intrinsics` | 3×3 | float32 | Defaults to `CS_FRONT` · *hierarchical* |
@@ -427,7 +472,7 @@ Useful for datasets without a dedicated module.
 |---|---|---|---|
 | `rgb` | CHW / HWC | float32 | Image (`.png`, `.jpg`, `.bmp`, `.tif`) or NumPy (`.npy`, `.npz`), `[0, 1]` |
 | `depth` | 1HW / HW | float32 | Image or NumPy, returned as-is; honours `attributes["scale_to_meters_override"]` |
-| `sky_mask` | 1HW / HW | bool | Compares pixels against `meta["sky_mask"]` (`[R, G, B]`) — requires `meta` |
+| `sky_mask` | 1HW / HW | bool | Compares pixels against the `skyclass` colour — required |
 | `read_intrinsics` | 3×3 | float32 | Returns `meta["intrinsics"]`, ignores the path — requires `meta` · *hierarchical* |
 
 ### Generic NumPy modalities — `generic`
@@ -444,8 +489,9 @@ assumptions beyond shape and dtype.
 | `atmospheric_light` | CHW / HWC | float32 |
 | `scattering_coefficient` | HW | float32 |
 | `semantic_segmentation` | HW | uint8 |
+| `sky_mask` | HW | bool (head `skyclass` label, required) |
 | `instance_segmentation` | HW | uint16 |
 | `intrinsics` | 3×3 | float32 |
 | `sh_coeffs` | (N, C) | float32 |
 
-Writers exist for every function in this module.
+Writers exist for every function in this module except `sky_mask`.

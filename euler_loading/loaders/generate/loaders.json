@@ -157,6 +157,26 @@
                     }
                 },
                 {
+                    "type": "sky_mask",
+                    "function": "sky_mask",
+                    "hierarchical": false,
+                    "dtype": "bool",
+                    "access": "key",
+                    "file_formats": [
+                        ".npy",
+                        ".npz"
+                    ],
+                    "requires_meta": [
+                        "skyclass"
+                    ],
+                    "cpu": {
+                        "shape": "HW"
+                    },
+                    "gpu": {
+                        "shape": "1HW"
+                    }
+                },
+                {
                     "type": "spherical_map",
                     "function": "spherical_map",
                     "hierarchical": false,
@@ -259,7 +279,7 @@
                         ".tiff"
                     ],
                     "requires_meta": [
-                        "sky_mask"
+                        "skyclass"
                     ],
                     "cpu": {
                         "shape": "HW"
@@ -458,9 +478,9 @@
                     ],
                     "meta": {
                         "encoding": "single_channel",
-                        "sky_class": [
-                            0,
-                            0,
+                        "skyclass": [
+                            23,
+                            23,
                             23
                         ],
                         "sky_label_id": 23,
@@ -685,7 +705,11 @@
                     ],
                     "meta": {
                         "encoding": "single_channel",
-                        "sky_class_id": 29
+                        "skyclass": [
+                            29,
+                            0,
+                            0
+                        ]
                     },
                     "cpu": {
                         "shape": "HW"
@@ -785,7 +809,11 @@
                         ".png"
                     ],
                     "meta": {
-                        "sky_class_id": 29
+                        "skyclass": [
+                            29,
+                            0,
+                            0
+                        ]
                     },
                     "cpu": {
                         "shape": "HW"
@@ -811,7 +839,11 @@
                     "meta": {
                         "encoding": "single_channel",
                         "label_ids": "cityscapes",
-                        "sky_class_id": 23
+                        "skyclass": [
+                            23,
+                            23,
+                            23
+                        ]
                     },
                     "cpu": {
                         "shape": "HW"
@@ -937,7 +969,11 @@
                         ".png"
                     ],
                     "meta": {
-                        "sky_class_id": 23
+                        "skyclass": [
+                            23,
+                            23,
+                            23
+                        ]
                     },
                     "cpu": {
                         "shape": "HW"
@@ -1096,7 +1132,7 @@
                         ".png"
                     ],
                     "meta": {
-                        "sky_color": [
+                        "skyclass": [
                             90,
                             200,
                             255

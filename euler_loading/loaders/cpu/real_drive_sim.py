@@ -11,7 +11,8 @@ Return types
 - **class_segmentation** – ``np.ndarray`` of shape ``(H, W)`` int64
   (single-channel class IDs).
 - **sky_mask** – ``np.ndarray`` of shape ``(H, W)`` bool
-  (``True`` where class ID == 29).
+  (``True`` where the pixel has the dataset head's ``skyclass`` colour,
+  ``[29, 0, 0]`` by default).
 - **calibration** – ``dict[str, dict[str, np.ndarray]]`` keyed by sensor
   name. Each sensor dict contains ``"K"`` (3x3), ``"T"`` (4x4), and
   ``"distortion"`` (8,).
@@ -34,6 +35,7 @@ import numpy as np
 from PIL import Image
 
 from euler_loading.loaders._annotations import modality_meta
+from euler_loading.loaders._sky import RGB, match_rgb, resolve_skyclass
 from euler_loading.loaders._writer_utils import (
     ensure_parent,
     mark_stream_supported,
@@ -83,7 +85,7 @@ def depth(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None, *, att
     dtype="int64",
     shape="HW",
     file_formats=[".png"],
-    meta={"encoding": "single_channel", "sky_class_id": 29},
+    meta={"encoding": "single_channel", "skyclass": [29, 0, 0]},
 )
 def class_segmentation(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None, *, attributes: dict[str, Any] | None = None) -> np.ndarray:
     """Load a class-segmentation mask as an ``(H, W)`` int64 array.
@@ -97,20 +99,44 @@ def class_segmentation(path: Union[str, BinaryIO], meta: dict[str, Any] | None =
 _SKY_CLASS_ID = 29
 
 
+def _sky_color(
+    meta: dict[str, Any] | None,
+    attributes: dict[str, Any] | None = None,
+) -> RGB:
+    """Return the RGB value of sky: ``skyclass``, the deprecated ``sky_class_id``, or ID 29."""
+    color = resolve_skyclass(
+        meta,
+        attributes,
+        loader="real_drive_sim sky_mask",
+        default=(_SKY_CLASS_ID, 0, 0),
+        legacy={"sky_class_id": lambda value: (int(value), 0, 0)},
+    )
+    if color[1:] != (0, 0):
+        raise ValueError(
+            "real_drive_sim stores class IDs in the red channel, so 'skyclass' "
+            f"must be [id, 0, 0]; got {list(color)}."
+        )
+    return color
+
+
 @modality_meta(
     modality_type="sky_mask",
     dtype="bool",
     shape="HW",
     file_formats=[".png"],
-    meta={"sky_class_id": 29},
+    meta={"skyclass": [_SKY_CLASS_ID, 0, 0]},
 )
 def sky_mask(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None, *, attributes: dict[str, Any] | None = None) -> np.ndarray:
     """Load a sky mask as an ``(H, W)`` bool array.
 
-    Reads the red channel of the segmentation PNG and returns ``True``
-    where the class ID equals ``29`` (sky).
+    Returns ``True`` where the segmentation PNG's RGB value equals
+    ``skyclass`` from the file's ``attributes`` or the dataset head's ``meta``:
+    ``[29, 0, 0]``, class ID 29 in the red channel, by default. The deprecated
+    ``sky_class_id`` is still read when no ``skyclass`` is given.
     """
-    return np.array(Image.open(path), dtype=np.uint8)[:, :, 0] == _SKY_CLASS_ID
+    with Image.open(path) as image:
+        rgb = np.array(image.convert("RGB"), dtype=np.uint8)
+    return match_rgb(rgb, _sky_color(meta, attributes))
 
 
 # ---------------------------------------------------------------------------
@@ -366,9 +392,10 @@ def write_class_segmentation(path: Union[str, BinaryIO], value: Any, meta: dict[
 
 @mark_stream_supported
 def write_sky_mask(path: Union[str, BinaryIO], value: Any, meta: dict[str, Any] | None = None) -> None:
-    """Write a sky mask as a class-ID PNG compatible with :func:`sky_mask`."""
-    sky_class_id = int((meta or {}).get("sky_class_id", _SKY_CLASS_ID))
+    """Write a sky mask as an RGBA class PNG compatible with :func:`sky_mask`."""
+    ensure_parent(path)
     mask = to_bool_mask(value)
-    class_ids = np.zeros(mask.shape, dtype=np.uint8)
-    class_ids[mask] = np.uint8(sky_class_id)
-    write_class_segmentation(path, class_ids, meta=meta)
+    rgba = np.zeros(mask.shape + (4,), dtype=np.uint8)
+    rgba[mask, :3] = _sky_color(meta)
+    rgba[:, :, 3] = 255
+    save_image(path, Image.fromarray(rgba, mode="RGBA"), format="PNG")

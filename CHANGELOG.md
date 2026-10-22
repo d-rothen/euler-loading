@@ -1,5 +1,41 @@
 # Changelog
 
+## Unreleased
+
+- `Modality.function` picks a callable from the loader module the dataset head
+  names, instead of its `function`; the writer follows it.
+  `Modality(path, function="sky_mask")` reads a `class_segmentation` index as
+  boolean sky masks. It is exclusive with `Modality.loader`.
+- The `sky_mask` loaders and writers of `real_drive_sim`, `vkitti2`,
+  `synscapes`, `muses` and `generic_dense_depth` read the sky definition from
+  the contract field `skyclass` (the sky label in the file's RGB view;
+  `[v, v, v]` for a single-channel label): first from the file's attributes,
+  then from the dataset head's meta. Their old hard-coded values are now
+  defaults, and they log the definition they use once.
+- Deprecate the per-loader sky keys `sky_class_id`, `sky_color`, `sky_class`
+  and `sky_mask` in favour of `skyclass`. They are still read when no
+  `skyclass` is given and raise a `DeprecationWarning`; when `skyclass` is
+  also given it wins, and the ignored key is logged as a warning.
+- Warn when the resolved sky differs from a loader's built-in default.
+- Reject values a loader cannot match instead of returning empty masks: a
+  non-grey `skyclass` for MUSES label PNGs (as for Synscapes and `generic`),
+  and anything but `[id, 0, 0]` for Real Drive Sim.
+- The dry run decodes segmentation heads with their loader module's
+  `sky_mask` (at least `SKY_SAMPLES` files), reports the sky fraction, and
+  warns when no sampled file has sky or one is more than 90% sky.
+- `real_drive_sim.sky_mask` compares the PNG's RGB value with `skyclass`
+  instead of only the red channel; for its own data, where sky is
+  `(29, 0, 0)`, the masks are unchanged.
+- Add `generic.sky_mask` for `.npy`/`.npz` class-id maps, which requires
+  `skyclass`.
+- The torch `sky_mask` loaders and writers of `real_drive_sim`, `vkitti2`,
+  `muses` and `generic_dense_depth` wrap the NumPy ones instead of
+  duplicating them.
+- `muses.sky_mask`'s declared default meta is `skyclass: [23, 23, 23]`; the
+  old `sky_class: [0, 0, 23]` matched no pixel of a `labelIds` PNG.
+- `MultiModalDataset` logs each modality's effective loader, noting when
+  `Modality.function` overrides the index.
+
 ## 2.27.0 (unreleased)
 
 - Add a dry-run command: `euler-loading <path>` (also `python -m

@@ -32,6 +32,7 @@ import numpy as np
 from PIL import Image
 
 from euler_loading.loaders._annotations import modality_meta
+from euler_loading.loaders._sky import grey, resolve_skyclass, skyclass_label
 from euler_loading.loaders._writer_utils import (
     ensure_parent,
     mark_stream_supported,
@@ -174,8 +175,8 @@ def _select_int(
     meta: dict[str, Any] | None,
     attributes: dict[str, Any] | None,
     key: str,
-    default: int,
-) -> int:
+    default: int | None,
+) -> int | None:
     """Return an integer option from *attributes*, *meta*, or *default*."""
     for source in (attributes, meta):
         if not isinstance(source, dict):
@@ -183,21 +184,26 @@ def _select_int(
         value = source.get(key)
         if value is None:
             continue
-        # numpy scalars are not int/float subclasses, but a label ID read off
-        # an array is a natural thing to pass.
-        if isinstance(value, bool) or not isinstance(
-            value, (int, float, np.integer, np.floating)
-        ):
-            raise ValueError(f"Synscapes {key!r} must be an integer, got {value!r}")
-        if not np.isfinite(value):
-            raise ValueError(f"Synscapes {key!r} must be finite, got {value!r}")
-        as_int = int(value)
-        if as_int != value:
-            raise ValueError(
-                f"Synscapes {key!r} must be a whole number, got {value!r}"
-            )
-        return as_int
+        return _as_whole_int(key, value)
     return default
+
+
+def _as_whole_int(key: str, value: Any) -> int:
+    """Validate an integer option such as a class ID."""
+    # numpy scalars are not int/float subclasses, but a label ID read off
+    # an array is a natural thing to pass.
+    if isinstance(value, bool) or not isinstance(
+        value, (int, float, np.integer, np.floating)
+    ):
+        raise ValueError(f"Synscapes {key!r} must be an integer, got {value!r}")
+    if not np.isfinite(value):
+        raise ValueError(f"Synscapes {key!r} must be finite, got {value!r}")
+    as_int = int(value)
+    if as_int != value:
+        raise ValueError(
+            f"Synscapes {key!r} must be a whole number, got {value!r}"
+        )
+    return as_int
 
 
 def _select_option(
@@ -299,7 +305,7 @@ def depth(
     meta={
         "encoding": "single_channel",
         "label_ids": "cityscapes",
-        "sky_class_id": _SKY_CLASS_ID,
+        "skyclass": [_SKY_CLASS_ID] * 3,
     },
 )
 def class_segmentation(
@@ -342,12 +348,28 @@ def instance_segmentation(
     return channels[:, :, 0] + 256 * channels[:, :, 1] + 65536 * channels[:, :, 2]
 
 
+def _sky_class_id(
+    meta: dict[str, Any] | None,
+    attributes: dict[str, Any] | None,
+) -> int:
+    """Return the sky label: the grey ``skyclass``, the deprecated ``sky_class_id``, or ID 23."""
+    loader = "synscapes sky_mask"
+    color = resolve_skyclass(
+        meta,
+        attributes,
+        loader=loader,
+        default=(_SKY_CLASS_ID,) * 3,
+        legacy={"sky_class_id": grey(lambda value: _as_whole_int("sky_class_id", value))},
+    )
+    return skyclass_label(color, loader=loader)
+
+
 @modality_meta(
     modality_type="sky_mask",
     dtype="bool",
     shape="HW",
     file_formats=[".png"],
-    meta={"sky_class_id": _SKY_CLASS_ID},
+    meta={"skyclass": [_SKY_CLASS_ID] * 3},
 )
 def sky_mask(
     path: Union[str, BinaryIO],
@@ -357,11 +379,14 @@ def sky_mask(
 ) -> np.ndarray:
     """Return ``(H, W)`` bool, true where ``img/class`` holds the sky label.
 
-    Cityscapes ID ``23`` is the default; ``meta['sky_class_id']``, or the same
-    key in per-file ``attributes``, selects another. :func:`write_sky_mask`
-    reads the same key, so one modality configuration round-trips.
+    The label is ``skyclass`` (a grey ``[v, v, v]``, as the contract stores
+    single-channel classes) from the file's ``attributes`` or the dataset head's
+    ``meta``, Cityscapes ID ``23`` by default. The deprecated ``sky_class_id``
+    is still read when no ``skyclass`` is given. :func:`write_sky_mask`
+    resolves the label the same way, so one modality configuration
+    round-trips.
     """
-    sky_id = _select_int(meta, attributes, "sky_class_id", _SKY_CLASS_ID)
+    sky_id = _sky_class_id(meta, attributes)
     return class_segmentation(path, meta, attributes=attributes) == sky_id
 
 
@@ -672,11 +697,12 @@ def write_sky_mask(path: Union[str, BinaryIO], value: Any, meta: dict[str, Any] 
     """Write a sky mask as a class PNG, labelling sky pixels with its class ID.
 
     The result is an ``img/class``-shaped file that round-trips through
-    :func:`sky_mask`; non-sky pixels get the unlabelled ID ``0``. Override the
-    IDs with ``meta['sky_class_id']`` and ``meta['non_sky_class_id']``.
+    :func:`sky_mask`; non-sky pixels get the unlabelled ID ``0``. The sky ID
+    resolves as in :func:`sky_mask`; ``meta['non_sky_class_id']`` overrides
+    the other.
     """
     mask = to_bool_mask(value)
-    sky_id = _select_int(meta, None, "sky_class_id", _SKY_CLASS_ID)
+    sky_id = _sky_class_id(meta, None)
     non_sky_id = _select_int(meta, None, "non_sky_class_id", 0)
     labels = np.where(mask, sky_id, non_sky_id).astype(np.int64)
     _save_label_png(path, labels, "sky_mask")

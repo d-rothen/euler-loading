@@ -11,7 +11,8 @@ Return types
 - **class_segmentation** – ``torch.LongTensor`` of shape ``(1, H, W)``
   (single-channel class IDs).
 - **sky_mask** – ``torch.BoolTensor`` of shape ``(1, H, W)``
-  (``True`` where class ID == 29).
+  (``True`` where the pixel has the dataset head's ``skyclass`` colour,
+  ``[29, 0, 0]`` by default).
 - **calibration** – ``dict[str, dict[str, torch.Tensor]]`` keyed by sensor
   name.  Each sensor dict contains ``"K"`` (3×3), ``"T"`` (4×4), and
   ``"distortion"`` (8,).
@@ -35,11 +36,11 @@ import numpy as np
 from PIL import Image
 
 from euler_loading.loaders._annotations import modality_meta
+from euler_loading.loaders.cpu import real_drive_sim as _cpu
 from euler_loading.loaders._writer_utils import (
     ensure_parent,
     mark_stream_supported,
     save_image,
-    to_bool_mask,
     to_hwc_rgb,
     to_hw,
     to_numpy,
@@ -88,7 +89,7 @@ def depth(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None, *, att
     dtype="int64",
     shape="1HW",
     file_formats=[".png"],
-    meta={"encoding": "single_channel", "sky_class_id": 29},
+    meta={"encoding": "single_channel", "skyclass": [29, 0, 0]},
 )
 def class_segmentation(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None, *, attributes: dict[str, Any] | None = None) -> torch.Tensor:
     """Load a class-segmentation mask as a ``(1, H, W)`` long tensor.
@@ -108,15 +109,15 @@ _SKY_CLASS_ID = 29
     dtype="bool",
     shape="1HW",
     file_formats=[".png"],
-    meta={"sky_class_id": 29},
+    meta={"skyclass": [_SKY_CLASS_ID, 0, 0]},
 )
 def sky_mask(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None, *, attributes: dict[str, Any] | None = None) -> torch.Tensor:
     """Load a sky mask as a ``(1, H, W)`` bool tensor.
 
-    Reads the red channel of the segmentation PNG and returns ``True``
-    where the class ID equals ``29`` (sky).
+    Torch counterpart of :func:`euler_loading.loaders.cpu.real_drive_sim.sky_mask`:
+    ``True`` where the PNG's RGB value equals the dataset head's ``skyclass``.
     """
-    arr = np.array(Image.open(path), dtype=np.uint8)[:, :, 0] == _SKY_CLASS_ID
+    arr = _cpu.sky_mask(path, meta, attributes=attributes)
     return torch.from_numpy(arr).unsqueeze(0).contiguous()
 
 
@@ -361,14 +362,7 @@ def write_class_segmentation(path: Union[str, BinaryIO], value: Any, meta: dict[
     save_image(path, Image.fromarray(rgba, mode="RGBA"), format="PNG")
 
 
-@mark_stream_supported
-def write_sky_mask(path: Union[str, BinaryIO], value: Any, meta: dict[str, Any] | None = None) -> None:
-    """Write a sky mask as a class-ID PNG compatible with :func:`sky_mask`."""
-    sky_class_id = int((meta or {}).get("sky_class_id", _SKY_CLASS_ID))
-    mask = to_bool_mask(value)
-    class_ids = np.zeros(mask.shape, dtype=np.uint8)
-    class_ids[mask] = np.uint8(sky_class_id)
-    write_class_segmentation(path, class_ids, meta=meta)
+write_sky_mask = _cpu.write_sky_mask
 
 
 def _rotation_matrix_to_quaternion(R: np.ndarray) -> tuple[float, float, float, float]:

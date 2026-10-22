@@ -13,7 +13,8 @@ Return types
 - **instance_segmentation** – ``torch.LongTensor`` of shape ``(3, H, W)``
   (RGB-encoded instance labels).
 - **sky_mask** – ``torch.BoolTensor`` of shape ``(1, H, W)``
-  (``True`` where the pixel is sky, i.e. RGB ``(90, 200, 255)``).
+  (``True`` where the pixel has the dataset head's ``skyclass`` colour,
+  RGB ``(90, 200, 255)`` by default).
 - **scene_flow** – ``torch.FloatTensor`` of shape ``(3, H, W)`` in ``[0, 1]``.
 - **read_intrinsics** – ``torch.FloatTensor`` of shape ``(3, 3)``
   (the camera intrinsic matrix *K*).
@@ -37,11 +38,11 @@ import numpy as np
 from PIL import Image
 
 from euler_loading.loaders._annotations import modality_meta
+from euler_loading.loaders.cpu import vkitti2 as _cpu
 from euler_loading.loaders._writer_utils import (
     ensure_parent,
     mark_stream_supported,
     save_image,
-    to_bool_mask,
     to_hwc_rgb,
     to_hw,
     to_numpy,
@@ -119,20 +120,15 @@ _SKY_COLOR = (90, 200, 255)
     dtype="bool",
     shape="1HW",
     file_formats=[".png"],
-    meta={"sky_color": [90, 200, 255]},
+    meta={"skyclass": list(_SKY_COLOR)},
 )
 def sky_mask(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None, *, attributes: dict[str, Any] | None = None) -> torch.Tensor:
     """Load a sky mask as a ``(1, H, W)`` bool tensor.
 
-    Reads the RGB class-segmentation PNG and returns ``True`` where the
-    pixel colour equals ``(90, 200, 255)`` (sky class in VKITTI2).
+    Torch counterpart of :func:`euler_loading.loaders.cpu.vkitti2.sky_mask`:
+    ``True`` where the class PNG has the dataset head's ``skyclass`` colour.
     """
-    arr = np.array(Image.open(path).convert("RGB"), dtype=np.uint8)
-    mask = (
-        (arr[:, :, 0] == _SKY_COLOR[0])
-        & (arr[:, :, 1] == _SKY_COLOR[1])
-        & (arr[:, :, 2] == _SKY_COLOR[2])
-    )
+    mask = _cpu.sky_mask(path, meta, attributes=attributes)
     return torch.from_numpy(mask).unsqueeze(0).contiguous()
 
 
@@ -237,18 +233,7 @@ def write_instance_segmentation(path: Union[str, BinaryIO], value: Any, meta: di
     save_image(path, Image.fromarray(arr, mode="RGB"), format="PNG")
 
 
-@mark_stream_supported
-def write_sky_mask(path: Union[str, BinaryIO], value: Any, meta: dict[str, Any] | None = None) -> None:
-    """Write a sky-mask image in VKITTI2-compatible RGB encoding."""
-    ensure_parent(path)
-    mask = to_bool_mask(value)
-    sky_color_raw = (meta or {}).get("sky_color", _SKY_COLOR)
-    sky_color = np.asarray(sky_color_raw, dtype=np.uint8)
-    if sky_color.shape != (3,):
-        raise ValueError("meta['sky_color'] must be a 3-element RGB color")
-    arr = np.zeros(mask.shape + (3,), dtype=np.uint8)
-    arr[mask] = sky_color
-    save_image(path, Image.fromarray(arr, mode="RGB"), format="PNG")
+write_sky_mask = _cpu.write_sky_mask
 
 
 @mark_stream_supported

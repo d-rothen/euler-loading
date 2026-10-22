@@ -34,6 +34,13 @@ import numpy as np
 from PIL import Image
 
 from euler_loading.loaders._annotations import modality_meta
+from euler_loading.loaders._sky import (
+    as_rgb,
+    grey,
+    match_rgb,
+    resolve_skyclass,
+    skyclass_label,
+)
 
 _LIDAR_COLUMNS = ["x", "y", "z", "intensity", "ring", "timestamp"]
 _SKY_LABEL_ID = 23
@@ -59,42 +66,21 @@ def _load_single_channel_labels(path: Union[str, BinaryIO]) -> np.ndarray:
     return arr
 
 
-def _select_sky_class_id(
-    path: Union[str, BinaryIO],
-    meta: Mapping[str, Any] | None,
-    attributes: Mapping[str, Any] | None,
-) -> int:
-    for source in (attributes, meta):
-        if not isinstance(source, Mapping):
-            continue
-        value = source.get("sky_class_id")
-        if isinstance(value, (int, np.integer)):
-            return int(value)
-
+def _default_sky_class_id(path: Union[str, BinaryIO]) -> int:
     name = str(getattr(path, "name", path)).lower()
     if "labelids" in name:
         return _SKY_LABEL_ID
     return _SKY_TRAIN_ID
 
 
-def _select_sky_class_color(
-    meta: Mapping[str, Any] | None,
-    attributes: Mapping[str, Any] | None,
-) -> np.ndarray | None:
-    for source in (attributes, meta):
-        if not isinstance(source, Mapping):
-            continue
-        value = source.get("sky_class")
-        if value is None:
-            value = source.get("sky_mask")
-        if value is None:
-            continue
+def _legacy_class_id(value: Any) -> int:
+    if isinstance(value, bool) or not isinstance(value, (int, np.integer)):
+        raise ValueError(f"MUSES 'sky_class_id' must be an integer, got {value!r}")
+    return int(value)
 
-        color = np.asarray(value, dtype=np.uint8)
-        if color.shape != (3,):
-            raise ValueError("MUSES sky_class must be a 3-element RGB value")
-        return color
-    return None
+
+def _legacy_color(key: str) -> Any:
+    return lambda value: as_rgb(value, what=f"MUSES {key!r}")
 
 
 def _load_sky_mask_array(
@@ -102,14 +88,24 @@ def _load_sky_mask_array(
     meta: Mapping[str, Any] | None,
     attributes: Mapping[str, Any] | None,
 ) -> np.ndarray:
-    color = _select_sky_class_color(meta, attributes)
-    if color is not None:
-        with Image.open(path) as image:
-            arr = np.array(image.convert("RGB"), dtype=np.uint8)
-        return np.all(arr == color, axis=-1)
-
-    labels = _load_single_channel_labels(path)
-    return labels == _select_sky_class_id(path, meta, attributes)
+    loader = "muses sky_mask"
+    color = resolve_skyclass(
+        meta,
+        attributes,
+        loader=loader,
+        default=(_default_sky_class_id(path),) * 3,
+        legacy={
+            "sky_class": _legacy_color("sky_class"),
+            "sky_mask": _legacy_color("sky_mask"),
+            "sky_class_id": grey(_legacy_class_id),
+        },
+    )
+    with Image.open(path) as image:
+        labels = np.array(image)
+        if labels.ndim == 2:
+            return labels.astype(np.int64) == skyclass_label(color, loader=loader)
+        rgb = np.array(image.convert("RGB"), dtype=np.uint8)
+    return match_rgb(rgb, color)
 
 
 def _load_rgb_uint8(path: Union[str, BinaryIO]) -> np.ndarray:
@@ -309,7 +305,7 @@ def semantic_segmentation(path: Union[str, BinaryIO], meta: dict[str, Any] | Non
     file_formats=[".png"],
     meta={
         "encoding": "single_channel",
-        "sky_class": [0, 0, _SKY_LABEL_ID],
+        "skyclass": [_SKY_LABEL_ID] * 3,
         "sky_label_id": _SKY_LABEL_ID,
         "sky_train_id": _SKY_TRAIN_ID,
     },
@@ -317,10 +313,13 @@ def semantic_segmentation(path: Union[str, BinaryIO], meta: dict[str, Any] | Non
 def sky_mask(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None, *, attributes: dict[str, Any] | None = None) -> np.ndarray:
     """Load a MUSES sky mask as an ``(H, W)`` bool array.
 
-    Reads a single-channel Cityscapes ``labelIds`` / ``labelTrainIds`` PNG, or
-    an RGB-encoded class image when ``sky_class`` is provided. Override the
-    default ID with ``sky_class_id``, or set ``sky_class`` to an RGB value such
-    as ``[0, 0, 23]``.
+    The sky is ``skyclass`` from the file's ``attributes`` or the dataset
+    head's ``meta``: a grey ``[v, v, v]`` selects label ``v`` in a
+    single-channel ``labelIds`` / ``labelTrainIds`` PNG (other values raise),
+    and a colour selects it in an RGB-encoded class image. Without
+    ``skyclass`` the label defaults to 23 for ``labelIds`` files and 10
+    otherwise; the deprecated ``sky_class_id``, ``sky_class`` and ``sky_mask``
+    keys are still read when no ``skyclass`` is given.
     """
     return _load_sky_mask_array(path, meta, attributes)
 

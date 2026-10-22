@@ -148,6 +148,9 @@ def _render_modality(check: ModalityCheck) -> list[str]:
                 detail = f"FAILED  {sample.error}"
             lines.append(f"{_INDENT * 2}{name}  ->  {detail}")
 
+    if check.sky:
+        lines.append(_field("sky", check.sky))
+
     for warning in check.warnings:
         lines.append(_field("warning", warning))
     for error in check.errors:
