@@ -8,9 +8,11 @@ file's ds-crawler attributes may carry its own ``skyclass``.
 
 Resolution order: the file's ``skyclass``, the head's ``skyclass``, a
 deprecated per-loader key (``sky_class_id``, ``sky_color``, ...), then the
-loader's built-in default. Deprecated keys raise a :class:`DeprecationWarning`;
-a deprecated key that ``skyclass`` overrides, and a resolved sky that differs
-from the loader's default, are logged as warnings.
+loader's built-in default. A ``null`` ``skyclass``, the contract's default,
+declares no sky and is skipped. Deprecated keys raise a
+:class:`DeprecationWarning`; a deprecated key that ``skyclass`` overrides, a
+resolved sky that differs from the loader's default, and a head's
+``[0, 0, 0]``, the contract's old default, are logged as warnings.
 """
 
 from __future__ import annotations
@@ -25,6 +27,11 @@ import numpy as np
 logger = logging.getLogger(__name__)
 
 SKYCLASS_KEY = "skyclass"
+
+#: The ``skyclass`` default before euler-dataset-contract made it ``null``.
+#: ds-crawler merged it into every head that set no sky, so in a head it may
+#: be a placeholder rather than a declared sky.
+_OLD_CONTRACT_DEFAULT = (0, 0, 0)
 
 RGB = tuple[int, int, int]
 
@@ -71,12 +78,14 @@ def resolve_skyclass(
 
     color: RGB | None = None
     origin = ""
+    declared_in_head = False
     for label, source in sources:
         if source.get(SKYCLASS_KEY) is not None:
             color = as_rgb(
                 source[SKYCLASS_KEY], what=f"{loader}: {SKYCLASS_KEY!r} in {label}"
             )
             origin = f"{SKYCLASS_KEY!r} in {label}"
+            declared_in_head = source is meta
             break
 
     for label, source in sources:
@@ -115,7 +124,20 @@ def resolve_skyclass(
         )
         return tuple(default)
 
-    if default is not None and color != tuple(default):
+    if declared_in_head and color == _OLD_CONTRACT_DEFAULT:
+        fix = (
+            f"declare the dataset's sky, or null to use the default {list(default)}"
+            if default is not None
+            else "declare the dataset's sky"
+        )
+        _log_once(
+            logging.WARNING,
+            f"{loader}: {origin} is {list(color)}, the value "
+            "euler-dataset-contract filled into heads that set no sky before "
+            f"its default became null; using it as label 0 or black. If that "
+            f"is not the sky, {fix}.",
+        )
+    elif default is not None and color != tuple(default):
         _log_once(
             logging.WARNING,
             f"{loader}: {origin} gives sky {list(color)}, which differs from "

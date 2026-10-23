@@ -251,8 +251,13 @@ for a single-channel label `v`:
 | MUSES `labelIds` | single-channel Cityscapes label IDs | `[23, 23, 23]` |
 | Cityscapes train IDs, e.g. `generic` `.npy` maps | single-channel | `[10, 10, 10]` |
 
+`skyclass: null`, the contract's default, declares no sky. `[0, 0, 0]` is taken
+literally, as label 0 or black; contract releases before `null` used it as the
+default, so heads written then can carry it without anyone having declared it.
+A head that declares `[0, 0, 0]` is therefore logged as a warning.
+
 Every `sky_mask` loader (and the matching `write_sky_mask`) resolves the sky in
-this order, and logs the definition it uses once:
+this order, skipping a `null` `skyclass`, and logs the definition it uses once:
 
 1. `skyclass` in the file's ds-crawler attributes,
 2. `skyclass` in the dataset head's meta,

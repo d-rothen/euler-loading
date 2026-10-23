@@ -12,6 +12,12 @@
   `[v, v, v]` for a single-channel label): first from the file's attributes,
   then from the dataset head's meta. Their old hard-coded values are now
   defaults, and they log the definition they use once.
+- A `null` `skyclass`, the default from euler-dataset-contract's next release,
+  declares no sky: the loaders fall back to a deprecated key or their default,
+  and `generic` / `generic_dense_depth` raise. `[0, 0, 0]`, the contract's old
+  default, is still taken literally, but a head that declares it logs a warning
+  naming it the old default, in place of the warning about differing from the
+  loader's default. Loaders without a default warn too.
 - Deprecate the per-loader sky keys `sky_class_id`, `sky_color`, `sky_class`
   and `sky_mask` in favour of `skyclass`. They are still read when no
   `skyclass` is given and raise a `DeprecationWarning`; when `skyclass` is

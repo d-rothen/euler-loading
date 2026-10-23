@@ -164,6 +164,31 @@ class TestResolveSkyclass:
         with pytest.raises(ValueError, match="needs 'skyclass'"):
             self.resolve({}, default=None)
 
+    def test_null_skyclass_is_undeclared(self):
+        # The contract's default: heads that set no sky carry null.
+        assert self.resolve({"skyclass": None}) == (9, 9, 9)
+        assert self.resolve({"skyclass": [4, 4, 4]}, {"skyclass": None}) == (4, 4, 4)
+        with pytest.warns(DeprecationWarning):
+            assert self.resolve({"skyclass": None, "old_id": 7}) == (7, 7, 7)
+        with pytest.raises(ValueError, match="needs 'skyclass'"):
+            self.resolve({"skyclass": None}, default=None)
+
+    def test_black_skyclass_is_taken_literally(self, caplog):
+        with caplog.at_level(logging.WARNING, logger="euler_loading"):
+            assert self.resolve({"skyclass": [0, 0, 0]}) == (0, 0, 0)
+        # One warning, naming the old contract default instead of the default.
+        warned = [m for m in caplog.messages if "[0, 0, 0]" in m]
+        assert len(warned) == 1
+        assert "filled into heads that set no sky" in warned[0]
+        assert "or null to use the default [9, 9, 9]" in warned[0]
+
+    def test_black_skyclass_in_file_attributes_is_not_the_old_default(self, caplog):
+        with caplog.at_level(logging.WARNING, logger="euler_loading"):
+            _sky.resolve_skyclass(
+                {}, {"skyclass": [0, 0, 0]}, loader="attr-black", default=None
+            )
+        assert not any("filled into heads" in m for m in caplog.messages)
+
     @pytest.mark.parametrize("value", [[1, 2], [1, 2, 256], [1.0, 2.0, 3.0], [True, 0, 0]])
     def test_invalid_values_raise(self, value):
         with pytest.raises(ValueError, match="three integers"):
@@ -189,6 +214,15 @@ class TestRealDriveSimSky:
         np.testing.assert_array_equal(relabelled, CLASS_IDS == 31)
         gpu = gpu_rds.sky_mask(str(path), {"skyclass": [31, 0, 0]})
         np.testing.assert_array_equal(gpu[0].numpy(), CLASS_IDS == 31)
+
+    def test_null_skyclass_uses_the_default(self, tmp_path):
+        path = _rds_png(tmp_path / "seg.png")
+        np.testing.assert_array_equal(
+            cpu_rds.sky_mask(str(path), {"skyclass": None}), CLASS_IDS == 29
+        )
+        sky = tmp_path / "sky.png"
+        cpu_rds.write_sky_mask(str(sky), CLASS_IDS == 29, {"skyclass": None})
+        np.testing.assert_array_equal(cpu_rds.sky_mask(str(sky)), CLASS_IDS == 29)
 
     def test_skyclass_must_keep_the_id_in_the_red_channel(self, tmp_path):
         path = _rds_png(tmp_path / "seg.png")
@@ -219,6 +253,20 @@ class TestVKITTI2Sky:
         np.testing.assert_array_equal(cpu_vkitti2.sky_mask(str(path)), expected)
         relabelled = gpu_vkitti2.sky_mask(str(path), {"skyclass": [1, 2, 3]})
         np.testing.assert_array_equal(relabelled[0].numpy(), np.roll(expected, 2, axis=1))
+
+    def test_null_skyclass_falls_back_to_the_deprecated_key(self, tmp_path):
+        # What a migrated head looks like: its old key plus the contract's null.
+        path = self._png(tmp_path / "class.png")
+        expected = np.zeros((2, 3), dtype=bool)
+        expected[:, 0] = True
+        np.testing.assert_array_equal(
+            cpu_vkitti2.sky_mask(str(path), {"skyclass": None}), expected
+        )
+        with pytest.warns(DeprecationWarning, match="'sky_color'"):
+            legacy = cpu_vkitti2.sky_mask(
+                str(path), {"skyclass": None, "sky_color": [1, 2, 3]}
+            )
+        np.testing.assert_array_equal(legacy, np.roll(expected, 2, axis=1))
 
     def test_writer_round_trips_the_head_skyclass(self, tmp_path):
         meta = {"skyclass": [1, 2, 3]}
@@ -288,6 +336,19 @@ class TestGenericDenseDepthSky:
         with pytest.raises(ValueError, match="needs 'skyclass'"):
             cpu_gdd.sky_mask(str(path))
 
+    def test_old_contract_default_is_warned_without_a_loader_default(self, tmp_path, caplog):
+        # No default to differ from, so only the old-default check catches it.
+        path = tmp_path / "white_sky.png"
+        Image.fromarray(np.array([[[255] * 3, [0] * 3]], dtype=np.uint8)).save(path)
+        with caplog.at_level(logging.WARNING, logger="euler_loading"):
+            mask = cpu_gdd.sky_mask(str(path), {"skyclass": [0, 0, 0]})
+        assert mask.tolist() == [[False, True]]
+        assert any(
+            "generic_dense_depth sky_mask: 'skyclass' in the dataset head is "
+            "[0, 0, 0]" in message and message.endswith("declare the dataset's sky.")
+            for message in caplog.messages
+        )
+
 
 class TestGenericSky:
     def test_mask_needs_the_head_skyclass(self, tmp_path):
@@ -300,6 +361,8 @@ class TestGenericSky:
         assert gpu.dtype == torch.bool and tuple(gpu.shape) == (1, 1, 3)
         with pytest.raises(ValueError, match="needs 'skyclass'"):
             cpu_generic.sky_mask(str(path))
+        with pytest.raises(ValueError, match="needs 'skyclass'"):
+            cpu_generic.sky_mask(str(path), {"skyclass": None})
 
 
 class TestDryRunSkyCheck:
