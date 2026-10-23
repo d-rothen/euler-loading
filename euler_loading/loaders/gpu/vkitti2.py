@@ -214,7 +214,8 @@ def write_depth(path: Union[str, BinaryIO], value: Any, meta: dict[str, Any] | N
     ensure_parent(path)
     depth_m = to_hw(value, name="depth").astype(np.float32)
     depth_cm = np.clip(np.rint(depth_m * 100.0), 0, 65535).astype(np.uint16)
-    save_image(path, Image.fromarray(depth_cm, mode="I;16"), format="PNG")
+    # uint16 becomes an I;16 image; Pillow 13 rejects an explicit mode="I;16".
+    save_image(path, Image.fromarray(depth_cm), format="PNG")
 
 
 @mark_stream_supported

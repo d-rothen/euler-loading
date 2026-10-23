@@ -225,7 +225,8 @@ def write_depth(path: Union[str, BinaryIO], value: Any, meta: dict[str, Any] | N
             save_image(path, Image.fromarray(depth_f32.astype(np.uint8), mode="L"))
             return
         depth_u16 = np.clip(np.rint(depth_f32), 0, 65535).astype(np.uint16)
-        save_image(path, Image.fromarray(depth_u16, mode="I;16"), format="PNG")
+        # uint16 becomes an I;16 image; Pillow 13 rejects an explicit mode="I;16".
+        save_image(path, Image.fromarray(depth_u16), format="PNG")
         return
 
     depth_f32 = depth.astype(np.float32)

@@ -72,7 +72,7 @@ def depth_path(tmp_path):
     from PIL import Image
 
     arr = np.array([[100, 200], [300, 400]], dtype=np.uint16)
-    img = Image.fromarray(arr, mode="I;16")
+    img = Image.fromarray(arr)  # uint16 -> I;16
     p = tmp_path / "depth.png"
     img.save(p)
     return str(p)
@@ -1404,6 +1404,24 @@ class TestCPUGenericLoaders:
         path, _ = spherical_npz_path
         result = cpu_generic.spherical_map(path)
         assert result.shape == (4, 5, 3)
+
+
+class TestGenericDenseDepthWriters:
+    # Values above 255 take the 16-bit PNG path rather than the 8-bit one.
+    DEPTH = np.array([[0, 300], [1000, 65535]], dtype=np.uint16)
+
+    def test_cpu_write_depth_16bit_png_roundtrip(self, tmp_path):
+        path = tmp_path / "depth.png"
+        cpu_generic_dense_depth.write_depth(str(path), self.DEPTH)
+        with Image.open(path) as image:
+            assert image.mode == "I;16"
+        np.testing.assert_array_equal(cpu_generic_dense_depth.depth(str(path)), self.DEPTH)
+
+    def test_gpu_write_depth_16bit_png_roundtrip(self, tmp_path):
+        path = tmp_path / "depth.png"
+        gpu_generic_dense_depth.write_depth(str(path), torch.from_numpy(self.DEPTH.astype(np.int32)))
+        loaded = gpu_generic_dense_depth.depth(str(path))
+        np.testing.assert_array_equal(loaded[0].numpy(), self.DEPTH)
 
 
 class TestGenericWriters:

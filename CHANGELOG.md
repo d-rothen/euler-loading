@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Fix `vkitti2.write_depth` and the 16-bit PNG path of
+  `generic_dense_depth.write_depth` on Pillow 13, which rejects
+  `Image.fromarray(uint16, mode="I;16")`; a uint16 array becomes an `I;16`
+  image without the argument on every supported Pillow.
 - `Modality.function` picks a callable from the loader module the dataset head
   names, instead of its `function`; the writer follows it.
   `Modality(path, function="sky_mask")` reads a `class_segmentation` index as
