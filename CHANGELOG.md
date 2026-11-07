@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Require ds-crawler 2.14.0, whose writers implement `path_prefix`. On an older
+  ds-crawler, `path_prefix` now raises instead of being taken as a dataset
+  property, which wrote the files to the root.
+
 - Public accessors for producers of derived datasets:
   `MultiModalDataset.get_loader(name)` (the resolved decoding function),
   `get_loader_meta(name)` (a copy of its `@modality_meta` annotation: shape

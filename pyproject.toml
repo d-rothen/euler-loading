@@ -32,7 +32,7 @@ classifiers = [
 dependencies = [
     "numpy",
     "Pillow",
-    "ds-crawler>=2.11.0",
+    "ds-crawler>=2.14.0",
     "euler-dataset-contract>=0.5.0",
 ]
 

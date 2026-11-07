@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import json
 import logging
 import os
@@ -121,6 +122,18 @@ def _wrap_writer_save_index(
     return writer
 
 
+def _writer_supports_path_prefix(writer_cls: type) -> bool:
+    """Whether the installed ds-crawler writer takes ``path_prefix`` (ds-crawler >= 2.14).
+
+    Older writers accept any keyword as a dataset property, so an unsupported
+    ``path_prefix`` would be dropped silently and the files written to the root.
+    """
+    try:
+        return "path_prefix" in inspect.signature(writer_cls).parameters
+    except (TypeError, ValueError):
+        return False
+
+
 def create_dataset_writer_from_index(
     *,
     index_output: Mapping[str, Any],
@@ -183,6 +196,11 @@ def create_dataset_writer_from_index(
         else None,
     )
     writer_cls = ZipDatasetWriter if zip else DatasetWriter
+    if path_prefix is not None and not _writer_supports_path_prefix(writer_cls):
+        raise RuntimeError(
+            "path_prefix needs ds-crawler >= 2.14; the installed ds-crawler would ignore "
+            "it and write the files to the root"
+        )
     try:
         contract = get_dataset_contract(dict(index_output))
     except Exception:

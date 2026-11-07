@@ -98,6 +98,24 @@ def test_writer_path_prefix_shares_one_scoped_root(stf, tmp_path):
     assert sorted(json.loads((root / ".ds_crawler" / "scopes.json").read_text())["scopes"]) == ["rgb", "sparse_depth"]
 
 
+def test_path_prefix_refuses_a_ds_crawler_that_would_ignore_it(stf, tmp_path, monkeypatch):
+    """ds-crawler < 2.14 takes unknown keywords as dataset properties."""
+    from ds_crawler import DatasetWriter as CurrentWriter
+
+    import euler_loading._writing as writing
+
+    class OldWriter(CurrentWriter):
+        def __init__(self, root, *, head=None, separator=":", metadata_scope=None, **properties):
+            super().__init__(root, head=head, separator=separator, metadata_scope=metadata_scope)
+
+    monkeypatch.setattr(writing, "DatasetWriter", OldWriter)
+    with pytest.raises(RuntimeError, match=r"path_prefix needs ds-crawler >= 2\.14"):
+        create_dataset_writer_from_index(
+            index_output=stf.get_modality_index("rgb"), root=tmp_path / "out", path_prefix="rgb"
+        )
+    assert not (tmp_path / "out").exists()
+
+
 def test_path_prefix_is_not_supported_for_materialized_outputs(stf, tmp_path):
     with pytest.raises(ValueError, match="path_prefix is not supported"):
         create_dataset_writer_from_index(
