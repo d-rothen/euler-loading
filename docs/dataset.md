@@ -149,6 +149,42 @@ dataset = MultiModalDataset(
 # With the transform:     sample["calibration"]["CS_FRONT"]["K"]
 ```
 
+### Per-sample selection from a shared file
+
+Some datasets keep per-sample records in one shared file, such as a metadata
+table for a whole split or recording. Index that file as a hierarchical
+modality and give its loader a selector. The loader decodes the whole table
+once (cached as usual), and the selector picks each sample's record:
+
+```python
+from euler_loading import SampleContext, selects_per_sample
+
+
+def record_for(table: dict, context: SampleContext) -> dict:
+    # The sample's regular files identify its row; raise KeyError when absent.
+    name = Path(context.files["rgb"]["path"]).stem
+    return table[name]
+
+
+@selects_per_sample(record_for)
+def frame_table(path, meta=None):
+    with open(path) as f:
+        return json.load(f)
+```
+
+The `SampleContext` carries:
+- `modality`, the hierarchical modality's name;
+- `entry`, the shared file's index entry;
+- the sample's `id`, `full_id` and `hierarchy_path`;
+- `files`, the index entries of the sample's regular modalities (each with
+  its `path` and `id`).
+
+The selector travels with the loader function, so it applies whether the
+function is resolved from a dataset head, chosen with `Modality.function` or
+passed as `Modality.loader`. The selected value takes the shared value's
+place: `sample[name][file_id]`, or `sample[name]` with `collapse_single=True`.
+`muses.sensor_timing` uses this for MUSES `meta.json`.
+
 ## Inline splits
 
 Given ds-crawler inline splits such as `.ds_crawler/split_train.json`:

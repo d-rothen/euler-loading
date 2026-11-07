@@ -294,6 +294,26 @@
             "name": "muses",
             "modalities": [
                 {
+                    "type": "gnss",
+                    "function": "gnss",
+                    "hierarchical": false,
+                    "dtype": "dict",
+                    "access": "key",
+                    "file_formats": [
+                        ".txt"
+                    ],
+                    "meta": {
+                        "source": "u-blox navigation record, gnss/dataformat.txt",
+                        "heading_rate_axis": "negative yaw axis (clockwise from above is positive)"
+                    },
+                    "cpu": {
+                        "shape": "dict"
+                    },
+                    "gpu": {
+                        "shape": "dict"
+                    }
+                },
+                {
                     "type": "point_cloud",
                     "function": "lidar_point_cloud",
                     "hierarchical": false,
@@ -377,6 +397,26 @@
                     },
                     "gpu": {
                         "shape": "3x3"
+                    }
+                },
+                {
+                    "type": "lidar_to_gnss",
+                    "function": "read_lidar_to_gnss",
+                    "hierarchical": true,
+                    "dtype": "float32",
+                    "access": "key",
+                    "file_formats": [
+                        ".json"
+                    ],
+                    "meta": {
+                        "transform": "lidar2gnss",
+                        "transform_direction": "lidar_to_gnss"
+                    },
+                    "cpu": {
+                        "shape": "4x4"
+                    },
+                    "gpu": {
+                        "shape": "4x4"
                     }
                 },
                 {
@@ -465,6 +505,27 @@
                     },
                     "gpu": {
                         "shape": "CHW"
+                    }
+                },
+                {
+                    "type": "sensor_timing",
+                    "function": "sensor_timing",
+                    "hierarchical": true,
+                    "dtype": "dict",
+                    "access": "key",
+                    "file_formats": [
+                        ".json"
+                    ],
+                    "meta": {
+                        "source": "meta.json",
+                        "unit": "microseconds",
+                        "matched_by": "path_to_* file names"
+                    },
+                    "cpu": {
+                        "shape": "dict"
+                    },
+                    "gpu": {
+                        "shape": "dict"
                     }
                 },
                 {

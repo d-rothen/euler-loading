@@ -440,8 +440,43 @@ same resolution. Loaders preserve the stored resolution.
 | `sparse_depth` | (N, 6) | float64 | Same points, for sparse-depth workflows |
 | `read_intrinsics` | 3×3 | float32 | From `calib.json`, `sensor="rgb"` · *hierarchical* |
 | `read_extrinsics` | 4×4 | float32 | From `calib.json`, `transform="lidar2rgb"` · *hierarchical* |
+| `read_lidar_to_gnss` | 4×4 | float32 | `extrinsics.lidar2gnss` from `calib.json` · *hierarchical* |
+| `gnss` | dict | — | Per-frame `gnss/…_gnss.txt` u-blox record, in physical units |
+| `sensor_timing` | dict | — | The frame's sensor timestamps from `meta.json`, in UTC µs · *hierarchical, selected per sample* |
 
-`point_cloud` is an alias for `lidar_point_cloud`.
+`point_cloud` is an alias for `lidar_point_cloud`. `write_sparse_depth` (and
+`write_lidar_point_cloud` / `write_point_cloud`) writes `(N, 6)` float64
+`.bin` files that read back unchanged.
+
+#### Ego-motion inputs
+
+The MUSES lidar sweeps its field of view top to bottom in about 85 ms, while
+the car moves. Its points therefore need ego-motion compensation before they
+line up with the frame camera. The official SDK moves each point to the
+camera's mid-exposure using the frame's GNSS record. These three loaders
+supply that SDK's inputs per sample; the compensation itself is left to
+consumers.
+
+- `gnss`: index `gnss/` as a regular modality with the same hierarchy and ID
+  rules as `frame_camera` and `lidar`, so samples join it by ID. Leave out
+  `gnss/dataformat.txt`, e.g. with `include_regex` `_gnss\.txt$`. The record
+  carries `ground_speed_m_s`, `roll_rate_deg_s`, `pitch_rate_deg_s` and
+  `heading_rate_deg_s`; the heading rate is positive clockwise seen from
+  above. It also has position, attitude, NED velocity and accuracies. Every
+  key names its unit.
+- `sensor_timing`: index `meta.json` as a root-level file, like `calib.json`,
+  with `include_regex` `^meta\.json$`. It is decoded once. Each sample then
+  receives its own `{"frame", "camera_exposure_start_us",
+  "camera_exposure_end_us", "lidar_start_us", "lidar_end_us",
+  "radar_start_us", "radar_end_us"}` record. The record is found through the
+  file names the `meta.json` entries list under `path_to_*`, so it does not
+  depend on how IDs are built, but the sample's files must keep their native
+  MUSES names.
+- `read_lidar_to_gnss`: index `calib.json` once more for this modality. It
+  maps lidar points into the GNSS record's frame.
+
+The per-point lidar timestamp (column 6, seconds) together with these inputs
+is all the compensation needs.
 
 ### Real Drive Sim — `real_drive_sim`
 

@@ -21,6 +21,14 @@ Return types
   from ``calib.json``.
 - **read_extrinsics** -- ``np.ndarray`` of shape ``(4, 4)`` float32 parsed
   from ``calib.json``.
+- **gnss** -- ``dict`` with the frame's GNSS/IMU record in physical units.
+- **sensor_timing** -- ``dict`` with the frame's sensor timestamps from
+  ``meta.json`` (hierarchical; selected per sample by file name).
+- **read_lidar_to_gnss** -- ``np.ndarray`` of shape ``(4, 4)``, the
+  ``lidar2gnss`` transform from ``calib.json``.
+
+Writers: ``write_sparse_depth`` (aliases ``write_lidar_point_cloud``,
+``write_point_cloud``) writes ``(N, 6)`` float64 ``.bin`` files.
 """
 
 from __future__ import annotations
@@ -33,13 +41,22 @@ from typing import Any, BinaryIO, Union
 import numpy as np
 from PIL import Image
 
-from euler_loading.loaders._annotations import modality_meta
+from euler_loading.loaders._annotations import (
+    SampleContext,
+    modality_meta,
+    selects_per_sample,
+)
 from euler_loading.loaders._sky import (
     as_rgb,
     grey,
     match_rgb,
     resolve_skyclass,
     skyclass_label,
+)
+from euler_loading.loaders._writer_utils import (
+    ensure_parent,
+    mark_stream_supported,
+    to_numpy,
 )
 
 _LIDAR_COLUMNS = ["x", "y", "z", "intensity", "ring", "timestamp"]
@@ -424,3 +441,256 @@ def read_extrinsics(path: Union[str, BinaryIO], meta: dict[str, Any] | None = No
     ``source_sensor`` + ``target_sensor``.
     """
     return _read_extrinsics_array(path, meta, attributes)
+
+
+# ---------------------------------------------------------------------------
+# Ego-motion inputs: GNSS/IMU records, sensor timing, lidar-to-GNSS mount
+# ---------------------------------------------------------------------------
+
+# Field order of gnss/<split>/<condition>/<time>/<frame>_gnss.txt, as listed in
+# the dataset's gnss/dataformat.txt (one line of integers per frame).
+_GNSS_FIELDS = (
+    "iTOW", "timestamp", "tAcc", "lon", "lat", "height", "hMSL", "fixType",
+    "numSV", "hAcc", "vAcc", "roll", "pitch", "heading", "accRoll", "accPitch",
+    "accHeading", "angular_rate_roll", "angular_rate_pitch",
+    "angular_rate_heading", "velN", "velE", "velD", "gSpeed", "sAcc", "pDOP",
+    "magDec", "magAcc",
+)
+
+# meta.json timestamp fields (integer microseconds stored as strings).
+_TIMING_FIELDS = {
+    "camera_exposure_start_us": "frame_camera_exposure_start_timestamp_us",
+    "camera_exposure_end_us": "frame_camera_exposure_end_timestamp_us",
+    "lidar_start_us": "lidar_start_timestamp_us",
+    "lidar_end_us": "lidar_end_timestamp_us",
+    "radar_start_us": "radar_start_timestamp_us",
+    "radar_end_us": "radar_end_timestamp_us",
+}
+
+
+def _read_text(path: Union[str, BinaryIO]) -> str:
+    if isinstance(path, (str, os.PathLike)):
+        with open(path, encoding="utf-8") as f:
+            return f.read()
+    data = path.read()
+    return data.decode("utf-8") if isinstance(data, bytes) else data
+
+
+def _load_gnss_record(path: Union[str, BinaryIO]) -> dict[str, int]:
+    lines = [line for line in _read_text(path).splitlines() if line.strip()]
+    values = lines[0].split() if lines else []
+    if len(values) != len(_GNSS_FIELDS):
+        name = getattr(path, "name", path)
+        raise ValueError(
+            f"MUSES GNSS file {name!r} must hold one line of {len(_GNSS_FIELDS)} "
+            f"integers (see gnss/dataformat.txt), found {len(values)} values."
+        )
+    return dict(zip(_GNSS_FIELDS, (int(v) for v in values)))
+
+
+@modality_meta(
+    modality_type="gnss",
+    dtype="dict",
+    shape="dict",
+    file_formats=[".txt"],
+    meta={
+        "source": "u-blox navigation record, gnss/dataformat.txt",
+        "heading_rate_axis": "negative yaw axis (clockwise from above is positive)",
+    },
+)
+def gnss(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None, *, attributes: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Load a MUSES GNSS/IMU record, one per frame, in physical units.
+
+    The file holds the integer fields of ``gnss/dataformat.txt`` in u-blox
+    units; they are returned scaled, with the unit in each key:
+
+    - ``timestamp_us`` (UTC), ``gps_time_of_week_ms``, ``time_accuracy_ns``,
+      ``fix_type``, ``num_satellites``;
+    - ``latitude_deg``, ``longitude_deg``, ``height_m`` (ellipsoid),
+      ``height_msl_m``, ``horizontal_accuracy_m``, ``vertical_accuracy_m``;
+    - ``roll_deg``, ``pitch_deg``, ``heading_deg`` and their
+      ``*_accuracy_deg``;
+    - ``roll_rate_deg_s``, ``pitch_rate_deg_s``, ``heading_rate_deg_s``. The
+      heading rate turns about the negative yaw axis, so turning clockwise
+      seen from above is positive;
+    - ``velocity_north_m_s``, ``velocity_east_m_s``, ``velocity_down_m_s``,
+      ``ground_speed_m_s`` (2-D, negative when reversing),
+      ``speed_accuracy_m_s``;
+    - ``position_dop``, ``magnetic_declination_deg``,
+      ``magnetic_declination_accuracy_deg``.
+
+    The record is sampled at the frame camera's exposure. Index ``gnss/``
+    as a regular modality with the same hierarchy and ID rules as the
+    ``frame_camera`` and ``lidar`` folders, so samples join it by ID.
+    """
+    r = _load_gnss_record(path)
+    return {
+        "timestamp_us": r["timestamp"],
+        "gps_time_of_week_ms": r["iTOW"],
+        "time_accuracy_ns": r["tAcc"],
+        "fix_type": r["fixType"],
+        "num_satellites": r["numSV"],
+        "latitude_deg": r["lat"] * 1e-7,
+        "longitude_deg": r["lon"] * 1e-7,
+        "height_m": r["height"] / 1e3,
+        "height_msl_m": r["hMSL"] / 1e3,
+        "horizontal_accuracy_m": r["hAcc"] / 1e3,
+        "vertical_accuracy_m": r["vAcc"] / 1e3,
+        "roll_deg": r["roll"] * 1e-5,
+        "pitch_deg": r["pitch"] * 1e-5,
+        "heading_deg": r["heading"] * 1e-5,
+        "roll_accuracy_deg": r["accRoll"] * 1e-5,
+        "pitch_accuracy_deg": r["accPitch"] * 1e-5,
+        "heading_accuracy_deg": r["accHeading"] * 1e-5,
+        "roll_rate_deg_s": r["angular_rate_roll"] * 1e-5,
+        "pitch_rate_deg_s": r["angular_rate_pitch"] * 1e-5,
+        "heading_rate_deg_s": r["angular_rate_heading"] * 1e-5,
+        "velocity_north_m_s": r["velN"] / 1e3,
+        "velocity_east_m_s": r["velE"] / 1e3,
+        "velocity_down_m_s": r["velD"] / 1e3,
+        "ground_speed_m_s": r["gSpeed"] / 1e3,
+        "speed_accuracy_m_s": r["sAcc"] / 1e3,
+        "position_dop": r["pDOP"] * 1e-2,
+        "magnetic_declination_deg": r["magDec"] * 1e-2,
+        "magnetic_declination_accuracy_deg": r["magAcc"] * 1e-2,
+    }
+
+
+def _timestamp_us(value: Any) -> int | None:
+    if value is None or value == "None" or value == "":
+        return None
+    return int(value)
+
+
+class SensorTimingTable(Mapping):
+    """``meta.json`` timing records keyed by MUSES frame (``REC…_frame_…``).
+
+    Besides the records it indexes every file name the entries list under
+    ``path_to_*``, so a sample's own files identify its record.
+    """
+
+    def __init__(self, records: dict[str, dict[str, Any]], frame_of_file: dict[str, str]) -> None:
+        self._records = records
+        self._frame_of_file = frame_of_file
+
+    def __getitem__(self, frame: str) -> dict[str, Any]:
+        return self._records[frame]
+
+    def __iter__(self):
+        return iter(self._records)
+
+    def __len__(self) -> int:
+        return len(self._records)
+
+    def frame_for_file(self, path: str) -> str | None:
+        """Return the frame whose ``meta.json`` entry lists *path*'s file name."""
+        return self._frame_of_file.get(os.path.basename(str(path)))
+
+
+def _select_sensor_timing(table: SensorTimingTable, context: SampleContext) -> dict[str, Any]:
+    frames: dict[str, list[str]] = {}
+    for modality, entry in context.files.items():
+        frame = table.frame_for_file(entry.get("path", ""))
+        if frame is not None:
+            frames.setdefault(frame, []).append(modality)
+    if len(frames) == 1:
+        return dict(table[next(iter(frames))])
+    listed = ", ".join(f"{name}={entry.get('path')!r}" for name, entry in context.files.items())
+    if not frames:
+        raise KeyError(
+            f"No MUSES meta.json entry lists a file of sample {context.full_id!r} "
+            f"({listed}). The timing is matched by the native MUSES file names, "
+            "so the sample's files must keep them."
+        )
+    raise ValueError(
+        f"Sample {context.full_id!r} combines files of several MUSES frames: "
+        + "; ".join(f"{frame} via {', '.join(names)}" for frame, names in frames.items())
+    )
+
+
+@selects_per_sample(_select_sensor_timing)
+@modality_meta(
+    modality_type="sensor_timing",
+    dtype="dict",
+    hierarchical=True,
+    shape="dict",
+    file_formats=[".json"],
+    meta={"source": "meta.json", "unit": "microseconds", "matched_by": "path_to_* file names"},
+)
+def sensor_timing(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None, *, attributes: dict[str, Any] | None = None) -> SensorTimingTable:
+    """Load the sensor timing of every frame from MUSES ``meta.json``.
+
+    ``meta.json`` lists one entry per frame. Index it as a root-level
+    hierarchical modality, like ``calib.json``. The file is decoded once into a
+    :class:`SensorTimingTable`. Each sample then receives its own record,
+    matched through the file names the entries list under ``path_to_*``, so
+    any per-sample modality with native MUSES file names identifies it:
+
+    ``{"frame", "camera_exposure_start_us", "camera_exposure_end_us",
+    "lidar_start_us", "lidar_end_us", "radar_start_us", "radar_end_us"}``
+
+    Times are integer UTC microseconds; "camera" is the frame camera (the
+    ``rgb`` modality). Calling the loader directly returns the whole table.
+    """
+    data = _load_json(path)
+    records: dict[str, dict[str, Any]] = {}
+    frame_of_file: dict[str, str] = {}
+    for frame, entry in data.items():
+        if not isinstance(entry, Mapping):
+            continue
+        record: dict[str, Any] = {"frame": frame}
+        for key, source in _TIMING_FIELDS.items():
+            record[key] = _timestamp_us(entry.get(source))
+        records[frame] = record
+        for field, value in entry.items():
+            if not field.startswith("path_to_") or not isinstance(value, str) or value in ("", "None"):
+                continue
+            name = os.path.basename(value)
+            other = frame_of_file.setdefault(name, frame)
+            if other != frame:
+                raise ValueError(
+                    f"MUSES meta.json lists the file {name!r} under both {other!r} and "
+                    f"{frame!r}, so it cannot identify a frame."
+                )
+    return SensorTimingTable(records, frame_of_file)
+
+
+@modality_meta(
+    modality_type="lidar_to_gnss",
+    dtype="float32",
+    hierarchical=True,
+    shape="4x4",
+    file_formats=[".json"],
+    meta={"transform": "lidar2gnss", "transform_direction": "lidar_to_gnss"},
+)
+def read_lidar_to_gnss(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None, *, attributes: dict[str, Any] | None = None) -> np.ndarray:
+    """Load the ``(4, 4)`` lidar → GNSS/IMU transform from ``calib.json``.
+
+    This is ``extrinsics.lidar2gnss``. It maps lidar points into the frame of
+    the :func:`gnss` record, the frame ego-motion compensation works in.
+    """
+    return _read_extrinsics_array(path, {"transform": "lidar2gnss"}, None)
+
+
+@mark_stream_supported
+def write_sparse_depth(path: Union[str, BinaryIO], value: Any, meta: dict[str, Any] | None = None) -> None:
+    """Write MUSES lidar points as an ``(N, 6)`` float64 ``.bin`` file.
+
+    Columns are ``x, y, z, intensity, ring, timestamp``, as :func:`sparse_depth`
+    reads them, e.g. after ego-motion compensation.
+    """
+    points = np.ascontiguousarray(to_numpy(value), dtype=np.float64)
+    if points.ndim != 2 or points.shape[1] != len(_LIDAR_COLUMNS):
+        raise ValueError(
+            f"MUSES lidar points must have shape (N, {len(_LIDAR_COLUMNS)}), got {points.shape}"
+        )
+    ensure_parent(path)
+    if isinstance(path, (str, os.PathLike)):
+        with open(path, "wb") as f:
+            f.write(points.tobytes())
+        return
+    path.write(points.tobytes())
+
+
+write_lidar_point_cloud = write_sparse_depth
+write_point_cloud = write_sparse_depth

@@ -57,6 +57,7 @@ from ._writing import (
     _write_value_to_destination,
     create_dataset_writer_from_index,
 )
+from .loaders._annotations import SampleContext, get_sample_selector
 from .indexing import (
     FileRecord,
     collect_files,
@@ -1338,11 +1339,15 @@ class MultiModalDataset(_BaseDataset):
                 file_id = record.file_entry["id"]
 
         # -- Load hierarchical modalities ------------------------------------
+        # A per-sample selector sees only the regular modalities' entries;
+        # collapsed hierarchical modalities add theirs to ``meta`` below.
+        regular_files = {name: meta[name] for name in self._modalities}
         for name, modality in self._hierarchical_modalities.items():
             files_by_level = self._hierarchical_lookups[name]
             matched = match_hierarchical_files(hierarchy_path, files_by_level)
             modality_meta = _get_index_meta(self._hierarchical_index_outputs[name])
             cache = self._caches[name]
+            selector = get_sample_selector(self._resolved_loaders[name])
             loaded: dict[str, Any] = {}
             attrs_for_modality: dict[str, dict[str, Any]] = {}
             entries_by_id: dict[str, dict[str, Any]] = {}
@@ -1373,6 +1378,20 @@ class MultiModalDataset(_BaseDataset):
                     )
                     if cache is not None:
                         cache[cache_key] = value
+                if selector is not None:
+                    # The cache keeps the shared value; only this sample's
+                    # record is placed on the sample.
+                    value = selector(
+                        value,
+                        SampleContext(
+                            modality=name,
+                            entry=entry,
+                            id=file_id,
+                            full_id="/" + "/".join(hierarchy_path + (file_id,)),
+                            hierarchy_path=hierarchy_path,
+                            files=regular_files,
+                        ),
+                    )
                 loaded[entry["id"]] = value
                 entries_by_id[entry["id"]] = entry
                 if entry_attributes:

@@ -26,6 +26,23 @@
   lights came out blue). The official conversion uses OpenCV's
   `COLOR_BAYER_GB2BGR`, and OpenCV names Bayer patterns after the sensor's
   second row. `bayer_pattern` in the attributes or meta still overrides it.
+- Hierarchical loaders can narrow their shared value to each sample.
+  `selects_per_sample(select)` attaches `select(value, context)` to a loader
+  function. `MultiModalDataset` calls it after loading or retrieving the
+  cached value. The `SampleContext` carries the sample's IDs, hierarchy and the
+  index entries of its regular modalities. Use it for per-sample records in
+  one shared file, such as a metadata table.
+- MUSES ego-motion inputs, the ones the official SDK's lidar motion
+  compensation needs:
+  - `muses.gnss` loads the per-frame u-blox record of `gnss/` in physical units
+    (speed, angular rates, attitude, position, NED velocity, accuracies);
+  - `muses.sensor_timing` loads `meta.json` once as a root-level modality and
+    gives each sample its camera-exposure, lidar and radar timestamps,
+    matched through the file names the entries list;
+  - `muses.read_lidar_to_gnss` reads `extrinsics.lidar2gnss` from
+    `calib.json`;
+  - `muses.write_sparse_depth` (aliases `write_lidar_point_cloud`,
+    `write_point_cloud`) writes `(N, 6)` float64 `.bin` lidar files.
 
 - Fix `vkitti2.write_depth` and the 16-bit PNG path of
   `generic_dense_depth.write_depth` on Pillow 13, which rejects

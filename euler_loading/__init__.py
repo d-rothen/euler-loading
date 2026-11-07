@@ -5,6 +5,7 @@ from ._resolution import resolve_loader_module, resolve_writer_module
 from ._writing import create_dataset_writer_from_index
 from .dataset import Modality, MultiModalDataset
 from .indexing import FileRecord
+from .loaders._annotations import SampleContext, selects_per_sample
 from .loaders.contracts import DenseDepthCodec, DenseDepthLoader, DenseDepthWriter
 from .preprocessing import (
     Crop,
@@ -50,7 +51,9 @@ __all__ = [
     "Modality",
     "MultiModalDataset",
     "Resize",
+    "SampleContext",
     "SamplePreprocessor",
+    "selects_per_sample",
     "create_dataset_writer_from_index",
     "crop_intrinsics",
     "infer_field_spec",

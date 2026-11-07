@@ -21,6 +21,14 @@ Return types
   from ``calib.json``.
 - **read_extrinsics** -- ``torch.FloatTensor`` of shape ``(4, 4)`` parsed
   from ``calib.json``.
+- **gnss** -- ``dict`` with the frame's GNSS/IMU record in physical units.
+- **sensor_timing** -- ``dict`` with the frame's sensor timestamps from
+  ``meta.json`` (hierarchical; selected per sample by file name).
+- **read_lidar_to_gnss** -- ``torch.FloatTensor`` of shape ``(4, 4)``, the
+  ``lidar2gnss`` transform from ``calib.json``.
+
+Writers: ``write_sparse_depth`` (aliases ``write_lidar_point_cloud``,
+``write_point_cloud``) writes ``(N, 6)`` float64 ``.bin`` files.
 """
 
 from __future__ import annotations
@@ -378,3 +386,32 @@ def read_extrinsics(path: Union[str, BinaryIO], meta: dict[str, Any] | None = No
     ``source_sensor`` + ``target_sensor``.
     """
     return torch.from_numpy(_read_extrinsics_array(path, meta, attributes)).contiguous()
+
+
+# ---------------------------------------------------------------------------
+# Ego-motion inputs: GNSS/IMU records, sensor timing, lidar-to-GNSS mount
+# ---------------------------------------------------------------------------
+
+# Records and timing tables hold no tensors, so both variants share the CPU
+# loaders, including the per-sample selector on ``sensor_timing``.
+gnss = _cpu.gnss
+sensor_timing = _cpu.sensor_timing
+SensorTimingTable = _cpu.SensorTimingTable
+
+
+@modality_meta(
+    modality_type="lidar_to_gnss",
+    dtype="float32",
+    hierarchical=True,
+    shape="4x4",
+    file_formats=[".json"],
+    meta={"transform": "lidar2gnss", "transform_direction": "lidar_to_gnss"},
+)
+def read_lidar_to_gnss(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None, *, attributes: dict[str, Any] | None = None) -> torch.Tensor:
+    """Load the ``(4, 4)`` lidar → GNSS/IMU transform (``extrinsics.lidar2gnss``)."""
+    return torch.from_numpy(_read_extrinsics_array(path, {"transform": "lidar2gnss"}, None)).contiguous()
+
+
+write_sparse_depth = _cpu.write_sparse_depth
+write_lidar_point_cloud = _cpu.write_lidar_point_cloud
+write_point_cloud = _cpu.write_point_cloud
