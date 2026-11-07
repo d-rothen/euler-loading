@@ -130,6 +130,22 @@ class TestWriterResolution:
 
         assert ds.get_writer("rgb") is gpu_princeton_dense.write_rgb
 
+    def test_auto_resolves_princeton_dense_intrinsics_writer(self):
+        index = _flat_index(
+            "json",
+            ["calib_cam_stereo_left"],
+            euler_loading={"loader": "princeton_dense", "function": "read_intrinsics"},
+        )
+        with patch(
+            "euler_loading.dataset.index_dataset_from_path",
+            return_value=index,
+        ):
+            ds = MultiModalDataset(
+                modalities={"intrinsics": Modality("/data/intrinsics")}
+            )
+
+        assert ds.get_writer("intrinsics") is gpu_princeton_dense.write_intrinsics
+
     @pytest.mark.parametrize(
         "writer,chw",
         [

@@ -461,12 +461,34 @@ same resolution. Loaders preserve the stored resolution.
 | Function | Shape | dtype | Notes |
 |---|---|---|---|
 | `rgb` | CHW / HWC | float32 | Plain 8-bit PNG, `[0, 1]` |
-| `rccb` | CHW / HWC | float32 | 12-bit Bayer (`GBRG`) TIFF debayered to RGB, `[0, 1]` |
+| `rccb` | CHW / HWC | float32 | 12-bit Bayer (`GRBG`) TIFF debayered to RGB, `[0, 1]`; raw and unrectified |
 | `sparse_depth` | (N, 5) | float32 | `.bin`: `x, y, z, intensity, ring` |
-| `read_intrinsics` | 3×3 | float32 | `K` from `calib_cam_stereo_left.json` · *hierarchical* |
+| `read_intrinsics` | 3×3 | float32 | Rectified pinhole `P[:, :3]` from `calib_cam_stereo_left.json`; raw `K` with `intrinsics_matrix: "K"` · *hierarchical* |
 | `read_extrinsics` | 4×4 | float32 | `lidar_hdl64_s3_roof` → `cam_stereo_left_optical`, from `calib_tf_tree_full.json` · *hierarchical* |
 
-`lidar_point_cloud` and `point_cloud` are aliases for `sparse_depth`.
+`lidar_point_cloud` and `point_cloud` are aliases for `sparse_depth`. Writers
+exist for `rgb` and `read_intrinsics`.
+
+The 8-bit `cam_stereo_left_lut` images that `rgb` reads are rectified: the
+official SeeingThroughFog conversion remaps the raw frames with
+`cv2.initUndistortRectifyMap(K, D, R, P)`, and the official lidar projection
+uses `P`. `read_intrinsics` therefore returns `P[:, :3]`, an ideal pinhole
+matrix with no distortion; `P[:, 3]` (zero for the left camera, the baseline
+term for the right one) is not part of it. Set `intrinsics_matrix` to `"K"` in
+the per-file attributes or the head's meta for the raw camera matrix of the
+12-bit `cam_stereo_left` TIFFs (`rccb`) instead. It describes them only
+together with the distortion `D`, which is large (`k1 ≈ -0.57`).
+
+`write_intrinsics` writes that matrix back into the camera-info JSON. An
+existing file is updated rather than replaced. The change from its stored
+matrix must be a crop or a rescale, and it is applied to `K` and `P` alike, so
+the two stay consistent; a whole-pixel crop shifts the stored values by exact
+integers. `D`, `R`, `roi` and the header are kept, and `meta["width"]` and
+`meta["height"]` set the recorded image size. A new file or a stream target
+gets an ideal pinhole camera: `K = P[:, :3]`, zero distortion, identity `R`.
+The extrinsics need no counterpart: a crop or rescale only changes the pixel
+grid, so lidar projected through the written matrix lands on the cropped
+pixels unchanged.
 
 ### Generic dense depth — `generic_dense_depth`
 

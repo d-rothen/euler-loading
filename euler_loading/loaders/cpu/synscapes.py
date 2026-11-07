@@ -21,11 +21,8 @@ https://github.com/MartinHahner/FoggySynscapes/blob/main/source/Depth_processing
 
 from __future__ import annotations
 
-import errno
 import json
 import os
-import shutil
-import tempfile
 from typing import Any, BinaryIO, Union
 
 import numpy as np
@@ -36,13 +33,13 @@ from euler_loading.loaders._sky import grey, resolve_skyclass, skyclass_label
 from euler_loading.loaders._writer_utils import (
     ensure_parent,
     mark_stream_supported,
+    replace_json,
     save_image,
     to_bool_mask,
     to_hw,
     to_hwc_rgb,
     to_numpy,
     to_uint8,
-    write_json,
 )
 
 
@@ -559,50 +556,11 @@ def _write_camera_json(
     camera.pop(f"{key}s", None)
     document["camera"] = camera
 
-    if not isinstance(path, (str, os.PathLike)):
-        write_json(path, document)
-        return
     # This writer reads the file back to merge into it, so a torn file would
-    # be read by the next write. Replace it in one step instead. The temporary
-    # lands beside the target so the replace stays on one filesystem, which
-    # means the parent has to exist first.
-    ensure_parent(path)
-    # Replacing a symlink would substitute a regular file for the link and
-    # leave whatever it pointed at behind, so operate on the real file. The
-    # constant Synscapes pose makes one canonical metadata file a plausible
-    # layout.
-    target = os.path.realpath(os.fspath(path))
-    existed = os.path.exists(target)
-    # ``rename`` only needs write permission on the directory, so without this
-    # a read-only file would be replaced rather than refused.
-    if existed and not os.access(target, os.W_OK):
-        raise PermissionError(errno.EACCES, os.strerror(errno.EACCES), target)
-
-    handle, temporary = tempfile.mkstemp(
-        dir=os.path.dirname(target) or ".", suffix=".tmp"
-    )
-    try:
-        try:
-            stream = os.fdopen(handle, "w", encoding="utf-8")
-        except BaseException:
-            os.close(handle)
-            raise
-        with stream:
-            json.dump(document, stream)
-        # mkstemp creates 0600; carry over the mode the file had, or the one a
-        # plain open() would have produced, so a written dataset stays as
-        # readable as the rest of it.
-        if existed:
-            shutil.copymode(target, temporary)
-        else:
-            umask = os.umask(0o077)
-            os.umask(umask)
-            os.chmod(temporary, 0o666 & ~umask)
-        os.replace(temporary, target)
-    except BaseException:
-        if os.path.exists(temporary):
-            os.unlink(temporary)
-        raise
+    # be read by the next write; replace_json swaps it in one step. It follows
+    # a symlink to the real file, which matters here: the constant Synscapes
+    # pose makes one canonical metadata file a plausible layout.
+    replace_json(path, document)
 
 
 @mark_stream_supported

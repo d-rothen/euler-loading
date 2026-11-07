@@ -165,7 +165,7 @@ PRINCETON_DENSE_LOADER_NAMES = [
     "read_extrinsics",
 ]
 
-PRINCETON_DENSE_WRITER_NAMES = ["write_rgb"]
+PRINCETON_DENSE_WRITER_NAMES = ["write_rgb", "write_intrinsics"]
 
 
 @pytest.fixture()
@@ -211,7 +211,10 @@ def princeton_dense_intrinsics_path(tmp_path):
     }
     path = tmp_path / "calib_cam_stereo_left.json"
     path.write_text(json.dumps(data))
-    return str(path), np.asarray(data["K"], dtype=np.float32).reshape(3, 3)
+    # The cam_stereo_left_lut images are rectified to P, so P[:, :3] is their
+    # pinhole matrix; K belongs to the raw, distorted TIFFs.
+    rectified = np.asarray(data["P"], dtype=np.float32).reshape(3, 4)[:, :3]
+    return str(path), rectified
 
 
 @pytest.fixture()
@@ -310,7 +313,9 @@ class TestPrincetonDenseGPULoaders:
         assert result.shape == (2, 5)
         assert torch.equal(result, torch.from_numpy(expected))
 
-    def test_read_intrinsics_returns_camera_k(self, princeton_dense_intrinsics_path):
+    def test_read_intrinsics_returns_rectified_pinhole_matrix(
+        self, princeton_dense_intrinsics_path
+    ):
         path, expected = princeton_dense_intrinsics_path
         result = gpu_princeton_dense.read_intrinsics(path)
         assert result.dtype == torch.float32
@@ -357,12 +362,20 @@ class TestPrincetonDenseCPULoaders:
         result = cpu_princeton_dense.sparse_depth(stream)
         assert np.array_equal(result, expected)
 
-    def test_read_intrinsics_returns_camera_k(self, princeton_dense_intrinsics_path):
+    def test_read_intrinsics_returns_rectified_pinhole_matrix(
+        self, princeton_dense_intrinsics_path
+    ):
         path, expected = princeton_dense_intrinsics_path
         result = cpu_princeton_dense.read_intrinsics(path)
         assert result.dtype == np.float32
         assert result.shape == (3, 3)
         assert np.array_equal(result, expected)
+
+    def test_read_intrinsics_can_select_raw_k(self, princeton_dense_intrinsics_path):
+        path, _ = princeton_dense_intrinsics_path
+        raw = np.asarray(json.loads(Path(path).read_text())["K"], dtype=np.float32)
+        result = cpu_princeton_dense.read_intrinsics(path, {"intrinsics_matrix": "K"})
+        assert np.array_equal(result, raw.reshape(3, 3))
 
     def test_read_extrinsics_maps_hdl64_lidar_to_camera(self, princeton_dense_tf_tree_path):
         path, expected = princeton_dense_tf_tree_path

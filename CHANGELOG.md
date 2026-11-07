@@ -2,6 +2,31 @@
 
 ## Unreleased
 
+- **Behaviour change:** `princeton_dense.read_intrinsics` returns the
+  rectified pinhole matrix `P[:, :3]` from `calib_cam_stereo_left.json`
+  instead of the raw `K`. The `cam_stereo_left_lut` PNGs that
+  `princeton_dense.rgb` loads are rectified to `P` -- the official
+  SeeingThroughFog conversion remaps them with
+  `cv2.initUndistortRectifyMap(K, D, R, P)`, and the official lidar projection
+  uses `P` -- so `K` put projected lidar about 22 px off at the principal
+  point and up to 130 px off at the image edges. Recompute anything derived
+  from the old intrinsics, such as lidar projected into those images or depth
+  unprojected with them. `intrinsics_matrix: "K"` in the per-file attributes
+  or the head's meta selects the raw matrix, which belongs to the unrectified
+  12-bit TIFFs together with the distortion `D`.
+- Add `princeton_dense.write_intrinsics`. It writes the matrix
+  `read_intrinsics` returns into a ROS camera-info JSON. An existing file is
+  updated rather than replaced: a crop or rescale of its stored matrix is
+  applied to `K` and `P` alike (whole-pixel crops as exact integer shifts),
+  `D`, `R`, `roi` and the header are kept, and `meta["width"]` /
+  `meta["height"]` set the recorded size. Any other change is refused. New
+  files and stream targets get an ideal pinhole camera.
+- **Behaviour change:** `princeton_dense.rccb` demosaics the raw 12-bit
+  TIFFs as `GRBG` instead of `GBRG`, which swapped red and blue (red tail
+  lights came out blue). The official conversion uses OpenCV's
+  `COLOR_BAYER_GB2BGR`, and OpenCV names Bayer patterns after the sensor's
+  second row. `bayer_pattern` in the attributes or meta still overrides it.
+
 - Fix `vkitti2.write_depth` and the 16-bit PNG path of
   `generic_dense_depth.write_depth` on Pillow 13, which rejects
   `Image.fromarray(uint16, mode="I;16")`; a uint16 array becomes an `I;16`

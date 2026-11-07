@@ -10,10 +10,14 @@ Return types
 - **sparse_depth** -- ``torch.FloatTensor`` of shape ``(N, 5)`` with columns
   ``x, y, z, intensity, ring``.
 - **read_intrinsics** -- ``torch.FloatTensor`` of shape ``(3, 3)`` from
-  ``calib_cam_stereo_left.json``.
+  ``calib_cam_stereo_left.json``: the rectified pinhole matrix ``P[:, :3]`` of
+  the ``cam_stereo_left_lut`` images, or the raw ``K`` with
+  ``intrinsics_matrix: "K"``.
 - **read_extrinsics** -- ``torch.FloatTensor`` of shape ``(4, 4)`` from
   ``calib_tf_tree_full.json``, mapping HDL64 lidar points into the left camera
   optical frame by default.
+
+Writers: ``write_rgb`` and ``write_intrinsics``.
 """
 
 from __future__ import annotations
@@ -33,12 +37,14 @@ from euler_loading.loaders._writer_utils import (
     to_uint8,
 )
 from euler_loading.loaders._princeton_dense import DEFAULT_CAMERA_FRAME
+from euler_loading.loaders._princeton_dense import DEFAULT_INTRINSICS_MATRIX
 from euler_loading.loaders._princeton_dense import DEFAULT_LIDAR_FRAME
 from euler_loading.loaders._princeton_dense import LIDAR_COLUMNS
 from euler_loading.loaders._princeton_dense import load_extrinsics_array
 from euler_loading.loaders._princeton_dense import load_intrinsics_array
 from euler_loading.loaders._princeton_dense import load_rgb_array
 from euler_loading.loaders._princeton_dense import load_sparse_depth_array
+from euler_loading.loaders._princeton_dense import write_intrinsics  # noqa: F401
 
 
 @modality_meta(
@@ -50,7 +56,7 @@ from euler_loading.loaders._princeton_dense import load_sparse_depth_array
     meta={
         "dataset": "SeeingThroughFog",
         "raw_bit_depth": 12,
-        "bayer_pattern": "GBRG",
+        "bayer_pattern": "GRBG",
         "raw_max_value": 4095.0,
     },
 )
@@ -147,6 +153,8 @@ def point_cloud(
         "dataset": "SeeingThroughFog",
         "camera_frame": DEFAULT_CAMERA_FRAME,
         "source": "calib_cam_stereo_left",
+        "camera_model": "pinhole",
+        "intrinsics_matrix": DEFAULT_INTRINSICS_MATRIX,
     },
 )
 def read_intrinsics(
@@ -155,8 +163,14 @@ def read_intrinsics(
     *,
     attributes: dict[str, Any] | None = None,
 ) -> torch.Tensor:
-    """Load the left stereo camera intrinsics matrix ``K``."""
-    return torch.from_numpy(load_intrinsics_array(path)).contiguous()
+    """Load the left stereo camera's pinhole matrix.
+
+    The default is the rectified ``P[:, :3]`` the ``cam_stereo_left_lut``
+    images are remapped to; ``intrinsics_matrix: "K"`` in the attributes or
+    *meta* selects the raw ``K`` of the unrectified TIFFs. See
+    :func:`euler_loading.loaders._princeton_dense.load_intrinsics_array`.
+    """
+    return torch.from_numpy(load_intrinsics_array(path, meta, attributes)).contiguous()
 
 
 @modality_meta(

@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import json
+import logging
+import math
+import numbers
 import os
 from collections import deque
 from collections.abc import Mapping
@@ -11,11 +14,26 @@ from typing import Any, BinaryIO, Union
 import numpy as np
 from PIL import Image
 
-_DEFAULT_BAYER_PATTERN = "GBRG"
+from euler_loading.loaders._writer_utils import (
+    mark_stream_supported,
+    replace_json,
+    to_numpy,
+)
+
+logger = logging.getLogger(__name__)
+
+# The 2x2 colour layout from the sensor's top-left pixel. The official
+# SeeingThroughFog conversion demosaics with OpenCV's COLOR_BAYER_GB2BGR, and
+# OpenCV names patterns after the *second* row, so that is a GRBG sensor:
+# G R / B G. Reading it as GBRG swaps red and blue.
+_DEFAULT_BAYER_PATTERN = "GRBG"
 _DEFAULT_RAW_MAX_VALUE = 4095.0
 DEFAULT_CAMERA_FRAME = "cam_stereo_left_optical"
 DEFAULT_LIDAR_FRAME = "lidar_hdl64_s3_roof"
 LIDAR_COLUMNS = ["x", "y", "z", "intensity", "ring"]
+DEFAULT_INTRINSICS_MATRIX = "P"
+_INTRINSICS_MATRIX_ALIASES = {"p": "P", "rectified": "P", "k": "K", "raw": "K"}
+_CAMERA_INFO_SHAPES = {"K": (3, 3), "P": (3, 4)}
 
 
 def _value_from_context(
@@ -167,19 +185,269 @@ def _load_json(path: Union[str, BinaryIO]) -> Any:
     return json.load(path)
 
 
-def load_intrinsics_array(path: Union[str, BinaryIO]) -> np.ndarray:
-    """Load the left stereo camera intrinsics matrix from ROS camera-info JSON."""
-    data = _load_json(path)
-    if not isinstance(data, Mapping) or "K" not in data:
-        name = getattr(path, "name", path)
-        raise ValueError(f"Princeton camera calibration {name!r} must contain a K array.")
+def intrinsics_matrix(
+    meta: Mapping[str, Any] | None,
+    attributes: Mapping[str, Any] | None,
+) -> str:
+    """Return which camera-info matrix the intrinsics come from: ``"P"`` or ``"K"``.
 
-    K = np.asarray(data["K"], dtype=np.float32)
-    if K.shape == (9,):
-        K = K.reshape(3, 3)
-    if K.shape != (3, 3):
-        raise ValueError(f"Princeton camera K must have shape (3, 3), got {K.shape}.")
-    return K
+    ``intrinsics_matrix`` is read from the per-file attributes, then from the
+    dataset head's meta. ``"P"`` (alias ``"rectified"``, the default) selects
+    the rectified projection, ``"K"`` (alias ``"raw"``) the raw camera matrix.
+    """
+    value = _value_from_context(meta, attributes, ("intrinsics_matrix",))
+    if value is None:
+        return DEFAULT_INTRINSICS_MATRIX
+    selected = _INTRINSICS_MATRIX_ALIASES.get(str(value).strip().lower())
+    if selected is None:
+        raise ValueError(
+            "intrinsics_matrix must be 'P' (rectified) or 'K' (raw), "
+            f"got {value!r}"
+        )
+    return selected
+
+
+def _camera_info_matrix(
+    data: Mapping[str, Any], key: str, name: Any
+) -> np.ndarray | None:
+    """Return camera-info ``K`` (3x3) or ``P`` (3x4) as float64, or ``None``."""
+    raw = data.get(key)
+    if raw is None:
+        return None
+    shape = _CAMERA_INFO_SHAPES[key]
+    matrix = np.asarray(raw, dtype=np.float64)
+    if matrix.shape == (shape[0] * shape[1],):
+        matrix = matrix.reshape(shape)
+    if matrix.shape != shape:
+        raise ValueError(
+            f"Princeton camera {key} in {name!r} must have shape {shape}, "
+            f"got {matrix.shape}."
+        )
+    return matrix
+
+
+def _check_pinhole(matrix: np.ndarray, what: str) -> None:
+    """Raise unless *matrix* is a finite ``[[fx, s, cx], [0, fy, cy], [0, 0, 1]]``."""
+    if not np.all(np.isfinite(matrix)):
+        raise ValueError(f"{what} must be finite")
+    if (
+        not np.allclose(matrix[2], (0.0, 0.0, 1.0), rtol=0.0, atol=1e-9)
+        or abs(matrix[1, 0]) > 1e-9
+        or matrix[0, 0] <= 0.0
+        or matrix[1, 1] <= 0.0
+    ):
+        raise ValueError(
+            f"{what} must be a pinhole camera matrix [[fx, s, cx], [0, fy, cy], "
+            f"[0, 0, 1]] with positive focal lengths, got {matrix.tolist()}"
+        )
+
+
+def load_intrinsics_array(
+    path: Union[str, BinaryIO],
+    meta: Mapping[str, Any] | None = None,
+    attributes: Mapping[str, Any] | None = None,
+) -> np.ndarray:
+    """Load the left stereo camera's ``(3, 3)`` pinhole matrix from ROS camera-info JSON.
+
+    The default is the rectified projection's ``P[:, :3]``. The 8-bit
+    ``cam_stereo_left_lut`` PNGs are rectified to ``P`` -- the official
+    conversion remaps them with ``cv2.initUndistortRectifyMap(K, D, R, P)`` --
+    so for those images it is an ideal pinhole camera without distortion, and
+    it is the matrix the official lidar projection uses. ``P[:, 3]``, zero for
+    the left camera and the stereo baseline term for the right one, is not part
+    of it.
+
+    ``intrinsics_matrix: "K"`` in the per-file attributes or *meta* returns
+    the raw camera matrix ``K`` instead. It belongs to the unrectified 12-bit
+    TIFFs and describes them only together with the distortion ``D``.
+    """
+    data = _load_json(path)
+    name = getattr(path, "name", path)
+    selected = intrinsics_matrix(meta, attributes)
+    matrix = (
+        _camera_info_matrix(data, selected, name) if isinstance(data, Mapping) else None
+    )
+    if matrix is None:
+        hint = (
+            " Set intrinsics_matrix to 'K' to read the raw camera matrix instead."
+            if selected == "P"
+            else ""
+        )
+        raise ValueError(
+            f"Princeton camera calibration {name!r} must contain a {selected} array.{hint}"
+        )
+    pinhole = matrix[:, :3]
+    _check_pinhole(pinhole, f"Princeton camera {selected} in {name!r}")
+    return pinhole.astype(np.float32)
+
+
+def _image_size(meta: Mapping[str, Any]) -> tuple[int, int] | None:
+    """Return ``(width, height)`` from ``meta``, or ``None`` when neither is given."""
+    width, height = meta.get("width"), meta.get("height")
+    if width is None and height is None:
+        return None
+    size = []
+    for key, value in (("width", width), ("height", height)):
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, numbers.Real)
+            or not math.isfinite(value)
+            or value <= 0
+            or int(value) != value
+        ):
+            raise ValueError(
+                f"meta[{key!r}] must be a positive integer pixel count, got {value!r}"
+            )
+        size.append(int(value))
+    return size[0], size[1]
+
+
+def _pixel_transform(transform: np.ndarray, name: str) -> np.ndarray:
+    """Return the crop or rescale *transform* represents, or raise.
+
+    *transform* maps the stored matrix's pixel grid onto the new one. Only an
+    axis-aligned scale and shift can be applied to ``K`` and ``P`` alike. A
+    whole-pixel crop (unit scale, integer shift) is snapped to exact values, so
+    the stored float64 entries are shifted without float32 rounding noise.
+    """
+    tolerance = 1e-6
+    if (
+        not np.all(np.isfinite(transform))
+        or abs(transform[0, 1]) > tolerance
+        or abs(transform[1, 0]) > tolerance
+        or not np.allclose(transform[2], (0.0, 0.0, 1.0), rtol=0.0, atol=tolerance)
+        or transform[0, 0] <= 0.0
+        or transform[1, 1] <= 0.0
+    ):
+        raise ValueError(
+            f"Refusing to update {name!r}: the new intrinsics are not a crop or "
+            "rescale of its stored matrix, so its K and P cannot be kept "
+            "consistent. Write them to a new file instead."
+        )
+    exact = np.eye(3)
+    exact[0, 0], exact[1, 1] = transform[0, 0], transform[1, 1]
+    exact[:2, 2] = transform[:2, 2]
+    shift = np.round(exact[:2, 2])
+    if (
+        abs(exact[0, 0] - 1.0) <= tolerance
+        and abs(exact[1, 1] - 1.0) <= tolerance
+        and np.all(np.abs(exact[:2, 2] - shift) <= 1e-3)
+    ):
+        exact[0, 0] = exact[1, 1] = 1.0
+        exact[:2, 2] = shift
+    return exact
+
+
+def _update_camera_info(
+    document: dict[str, Any],
+    matrix: np.ndarray,
+    selected: str,
+    size: tuple[int, int] | None,
+    name: str,
+) -> None:
+    """Move *document*'s ``K`` and ``P`` onto the pixel grid of *matrix*."""
+    stored = {key: _camera_info_matrix(document, key, name) for key in _CAMERA_INFO_SHAPES}
+    reference = stored[selected]
+    if reference is None:
+        raise ValueError(
+            f"Refusing to update {name!r}: it has no {selected} matrix to update."
+        )
+    _check_pinhole(reference[:, :3], f"Princeton camera {selected} in {name!r}")
+    transform = _pixel_transform(matrix @ np.linalg.inv(reference[:, :3]), name)
+    for key, value in stored.items():
+        if value is not None:
+            # ``+ 0.0`` turns a -0.0 from the product into 0.0.
+            document[key] = ((transform @ value) + 0.0).reshape(-1).tolist()
+    if size is not None:
+        document["width"], document["height"] = size
+    elif not np.array_equal(transform, np.eye(3)) and (
+        "width" in document or "height" in document
+    ):
+        logger.warning(
+            "Updated the camera matrices in %r without meta['width'] and "
+            "meta['height']; its recorded %sx%s image size may no longer match.",
+            name,
+            document.get("width"),
+            document.get("height"),
+        )
+
+
+def _pinhole_camera_info(
+    matrix: np.ndarray, meta: Mapping[str, Any], size: tuple[int, int] | None
+) -> dict[str, Any]:
+    """Return a camera-info document for an ideal pinhole camera *matrix*."""
+    frame = meta.get("camera_frame")
+    document: dict[str, Any] = {
+        "header": {
+            "frame_id": frame if isinstance(frame, str) and frame else DEFAULT_CAMERA_FRAME
+        },
+        "distortion_model": "plumb_bob",
+        "D": [0.0, 0.0, 0.0, 0.0, 0.0],
+        "K": matrix.reshape(-1).tolist(),
+        "R": np.eye(3).reshape(-1).tolist(),
+        "P": np.hstack([matrix, np.zeros((3, 1))]).reshape(-1).tolist(),
+        "binning_x": 0,
+        "binning_y": 0,
+        "roi": {"x_offset": 0, "y_offset": 0, "height": 0, "width": 0, "do_rectify": False},
+    }
+    if size is not None:
+        document["width"], document["height"] = size
+    return document
+
+
+@mark_stream_supported
+def write_intrinsics(
+    path: Union[str, os.PathLike, BinaryIO],
+    value: Any,
+    meta: Mapping[str, Any] | None = None,
+) -> None:
+    """Write a pinhole matrix into a ROS camera-info JSON (``calib_cam_stereo_left.json``).
+
+    *value* is what :func:`load_intrinsics_array` returns for the same *meta* --
+    the rectified ``P[:, :3]`` by default, the raw ``K`` with
+    ``intrinsics_matrix: "K"`` -- so a written file reads back as *value*.
+
+    An existing file is updated rather than replaced. The change from its
+    stored matrix to *value* must be a crop or a rescale: an axis-aligned scale
+    and shift of the pixel grid. It is applied to both ``K`` and ``P``, so the
+    raw and rectified matrices stay consistent, as ROS ``image_geometry`` would
+    derive them for a region of interest. ``D``, ``R``, ``roi``, ``header`` and
+    all other fields are kept. A whole-pixel crop shifts the stored float64
+    values by exact integers. ``meta["width"]`` and ``meta["height"]`` set the
+    recorded image size; pass them whenever the matrix no longer matches it.
+    The update replaces the file in one step, as the Synscapes camera writers
+    do.
+
+    A new file, or a stream target (which cannot be read back), receives an
+    ideal pinhole camera: ``K = P[:, :3] = value``, zero distortion and an
+    identity ``R``.
+    """
+    matrix = to_numpy(value).astype(np.float64)
+    if matrix.shape != (3, 3):
+        raise ValueError(f"intrinsics must have shape (3, 3), got {matrix.shape}")
+    _check_pinhole(matrix, "intrinsics")
+    options = meta if isinstance(meta, Mapping) else {}
+    selected = intrinsics_matrix(options, None)
+    size = _image_size(options)
+
+    if isinstance(path, (str, os.PathLike)) and os.path.exists(path):
+        name = os.fspath(path)
+        try:
+            document = _load_json(path)
+        except ValueError as exc:
+            raise ValueError(
+                f"Refusing to overwrite {name!r}: it exists but is not readable "
+                f"JSON, so its contents cannot be preserved ({exc})."
+            ) from exc
+        if not isinstance(document, dict):
+            raise ValueError(
+                f"Refusing to overwrite {name!r}: expected a JSON object to merge "
+                f"into, found {type(document).__name__}."
+            )
+        _update_camera_info(document, matrix, selected, size, name)
+    else:
+        document = _pinhole_camera_info(matrix, options, size)
+    replace_json(path, document, indent=4)
 
 
 def _select_frame(

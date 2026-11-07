@@ -544,7 +544,7 @@
                     "meta": {
                         "dataset": "SeeingThroughFog",
                         "raw_bit_depth": 12,
-                        "bayer_pattern": "GBRG",
+                        "bayer_pattern": "GRBG",
                         "raw_max_value": 4095.0
                     },
                     "cpu": {
@@ -588,7 +588,9 @@
                     "meta": {
                         "dataset": "SeeingThroughFog",
                         "camera_frame": "cam_stereo_left_optical",
-                        "source": "calib_cam_stereo_left"
+                        "source": "calib_cam_stereo_left",
+                        "camera_model": "pinhole",
+                        "intrinsics_matrix": "P"
                     },
                     "cpu": {
                         "shape": "3x3"

@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import errno
 import json
 import os
+import shutil
+import tempfile
 from pathlib import Path
 from typing import Any, BinaryIO
 
@@ -164,7 +167,66 @@ def write_json(
     payload: Any,
     *,
     encoding: str = "utf-8",
+    indent: int | None = None,
 ) -> None:
     """Write JSON to a filesystem path or binary stream."""
-    text = json.dumps(payload)
+    text = json.dumps(payload, indent=indent)
     write_text(target, text, encoding=encoding)
+
+
+def replace_json(
+    target: str | os.PathLike[str] | BinaryIO,
+    payload: Any,
+    *,
+    indent: int | None = None,
+) -> None:
+    """Write JSON to *target*, replacing an existing file in one step.
+
+    For writers that read their destination back to merge into it: a torn file
+    would be read by the next write, so the document is written to a temporary
+    beside the target and swapped in with :func:`os.replace`. No reader
+    observes a half-written file, and the target's permissions and symlink are
+    preserved. It is not an fsync, so an abrupt power loss can still truncate
+    the file -- a later merge then refuses it rather than silently discarding
+    the rest. Stream targets cannot be replaced and are written directly.
+    """
+    if not isinstance(target, (str, os.PathLike)):
+        write_json(target, payload, indent=indent)
+        return
+    # The temporary lands beside the target so the replace stays on one
+    # filesystem, which means the parent has to exist first.
+    ensure_parent(target)
+    # Replacing a symlink would substitute a regular file for the link and
+    # leave whatever it pointed at behind, so operate on the real file.
+    real = os.path.realpath(os.fspath(target))
+    existed = os.path.exists(real)
+    # ``rename`` only needs write permission on the directory, so without this
+    # a read-only file would be replaced rather than refused.
+    if existed and not os.access(real, os.W_OK):
+        raise PermissionError(errno.EACCES, os.strerror(errno.EACCES), real)
+
+    handle, temporary = tempfile.mkstemp(
+        dir=os.path.dirname(real) or ".", suffix=".tmp"
+    )
+    try:
+        try:
+            stream = os.fdopen(handle, "w", encoding="utf-8")
+        except BaseException:
+            os.close(handle)
+            raise
+        with stream:
+            json.dump(payload, stream, indent=indent)
+        # mkstemp creates 0600; carry over the mode the file had, or the one a
+        # plain open() would have produced, so a written dataset stays as
+        # readable as the rest of it.
+        if existed:
+            shutil.copymode(real, temporary)
+        else:
+            umask = os.umask(0o077)
+            os.umask(umask)
+            os.chmod(temporary, 0o666 & ~umask)
+        os.replace(temporary, real)
+    except BaseException:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+        raise
