@@ -24,6 +24,7 @@ __all__ = [
     "SamplePreprocessor",
     "infer_field_spec",
     "resize_intrinsics",
+    "resize_raster",
     "crop_intrinsics",
 ]
 
@@ -666,6 +667,44 @@ def _resize_spatial_value(
     if original_dtype.kind in {"i", "u"}:
         return np.rint(resized).astype(original_dtype)
     return resized.astype(original_dtype, copy=False)
+
+
+def resize_raster(
+    value: np.ndarray | "torch.Tensor",
+    *,
+    layout: str,
+    size: tuple[int, int],
+    interpolation: str = "bilinear",
+) -> np.ndarray | "torch.Tensor":
+    """Resize one raster to ``size = (height, width)``, as :class:`Resize` resizes sample fields.
+
+    *layout* is ``"HW"``, ``"HWC"`` or ``"CHW"`` (or a batched ``N...`` form).
+    *interpolation* is ``"nearest"``, ``"bilinear"`` or ``"bicubic"``, with
+    ``align_corners=False`` -- the pixel-centre convention
+    :func:`resize_intrinsics` assumes. Integer values are rounded and boolean
+    values thresholded at 0.5 after interpolation; the dtype and the container
+    (array or tensor) are kept.
+    """
+    canonical = _canonical_layout(layout)
+    if canonical is None:
+        raise ValueError("layout is required")
+    mode = str(interpolation).strip().lower()
+    if mode not in _PIL_MODES:
+        available = ", ".join(sorted(_PIL_MODES))
+        raise ValueError(f"Unsupported interpolation {interpolation!r}. Available: {available}")
+    height, width = int(size[0]), int(size[1])
+    if height <= 0 or width <= 0:
+        raise ValueError(f"Resize dimensions must be positive, got {size}")
+    if not _is_array_like(value):
+        raise TypeError(f"Expected a NumPy array or torch tensor, got {type(value).__name__}")
+    return _resize_spatial_value(
+        value,
+        layout=canonical,
+        size=(height, width),
+        interpolation=mode,
+        normalize_vectors=False,
+        threshold=0.5,
+    )
 
 
 def resize_intrinsics(

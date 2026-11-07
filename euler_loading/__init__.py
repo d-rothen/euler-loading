@@ -5,7 +5,7 @@ from ._resolution import resolve_loader_module, resolve_writer_module
 from ._writing import create_dataset_writer_from_index
 from .dataset import Modality, MultiModalDataset
 from .indexing import FileRecord
-from .loaders._annotations import SampleContext, selects_per_sample
+from .loaders._annotations import SampleContext, get_modality_meta, selects_per_sample
 from .loaders.contracts import DenseDepthCodec, DenseDepthLoader, DenseDepthWriter
 from .preprocessing import (
     Crop,
@@ -16,6 +16,7 @@ from .preprocessing import (
     crop_intrinsics,
     infer_field_spec,
     resize_intrinsics,
+    resize_raster,
 )
 from .transform_descriptors import (
     ResolvedOperation,
@@ -54,12 +55,14 @@ __all__ = [
     "SampleContext",
     "SamplePreprocessor",
     "selects_per_sample",
+    "get_modality_meta",
     "create_dataset_writer_from_index",
     "crop_intrinsics",
     "infer_field_spec",
     "resolve_loader_module",
     "resolve_writer_module",
     "resize_intrinsics",
+    "resize_raster",
 ]
 
 from .materialization import create_materialized_writer, write_materialized

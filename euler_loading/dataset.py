@@ -57,7 +57,7 @@ from ._writing import (
     _write_value_to_destination,
     create_dataset_writer_from_index,
 )
-from .loaders._annotations import SampleContext, get_sample_selector
+from .loaders._annotations import SampleContext, get_modality_meta, get_sample_selector
 from .indexing import (
     FileRecord,
     collect_files,
@@ -1010,6 +1010,7 @@ class MultiModalDataset(_BaseDataset):
         encoding=None,
         expected_full_ids=None,
         resume=False,
+        path_prefix: str | None = None,
     ) -> DatasetWriter | ZipDatasetWriter:
         """Create a ds-crawler writer preconfigured from a modality's index.
 
@@ -1019,6 +1020,8 @@ class MultiModalDataset(_BaseDataset):
             zip: Create a :class:`ds_crawler.ZipDatasetWriter`.
             metadata_scope: Optional namespace below ``.ds_crawler``. Scoped
                 writers also update ``.ds_crawler/scopes.json``.
+            path_prefix: Optional directory below *root* for the files, so
+                scoped modalities sharing a root do not collide.
         """
         index_output = self.get_modality_index(modality_name)
         return create_dataset_writer_from_index(
@@ -1034,7 +1037,54 @@ class MultiModalDataset(_BaseDataset):
             expected_full_ids=expected_full_ids,
             resume=resume,
             capture=getattr(self, "_capture_reader", None),
+            path_prefix=path_prefix,
         )
+
+    def get_loader(self, modality_name: str) -> Callable[..., Any]:
+        """Return the loader callable that decodes *modality_name*'s files.
+
+        This is the function the dataset resolved from the dataset head (or
+        :attr:`Modality.loader` / :attr:`Modality.function`), so its
+        annotation describes exactly the values a sample carries.
+
+        Raises:
+            KeyError: If the modality is unknown.
+        """
+        if (
+            modality_name not in self._modalities
+            and modality_name not in self._hierarchical_modalities
+        ):
+            raise KeyError(f"Unknown modality {modality_name!r}")
+        return self._resolved_loaders[modality_name]
+
+    def get_loader_meta(self, modality_name: str) -> dict[str, Any] | None:
+        """Return a copy of the ``@modality_meta`` annotation of *modality_name*'s loader.
+
+        The annotation records the loaded value's ``shape`` layout (``"HWC"``,
+        ``"CHW"``, ``"NC"``, ``"3x3"``, ...), ``type``, ``dtype``,
+        ``output_range`` and more. ``None`` when the loader is unannotated
+        (e.g. a custom :attr:`Modality.loader`).
+
+        Raises:
+            KeyError: If the modality is unknown.
+        """
+        return get_modality_meta(self.get_loader(modality_name))
+
+    def get_hierarchical_files(
+        self, modality_name: str
+    ) -> dict[tuple[str, ...], list[dict[str, Any]]]:
+        """Return a hierarchical modality's index entries, keyed by hierarchy level.
+
+        A sample at hierarchy path ``p`` uses the files at ``p`` and every
+        ancestor of ``p`` (the deepest wins for a repeated file ID), as
+        :func:`euler_loading.indexing.match_hierarchical_files` resolves them.
+
+        Raises:
+            KeyError: If *modality_name* is not a hierarchical modality.
+        """
+        if modality_name not in self._hierarchical_modalities:
+            raise KeyError(f"{modality_name!r} is not a hierarchical modality")
+        return deepcopy(self._hierarchical_lookups[modality_name])
 
     def get_writer(self, modality_name: str) -> Callable[..., Any]:
         """Return the resolved writer callable for *modality_name*.

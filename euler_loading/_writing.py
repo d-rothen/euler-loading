@@ -135,15 +135,21 @@ def create_dataset_writer_from_index(
     expected_full_ids=None,
     resume=False,
     capture=None,
+    path_prefix: str | None = None,
 ) -> DatasetWriter | ZipDatasetWriter:
     """Create a ds-crawler writer that mirrors an existing index's metadata.
 
     ``metadata_scope`` stores the generated artifacts below
     ``.ds_crawler/<metadata_scope>/`` and lets ds-crawler maintain the shared
     ``.ds_crawler/scopes.json`` manifest.  This is useful when several logical
-    modalities share one physical output root or archive.
+    modalities share one physical output root or archive. ``path_prefix``
+    (ds-crawler >= 2.14) puts the files below that directory of the root, so
+    scoped modalities with the same IDs and basenames do not collide.
     """
+    prefix_option = {} if path_prefix is None else {"path_prefix": path_prefix}
     if derivation is not None:
+        if path_prefix is not None:
+            raise ValueError("path_prefix is not supported for materialized outputs")
         from .materialization import create_materialized_writer
 
         if zip and Path(root).suffix.lower() != ".zip":
@@ -188,6 +194,7 @@ def create_dataset_writer_from_index(
             head=contract.to_mapping(),
             separator=separator,
             metadata_scope=metadata_scope,
+            **prefix_option,
         )
         return _wrap_writer_save_index(writer, metadata_scope=metadata_scope)
 
@@ -216,6 +223,7 @@ def create_dataset_writer_from_index(
         euler_train=dict(euler_train) if isinstance(euler_train, Mapping) else None,
         separator=separator,
         metadata_scope=metadata_scope,
+        **prefix_option,
         **properties,
     )
     return _wrap_writer_save_index(writer, metadata_scope=metadata_scope)

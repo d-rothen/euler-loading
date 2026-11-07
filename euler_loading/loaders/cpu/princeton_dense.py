@@ -17,7 +17,8 @@ Return types
   ``calib_tf_tree_full.json``, mapping HDL64 lidar points into the left camera
   optical frame by default.
 
-Writers: ``write_rgb`` and ``write_intrinsics``.
+Writers: ``write_rgb``, ``write_intrinsics`` and ``write_sparse_depth``
+(aliases ``write_lidar_point_cloud`` and ``write_point_cloud``).
 """
 
 from __future__ import annotations
@@ -44,6 +45,7 @@ from euler_loading.loaders._princeton_dense import load_intrinsics_array
 from euler_loading.loaders._princeton_dense import load_rgb_array
 from euler_loading.loaders._princeton_dense import load_sparse_depth_array
 from euler_loading.loaders._princeton_dense import write_intrinsics  # noqa: F401
+from euler_loading.loaders._princeton_dense import write_sparse_depth  # noqa: F401
 
 
 @modality_meta(
@@ -191,3 +193,7 @@ def read_extrinsics(
 ) -> np.ndarray:
     """Load the default ``lidar_hdl64_s3_roof`` to left-camera transform."""
     return load_extrinsics_array(path, meta, attributes)
+
+
+write_lidar_point_cloud = write_sparse_depth
+write_point_cloud = write_sparse_depth

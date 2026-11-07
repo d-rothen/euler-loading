@@ -178,6 +178,34 @@ def load_sparse_depth_array(path: Union[str, BinaryIO]) -> np.ndarray:
     return values.reshape((-1, 5))
 
 
+@mark_stream_supported
+def write_sparse_depth(
+    path: Union[str, os.PathLike, BinaryIO],
+    value: Any,
+    meta: Mapping[str, Any] | None = None,
+) -> None:
+    """Write SeeingThroughFog lidar points as an ``(N, 5)`` float32 ``.bin`` file.
+
+    Columns are ``x, y, z, intensity, ring``, as :func:`load_sparse_depth_array`
+    reads them, so float32 points read back unchanged (e.g. after keeping only
+    the points inside a crop).
+    """
+    points = np.ascontiguousarray(to_numpy(value), dtype=np.float32)
+    if points.ndim != 2 or points.shape[1] != len(LIDAR_COLUMNS):
+        raise ValueError(
+            "SeeingThroughFog lidar points must have shape "
+            f"(N, {len(LIDAR_COLUMNS)}), got {points.shape}"
+        )
+    if isinstance(path, (str, os.PathLike)):
+        parent = os.path.dirname(os.fspath(path))
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+        with open(path, "wb") as f:
+            f.write(points.tobytes())
+        return
+    path.write(points.tobytes())
+
+
 def _load_json(path: Union[str, BinaryIO]) -> Any:
     if isinstance(path, (str, os.PathLike)):
         with open(path) as f:

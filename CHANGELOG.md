@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- Public accessors for producers of derived datasets:
+  `MultiModalDataset.get_loader(name)` (the resolved decoding function),
+  `get_loader_meta(name)` (a copy of its `@modality_meta` annotation: shape
+  layout, type, dtype, ...) and `get_hierarchical_files(name)` (a hierarchical
+  modality's entries by hierarchy level). `euler_loading.get_modality_meta(loader)`
+  reads the annotation of any loader function.
+- `create_output_writer` and `create_dataset_writer_from_index` take
+  `path_prefix` (needs ds-crawler 2.14): scoped modalities sharing one root keep
+  their files in separate directories.
+- `euler_loading.resize_raster(value, layout=..., size=..., interpolation=...)`
+  resizes one raster exactly as the `resize` preprocessing operation does.
+- `princeton_dense.write_sparse_depth` (aliases `write_lidar_point_cloud`,
+  `write_point_cloud`) writes SeeingThroughFog `(N, 5)` float32 lidar `.bin`
+  files.
+
 - Add the `kitti_carla` loader module (GPU and CPU) for KITTI-CARLA, the
   KITTI-like CARLA 0.9.10 dataset, resolvable as `loader: "kitti_carla"`:
   - `rgb` drops the constant alpha of the RGBA PNGs;

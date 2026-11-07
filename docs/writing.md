@@ -36,6 +36,22 @@ writer = dataset.get_writer("depth")
 `get_writer` raises `KeyError` for an unknown modality and `ValueError` when no
 writer is configured or discoverable.
 
+Producers of derived datasets often need to know what a modality's values are
+before they change them. Three accessors expose what the dataset resolved:
+
+```python
+loader = dataset.get_loader("rgb")             # the decoding function
+meta = dataset.get_loader_meta("rgb")          # its @modality_meta: shape, type, dtype, ...
+files = dataset.get_hierarchical_files("intrinsics")  # {hierarchy level: [entries]}
+```
+
+`get_loader_meta` returns a copy of the annotation (or `None` for an
+unannotated custom loader); its `shape` (`"HWC"`, `"CHW"`, `"NC"`, `"3x3"`, …)
+tells an image from a point cloud or a matrix without guessing from the name.
+`euler_loading.get_modality_meta(loader)` reads it from any loader function.
+`get_hierarchical_files` returns a copy of a hierarchical modality's entries by
+hierarchy level; a sample uses the files at its level and every ancestor.
+
 ## `write_sample`
 
 ```python
@@ -87,7 +103,7 @@ for i in range(len(dataset)):
 writer.save_index()
 ```
 
-`create_output_writer(modality_name, root, *, zip=False, metadata_scope=None)`
+`create_output_writer(modality_name, root, *, zip=False, metadata_scope=None, path_prefix=None)`
 mirrors the source modality's dataset-head contract and index metadata onto the
 output, including its `addons.euler_loading` entry, so the new dataset describes
 itself the same way the input did.
@@ -116,9 +132,13 @@ writer a scope. ds-crawler writes the scoped artifacts and maintains the shared
 `.ds_crawler/scopes.json` manifest:
 
 ```python
-rgb_writer   = dataset.create_output_writer("rgb", output_root, metadata_scope="rgb")
-depth_writer = dataset.create_output_writer("sparse_depth", output_root, metadata_scope="sparse_depth")
+rgb_writer   = dataset.create_output_writer("rgb", output_root, metadata_scope="rgb", path_prefix="rgb")
+depth_writer = dataset.create_output_writer("sparse_depth", output_root, metadata_scope="sparse_depth", path_prefix="sparse_depth")
 ```
+
+`path_prefix` (ds-crawler >= 2.14) puts each modality's files below its own
+directory of the root, so modalities whose files share IDs and basenames do not
+overwrite each other; the index paths include the prefix.
 
 The resulting layout is exactly what
 [scoped metadata](dataset.md#scoped-ds-crawler-metadata) expects on the way back

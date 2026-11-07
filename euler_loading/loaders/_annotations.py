@@ -6,10 +6,12 @@ decorated function.  This metadata is read by the generate script
 
 The :func:`selects_per_sample` decorator lets a hierarchical loader narrow
 its shared value to the sample being assembled; see :class:`SampleContext`.
+:func:`get_modality_meta` reads a loader's annotation.
 """
 
 from __future__ import annotations
 
+import copy
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Callable, TypeVar
@@ -69,6 +71,19 @@ def selects_per_sample(
 def get_sample_selector(loader: Any) -> Callable[[Any, SampleContext], Any] | None:
     """Return the per-sample selector declared on *loader*, if any."""
     return getattr(loader, _SELECTOR_ATTRIBUTE, None)
+
+
+def get_modality_meta(loader: Any) -> dict[str, Any] | None:
+    """Return a copy of the :func:`modality_meta` annotation on *loader*, or ``None``.
+
+    Keys: ``type``, ``dtype``, ``hierarchical``, ``shape`` (the value layout,
+    e.g. ``"HWC"``, ``"CHW"``, ``"NC"``, ``"3x3"``), ``file_formats``,
+    ``output_range``, ``output_unit``, ``requires_meta`` and ``meta``.
+    """
+    annotation = getattr(loader, "_modality_meta", None)
+    if not isinstance(annotation, dict):
+        return None
+    return copy.deepcopy(annotation)
 
 
 def modality_meta(

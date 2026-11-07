@@ -137,5 +137,20 @@ K = crop_intrinsics(K, top=32, left=64)
 Both accept NumPy arrays and torch tensors and return the same type.
 `resize_intrinsics` assumes an `align_corners=False` resize.
 
+`resize_raster` resizes one raster exactly as the `resize` operation does, for
+code that resizes outside a `SamplePreprocessor`:
+
+```python
+from euler_loading import resize_raster
+
+rgb = resize_raster(rgb, layout="HWC", size=(512, 960), interpolation="bilinear")
+depth = resize_raster(depth, layout="HW", size=(512, 960), interpolation="nearest")
+```
+
+The layout is explicit (`HW`, `HWC`, `CHW` or a batched form) and the
+interpolation is `nearest`, `bilinear` or `bicubic` with `align_corners=False`,
+so the result matches `resize_intrinsics`. Integer values are rounded and
+booleans thresholded after interpolation; dtype and container are kept.
+
 `infer_field_spec(name, value=None)` exposes the name-based inference used
 internally, returning a `FieldSpec` or `None`.

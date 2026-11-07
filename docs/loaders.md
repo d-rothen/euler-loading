@@ -502,7 +502,10 @@ is all the compensation needs.
 | `read_extrinsics` | 4×4 | float32 | `lidar_hdl64_s3_roof` → `cam_stereo_left_optical`, from `calib_tf_tree_full.json` · *hierarchical* |
 
 `lidar_point_cloud` and `point_cloud` are aliases for `sparse_depth`. Writers
-exist for `rgb` and `read_intrinsics`.
+exist for `rgb`, `read_intrinsics` and `sparse_depth` (aliases
+`write_lidar_point_cloud` / `write_point_cloud`); `write_sparse_depth` stores
+`(N, 5)` float32 `.bin` files that read back unchanged, e.g. after keeping only
+the points inside a crop.
 
 The 8-bit `cam_stereo_left_lut` images that `rgb` reads are rectified: the
 official SeeingThroughFog conversion remaps the raw frames with
