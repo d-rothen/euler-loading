@@ -102,7 +102,7 @@ def test_gnss_record_in_physical_units(tmp_path):
     assert record["ground_speed_m_s"] == pytest.approx(5.833)
     assert record["velocity_down_m_s"] == pytest.approx(0.03)
     assert record["position_dop"] == pytest.approx(1.45)
-    assert gpu.gnss is cpu.gnss
+    assert gpu.gnss(str(path)) == record
     assert cpu.gnss(io.BytesIO(GNSS_LINE.encode())) == record
 
 

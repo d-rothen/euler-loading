@@ -42,7 +42,7 @@ import numpy as np
 import torch
 from PIL import Image
 
-from euler_loading.loaders._annotations import modality_meta
+from euler_loading.loaders._annotations import modality_meta, selects_per_sample
 from euler_loading.loaders.cpu import muses as _cpu
 
 _LIDAR_COLUMNS = ["x", "y", "z", "intensity", "ring", "timestamp"]
@@ -392,11 +392,38 @@ def read_extrinsics(path: Union[str, BinaryIO], meta: dict[str, Any] | None = No
 # Ego-motion inputs: GNSS/IMU records, sensor timing, lidar-to-GNSS mount
 # ---------------------------------------------------------------------------
 
-# Records and timing tables hold no tensors, so both variants share the CPU
-# loaders, including the per-sample selector on ``sensor_timing``.
-gnss = _cpu.gnss
-sensor_timing = _cpu.sensor_timing
+# Records and timing tables hold no tensors, so both variants return the same
+# values; each still declares itself, as every loader in this package does.
 SensorTimingTable = _cpu.SensorTimingTable
+
+
+@modality_meta(
+    modality_type="gnss",
+    dtype="dict",
+    shape="dict",
+    file_formats=[".txt"],
+    meta={
+        "source": "u-blox navigation record, gnss/dataformat.txt",
+        "heading_rate_axis": "negative yaw axis (clockwise from above is positive)",
+    },
+)
+def gnss(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None, *, attributes: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Load a MUSES GNSS/IMU record; see :func:`euler_loading.loaders.cpu.muses.gnss`."""
+    return _cpu.gnss(path, meta, attributes=attributes)
+
+
+@selects_per_sample(_cpu._select_sensor_timing)
+@modality_meta(
+    modality_type="sensor_timing",
+    dtype="dict",
+    hierarchical=True,
+    shape="dict",
+    file_formats=[".json"],
+    meta={"source": "meta.json", "unit": "microseconds", "matched_by": "path_to_* file names"},
+)
+def sensor_timing(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None, *, attributes: dict[str, Any] | None = None) -> SensorTimingTable:
+    """Load MUSES ``meta.json`` timing; see :func:`euler_loading.loaders.cpu.muses.sensor_timing`."""
+    return _cpu.sensor_timing(path, meta, attributes=attributes)
 
 
 @modality_meta(
