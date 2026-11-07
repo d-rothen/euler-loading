@@ -26,6 +26,7 @@ Every submodule exists under both ``gpu`` and ``cpu``:
 - ``real_drive_sim`` — Real Drive Sim
 - ``muses`` — MUSES
 - ``princeton_dense`` — Princeton DENSE / SeeingThroughFog
+- ``kitti_carla`` — KITTI-CARLA
 - ``generic`` — format-agnostic NumPy modalities
 - ``generic_dense_depth`` — format-agnostic dense-depth modalities
 

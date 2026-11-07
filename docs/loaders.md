@@ -525,6 +525,157 @@ The extrinsics need no counterpart: a crop or rescale only changes the pixel
 grid, so lidar projected through the written matrix lands on the cropped
 pixels unchanged.
 
+### KITTI-CARLA — `kitti_carla`
+
+[KITTI-CARLA](https://arxiv.org/abs/2109.00892) is rendered with CARLA 0.9.10
+from a vehicle with KITTI's sensor layout: an HDL-64E-like lidar and two
+1392×1024 cameras with a 72° horizontal field of view, over 5000 frames in
+each of seven towns. Each `TownNN.zip` holds `TownNN/generated/` with
+`images_rgb/<frame>_<camera>.png`, `images_ss/<frame>_1<camera>.png`,
+`images_depth/<frame>_2<camera>.png`, `frames/frame_<frame>.ply`,
+`lidar_to_cam0.txt`, `lidar_to_cam1.txt` and `full_poses_lidar.txt`.
+
+| Function | Shape | dtype | Notes |
+|---|---|---|---|
+| `rgb` | CHW / HWC | float32 | `images_rgb` RGBA PNG, alpha dropped, `[0, 1]` |
+| `depth` | 1HW / HW | float32 | `images_depth`, CARLA `(R + 256 G + 65536 B) / (2**24 - 1) * 1000`, planar depth in metres; sky is the 1000 m far plane |
+| `class_segmentation` | 1HW / HW | int64 | `images_ss` colours decoded to the 23 CARLA tags in `CLASS_NAMES` (`0` unlabeled … `13` sky … `22` terrain) |
+| `sky_mask` | 1HW / HW | bool | `images_ss` pixels in the head's `skyclass` colour, default `[70, 130, 180]` |
+| `lidar_point_cloud` | (N, 7) | float64 | `frames/*.ply`: `x, y, z, cos_angle_lidar_surface, timestamp, instance, semantic` |
+| `read_intrinsics` | 3×3 | float32 | The paper's camera model, `fx = fy ≈ 957.96`, principal point at the centre · *hierarchical* |
+| `read_extrinsics` | 4×4 | float32 | `lidar_to_cam<N>.txt`, lidar → camera in optical axes by default · *hierarchical* |
+| `lidar_pose` | 4×4 | float64 | `full_poses_lidar.txt`, lidar → world at the sample's frame · *hierarchical, selected per sample* |
+
+`point_cloud` and `sparse_depth` are aliases for `lidar_point_cloud`. Writers
+exist for every function except `lidar_pose`, each in the dataset's own format:
+`write_depth` encodes CARLA's 24 bits (NaN becomes 0, values clip to
+`[0, 1000]` m), `write_class_segmentation` paints the CARLA palette, and
+`write_lidar_point_cloud` emits the same binary PLY layout. `CLASS_NAMES` and
+`PALETTE` are exported for decoding the tags.
+
+`class_segmentation` returns the same tag IDs as the lidar's `semantic` column,
+and raises on any colour outside the palette rather than labelling it silently;
+none occurred in images sampled from all seven towns.
+
+#### Camera model and frames
+
+The dataset ships no intrinsics file. Both cameras are ideal CARLA pinholes,
+so `read_intrinsics` computes `fx = fy = W / (2 tan(fov / 2))` with the
+principal point at `(W / 2, H / 2)` from the paper's 1392×1024 and 72°.
+Index a `lidar_to_cam<N>.txt` to place it in the hierarchy; its contents are
+checked but carry no intrinsics. `width`, `height` and `horizontal_fov_deg`
+in the file's attributes or the head's meta override the defaults, and a file
+of nine numbers, as `write_intrinsics` writes after a crop or resize, is read
+as the matrix itself.
+
+Lidar points, `lidar_to_cam<N>.txt` and the poses use right-handed vehicle
+axes: x forward, y left, z up. A calibration file maps lidar points into a
+camera, `X_cam = T @ X_lidar`, with the camera axes still vehicle-aligned (its
+rotation is the identity). `read_extrinsics` therefore returns the transform
+into optical camera axes (x right, y down, z forward), so lidar projects
+directly:
+
+```python
+import numpy as np
+from euler_loading.loaders.cpu import kitti_carla
+
+K = kitti_carla.read_intrinsics("Town01/generated/lidar_to_cam0.txt")
+T = kitti_carla.read_extrinsics("Town01/generated/lidar_to_cam0.txt")
+points = kitti_carla.lidar_point_cloud("Town01/generated/frames/frame_0000.ply")
+
+camera = (T @ np.c_[points[:, :3], np.ones(len(points))].T)[:3]
+uvw = K @ camera[:, camera[2] > 0]
+pixels, depth = uvw[:2] / uvw[2], uvw[2]  # depth matches images_depth, planar
+```
+
+Two keys, taken from the file's attributes and then the head's meta, select
+other conventions; `write_extrinsics` reads the same keys from `meta` and
+always writes the native file:
+
+| Key | Values | Meaning |
+|---|---|---|
+| `camera_axes` | `optical` (default), `vehicle` | Camera axes; `vehicle` returns the stored matrix |
+| `transform_direction` | `lidar_to_camera` (default), `camera_to_lidar` | Direction; `camera_to_lidar` is the camera's pose on the lidar |
+
+Projected this way, a Town01 sweep matches `images_depth` to about 1 cm
+(median) in both cameras, and its `semantic` tags match `class_segmentation`
+at 99% of the projected pixels.
+
+#### Lidar sweeps and poses
+
+A sweep `i` covers `[0.1 i, 0.1 i + 0.1)` s, and camera frame `i` is taken at
+its start. Each point is in the lidar frame at the moment it was measured,
+without ego-motion compensation; its `timestamp` column says when.
+`lidar_pose` reads the 1 kHz `full_poses_lidar.txt` once per worker (a few
+seconds for a town's 500,000 poses) and gives each sample the lidar-to-world
+pose at its camera frame, matched through the frame number in its file names
+(`frame_<frame>.ply`, `<frame>_<camera>.png`). The world frame is the lidar
+frame at the first step. Relative motion between two samples is
+`inv(pose_a) @ pose_b`; a camera's pose is `pose @ inv(T_vehicle)` with
+`T_vehicle` read with `camera_axes: "vehicle"`.
+
+Calling `lidar_pose` directly returns the whole `LidarPoseTable`. Its
+`at_times` maps a sweep's `timestamp` column to per-point poses, which
+compensates the sweep's motion. In a 40° turn that cut the misalignment
+between two sweeps from about 18 cm to 7 cm (median), compared with one pose
+per sweep:
+
+```python
+table = kitti_carla.lidar_pose("Town01/generated/full_poses_lidar.txt")
+points_h = np.c_[points[:, :3], np.ones(len(points))]
+world = np.einsum("nij,nj->ni", table.at_times(points[:, 4]), points_h)[:, :3]
+```
+
+#### Indexing with ds-crawler
+
+All modalities of a town share one root (a `TownNN` folder or zip), so give
+each its own metadata scope. Regular modalities must agree on hierarchy and
+IDs, so the regexes name the town and camera as hierarchy and the frame as ID
+— the `1`/`2` prefixes of the segmentation and depth names are not part of
+either. The rgb scope, for example:
+
+```json
+"indexing": {
+  "id": {"regex": "^Town\\d+/generated/images_rgb/(?P<frame>\\d+)_\\d\\.png$", "join_char": "+"},
+  "hierarchy": {"regex": "^(?P<town>Town\\d+)/generated/images_rgb/\\d+_(?P<camera>\\d)\\.png$", "separator": ":"}
+}
+```
+
+Depth and segmentation use `images_depth/(?P<frame>\d+)_2\d\.png` and
+`images_ss/(?P<frame>\d+)_1\d\.png` with the matching `_2(?P<camera>\d)` and
+`_1(?P<camera>\d)` hierarchies, and declare `skyclass: [70, 130, 180]` in the
+segmentation head. For the calibration scopes, the hierarchy regex
+`^(?P<town>Town\d+)/generated/lidar_to_cam(?P<camera>\d)\.txt$` gives each
+camera its own file, with `id.override` set to `intrinsics` or `extrinsics`.
+Index `full_poses_lidar.txt` at the town level,
+`^(?P<town>Town\d+)/generated/full_poses_lidar\.txt$`, so it is an ancestor of
+every sample.
+
+Lidar sweeps have no camera, so they join camera images only when the images
+are indexed without a camera level too: restrict the rgb scope to one camera
+(`images_rgb/(?P<frame>\d+)_0\.png$`, hierarchy
+`^(?P<town>Town\d+)/generated/images_rgb/\d+_0\.png$`) and index
+`frames/frame_(?P<frame>\d+)\.ply$` with the town as hierarchy.
+
+```python
+from euler_loading import Modality, MultiModalDataset
+
+town = "/data/KITTI-CARLA/dataset/Town01.zip"
+dataset = MultiModalDataset(
+    modalities={
+        "rgb": Modality(town, metadata_scope="rgb"),
+        "depth": Modality(town, metadata_scope="depth"),
+        "semantic": Modality(town, metadata_scope="semantic_segmentation"),
+    },
+    hierarchical_modalities={
+        "intrinsics": Modality(town, metadata_scope="intrinsics", collapse_single=True),
+        "extrinsics": Modality(town, metadata_scope="camera_extrinsics", collapse_single=True),
+        "pose": Modality(town, metadata_scope="lidar_pose", collapse_single=True),
+    },
+)
+sample = dataset[0]  # full_id "/town:Town01/camera:0/frame-0000"
+```
+
 ### Generic dense depth — `generic_dense_depth`
 
 Format-agnostic; the loading strategy is inferred from the file extension.

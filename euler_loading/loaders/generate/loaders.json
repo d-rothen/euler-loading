@@ -291,6 +291,279 @@
             ]
         },
         {
+            "name": "kitti_carla",
+            "modalities": [
+                {
+                    "type": "semantic_segmentation",
+                    "function": "class_segmentation",
+                    "hierarchical": false,
+                    "dtype": "int64",
+                    "access": "key",
+                    "output_range": [
+                        0,
+                        22
+                    ],
+                    "file_formats": [
+                        ".png"
+                    ],
+                    "meta": {
+                        "encoding": "carla_palette",
+                        "label_ids": "carla_0.9.10",
+                        "label_names": [
+                            "unlabeled",
+                            "building",
+                            "fence",
+                            "other",
+                            "pedestrian",
+                            "pole",
+                            "road_line",
+                            "road",
+                            "sidewalk",
+                            "vegetation",
+                            "vehicles",
+                            "wall",
+                            "traffic_sign",
+                            "sky",
+                            "ground",
+                            "bridge",
+                            "rail_track",
+                            "guard_rail",
+                            "traffic_light",
+                            "static",
+                            "dynamic",
+                            "water",
+                            "terrain"
+                        ],
+                        "skyclass": [
+                            70,
+                            130,
+                            180
+                        ]
+                    },
+                    "cpu": {
+                        "shape": "HW"
+                    },
+                    "gpu": {
+                        "shape": "1HW"
+                    }
+                },
+                {
+                    "type": "depth",
+                    "function": "depth",
+                    "hierarchical": false,
+                    "dtype": "float32",
+                    "access": "key",
+                    "output_range": [
+                        0.0,
+                        1000.0
+                    ],
+                    "output_unit": "meters",
+                    "file_formats": [
+                        ".png"
+                    ],
+                    "meta": {
+                        "encoding": "carla_rgb24",
+                        "decode": "(R + 256 * G + 65536 * B) / (2**24 - 1) * 1000",
+                        "raw_range": [
+                            0,
+                            16777215
+                        ],
+                        "scale_to_meters": 5.9604648328104514e-05,
+                        "radial_depth": false,
+                        "far_plane_m": 1000.0
+                    },
+                    "cpu": {
+                        "shape": "HW"
+                    },
+                    "gpu": {
+                        "shape": "1HW"
+                    }
+                },
+                {
+                    "type": "point_cloud",
+                    "function": "lidar_point_cloud",
+                    "hierarchical": false,
+                    "dtype": "float64",
+                    "access": "key",
+                    "file_formats": [
+                        ".ply"
+                    ],
+                    "meta": {
+                        "columns": [
+                            "x",
+                            "y",
+                            "z",
+                            "cos_angle_lidar_surface",
+                            "timestamp",
+                            "instance",
+                            "semantic"
+                        ],
+                        "coordinate_frame": "lidar",
+                        "axes": "x_forward_y_left_z_up",
+                        "coordinate_unit": "meters",
+                        "timestamp_unit": "seconds",
+                        "semantic_ids": "carla_0.9.10",
+                        "motion_compensated": false
+                    },
+                    "cpu": {
+                        "shape": "NC"
+                    },
+                    "gpu": {
+                        "shape": "NC"
+                    }
+                },
+                {
+                    "type": "lidar_pose",
+                    "function": "lidar_pose",
+                    "hierarchical": true,
+                    "dtype": "float64",
+                    "access": "key",
+                    "file_formats": [
+                        ".txt"
+                    ],
+                    "meta": {
+                        "source": "full_poses_lidar.txt",
+                        "transform": "lidar_to_world",
+                        "axes": "x_forward_y_left_z_up",
+                        "translation_unit": "meters",
+                        "rate_hz": 1000,
+                        "selected_at": "camera frame time, the start of the lidar sweep",
+                        "matched_by": "frame number in the sample's file names"
+                    },
+                    "cpu": {
+                        "shape": "4x4"
+                    },
+                    "gpu": {
+                        "shape": "4x4"
+                    }
+                },
+                {
+                    "type": "camera_extrinsics",
+                    "function": "read_extrinsics",
+                    "hierarchical": true,
+                    "dtype": "float32",
+                    "access": "key",
+                    "file_formats": [
+                        ".txt"
+                    ],
+                    "meta": {
+                        "source": "lidar_to_cam<N>.txt",
+                        "translation_unit": "meters",
+                        "stored_transform": "lidar_to_camera",
+                        "stored_axes": "x_forward_y_left_z_up",
+                        "default_transform_direction": "lidar_to_camera",
+                        "default_camera_axes": "optical",
+                        "optical_axes": "x_right_y_down_z_forward"
+                    },
+                    "cpu": {
+                        "shape": "4x4"
+                    },
+                    "gpu": {
+                        "shape": "4x4"
+                    }
+                },
+                {
+                    "type": "intrinsics",
+                    "function": "read_intrinsics",
+                    "hierarchical": true,
+                    "dtype": "float32",
+                    "access": "key",
+                    "file_formats": [
+                        ".txt"
+                    ],
+                    "meta": {
+                        "width": 1392,
+                        "height": 1024,
+                        "horizontal_fov_deg": 72.0,
+                        "source": "camera model from the KITTI-CARLA paper"
+                    },
+                    "cpu": {
+                        "shape": "3x3"
+                    },
+                    "gpu": {
+                        "shape": "3x3"
+                    }
+                },
+                {
+                    "type": "rgb",
+                    "function": "rgb",
+                    "hierarchical": false,
+                    "dtype": "float32",
+                    "access": "key",
+                    "output_range": [
+                        0.0,
+                        1.0
+                    ],
+                    "file_formats": [
+                        ".png"
+                    ],
+                    "cpu": {
+                        "shape": "HWC"
+                    },
+                    "gpu": {
+                        "shape": "CHW"
+                    }
+                },
+                {
+                    "type": "sky_mask",
+                    "function": "sky_mask",
+                    "hierarchical": false,
+                    "dtype": "bool",
+                    "access": "key",
+                    "file_formats": [
+                        ".png"
+                    ],
+                    "meta": {
+                        "skyclass": [
+                            70,
+                            130,
+                            180
+                        ]
+                    },
+                    "cpu": {
+                        "shape": "HW"
+                    },
+                    "gpu": {
+                        "shape": "1HW"
+                    }
+                },
+                {
+                    "type": "sparse_depth",
+                    "function": "sparse_depth",
+                    "hierarchical": false,
+                    "dtype": "float64",
+                    "access": "key",
+                    "file_formats": [
+                        ".ply"
+                    ],
+                    "meta": {
+                        "representation": "point_cloud",
+                        "columns": [
+                            "x",
+                            "y",
+                            "z",
+                            "cos_angle_lidar_surface",
+                            "timestamp",
+                            "instance",
+                            "semantic"
+                        ],
+                        "coordinate_frame": "lidar",
+                        "axes": "x_forward_y_left_z_up",
+                        "coordinate_unit": "meters",
+                        "timestamp_unit": "seconds",
+                        "semantic_ids": "carla_0.9.10",
+                        "motion_compensated": false
+                    },
+                    "cpu": {
+                        "shape": "NC"
+                    },
+                    "gpu": {
+                        "shape": "NC"
+                    }
+                }
+            ]
+        },
+        {
             "name": "muses",
             "modalities": [
                 {

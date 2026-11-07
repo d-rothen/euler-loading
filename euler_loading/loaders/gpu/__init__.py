@@ -12,6 +12,7 @@ Available submodules:
 - :mod:`euler_loading.loaders.gpu.muses` — MUSES
 - :mod:`euler_loading.loaders.gpu.princeton_dense` — Princeton DENSE /
   SeeingThroughFog
+- :mod:`euler_loading.loaders.gpu.kitti_carla` — KITTI-CARLA
 - :mod:`euler_loading.loaders.gpu.generic` — format-agnostic NumPy modalities
 - :mod:`euler_loading.loaders.gpu.generic_dense_depth` — format-agnostic
   dense-depth modalities

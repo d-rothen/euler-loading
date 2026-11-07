@@ -194,6 +194,7 @@ All of them accept both filesystem paths and in-memory buffers.
 | `muses` | MUSES | rgb, reference rgb, semantic & panoptic segmentation, sky mask, lidar point cloud, sparse depth, calibration |
 | `real_drive_sim` | Real Drive Sim | rgb, depth, class segmentation, sky mask, calibration, intrinsics, extrinsics |
 | `princeton_dense` | Princeton DENSE / SeeingThroughFog | rgb, rccb, sparse depth, intrinsics, extrinsics |
+| `kitti_carla` | KITTI-CARLA | rgb, depth, semantic segmentation, sky mask, lidar point cloud, intrinsics, extrinsics, lidar pose |
 | `generic_dense_depth` | *any* — inferred from file extension | rgb, depth, sky mask, intrinsics |
 | `generic` | *any* — `.npy` / `.npz` modalities | points 3d, maps, segmentation, spherical maps, SH coefficients, … |
 

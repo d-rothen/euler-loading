@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+- Add the `kitti_carla` loader module (GPU and CPU) for KITTI-CARLA, the
+  KITTI-like CARLA 0.9.10 dataset, resolvable as `loader: "kitti_carla"`:
+  - `rgb` drops the constant alpha of the RGBA PNGs;
+  - `depth` decodes CARLA's 24-bit `(R + 256 G + 65536 B) / (2**24 - 1) * 1000`
+    planar depth in metres, with sky at the 1000 m far plane;
+  - `class_segmentation` decodes the `images_ss` colours to CARLA's 23
+    semantic tags (the IDs of the lidar's `semantic` column) and raises on a
+    colour outside the palette; `sky_mask` uses `skyclass`, `(70, 130, 180)`
+    by default;
+  - `lidar_point_cloud` (aliases `point_cloud`, `sparse_depth`) reads the
+    binary PLY sweeps as `(N, 7)` float64: `x, y, z, cos_angle_lidar_surface,
+    timestamp, instance, semantic`;
+  - `read_intrinsics` returns the paper's camera model (1392x1024, 72 degree
+    horizontal FOV, `fx = fy ≈ 957.96`), as the dataset ships no intrinsics
+    file; `read_extrinsics` reads `lidar_to_cam<N>.txt` into optical camera
+    axes by default, so lidar projects through `read_intrinsics` directly;
+  - `lidar_pose` reads `full_poses_lidar.txt` once and gives each sample its
+    `(4, 4)` lidar-to-world pose at the start of its sweep, matched through
+    the frame number in its file names;
+  - writers for every image, lidar and calibration modality.
+
 - **Behaviour change:** `princeton_dense.read_intrinsics` returns the
   rectified pinhole matrix `P[:, :3]` from `calib_cam_stereo_left.json`
   instead of the raw `K`. The `cam_stereo_left_lut` PNGs that
