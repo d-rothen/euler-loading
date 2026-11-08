@@ -100,6 +100,41 @@ def to_uint8(value: Any, *, scale_unit_range: bool) -> np.ndarray:
     return np.clip(np.rint(arr), 0, 255).astype(np.uint8)
 
 
+def pixel_grid_transform(transform: Any, *, tolerance: float = 1e-6) -> np.ndarray | None:
+    """Return *transform* as an exact crop or rescale of the pixel grid, else ``None``.
+
+    *transform* maps a stored camera matrix onto a new one (``new @ inv(stored)``).
+    Crops and resizes only scale and shift each pixel axis, so anything else
+    (rotation, shear, a projective row) returns ``None``. A whole-pixel crop
+    (unit scale, shift within 1e-3 px of an integer) is snapped to exact
+    values: applying it to stored float64 entries then shifts them by exact
+    integers instead of carrying float32 rounding noise.
+    """
+    transform = np.asarray(transform, dtype=np.float64)
+    if (
+        transform.shape != (3, 3)
+        or not np.all(np.isfinite(transform))
+        or abs(transform[0, 1]) > tolerance
+        or abs(transform[1, 0]) > tolerance
+        or not np.allclose(transform[2], (0.0, 0.0, 1.0), rtol=0.0, atol=tolerance)
+        or transform[0, 0] <= 0.0
+        or transform[1, 1] <= 0.0
+    ):
+        return None
+    exact = np.eye(3)
+    exact[0, 0], exact[1, 1] = transform[0, 0], transform[1, 1]
+    exact[:2, 2] = transform[:2, 2]
+    shift = np.round(exact[:2, 2])
+    if (
+        abs(exact[0, 0] - 1.0) <= tolerance
+        and abs(exact[1, 1] - 1.0) <= tolerance
+        and np.all(np.abs(exact[:2, 2] - shift) <= 1e-3)
+    ):
+        exact[0, 0] = exact[1, 1] = 1.0
+        exact[:2, 2] = shift
+    return exact
+
+
 def mark_stream_supported(func: Any) -> Any:
     """Annotate a writer as supporting binary stream targets."""
     setattr(func, "__euler_loading_supports_stream__", True)

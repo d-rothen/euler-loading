@@ -27,8 +27,21 @@ Return types
 - **read_lidar_to_gnss** -- ``np.ndarray`` of shape ``(4, 4)``, the
   ``lidar2gnss`` transform from ``calib.json``.
 
-Writers: ``write_sparse_depth`` (aliases ``write_lidar_point_cloud``,
-``write_point_cloud``) writes ``(N, 6)`` float64 ``.bin`` files.
+Writers
+-------
+Each writer stores what the loader of the same name reads back unchanged, so
+derived datasets (crops, resizes, motion-compensated lidar) keep the MUSES
+formats:
+
+- **write_rgb** / **write_reference_rgb** -- 8-bit RGB PNG;
+- **write_semantic_segmentation** -- single-channel 8-bit label PNG;
+- **write_semantic_segmentation_color** -- RGB PNG;
+- **write_panoptic_segmentation** -- COCO RGB-encoded segment IDs;
+- **write_sky_mask** -- a label PNG holding only sky / not sky;
+- **write_intrinsics** -- updates ``K`` of one sensor in ``calib.json``,
+  keeping everything else;
+- **write_sparse_depth** (aliases ``write_lidar_point_cloud``,
+  ``write_point_cloud``) -- ``(N, 6)`` float64 ``.bin``.
 """
 
 from __future__ import annotations
@@ -56,12 +69,23 @@ from euler_loading.loaders._sky import (
 from euler_loading.loaders._writer_utils import (
     ensure_parent,
     mark_stream_supported,
+    pixel_grid_transform,
+    replace_json,
+    save_image,
+    to_bool_mask,
+    to_hw,
+    to_hwc_rgb,
     to_numpy,
+    to_uint8,
 )
 
 _LIDAR_COLUMNS = ["x", "y", "z", "intensity", "ring", "timestamp"]
 _SKY_LABEL_ID = 23
 _SKY_TRAIN_ID = 10
+#: Keys (per-file attributes first, then the head's meta) naming the sensor
+#: whose ``calib.json`` intrinsics are read or written.
+_INTRINSICS_SENSOR_KEYS = ("sensor", "camera", "intrinsics_sensor", "target_sensor")
+_MAX_PANOPTIC_ID = 2**24 - 1
 
 
 def _load_image_rgb(path: Union[str, BinaryIO]) -> np.ndarray:
@@ -100,16 +124,19 @@ def _legacy_color(key: str) -> Any:
     return lambda value: as_rgb(value, what=f"MUSES {key!r}")
 
 
-def _load_sky_mask_array(
+_SKY_LOADER = "muses sky_mask"
+
+
+def _sky_color(
     path: Union[str, BinaryIO],
     meta: Mapping[str, Any] | None,
     attributes: Mapping[str, Any] | None,
-) -> np.ndarray:
-    loader = "muses sky_mask"
-    color = resolve_skyclass(
+) -> tuple[int, int, int]:
+    """Resolve the sky label of *path* as an RGB triple (grey for label PNGs)."""
+    return resolve_skyclass(
         meta,
         attributes,
-        loader=loader,
+        loader=_SKY_LOADER,
         default=(_default_sky_class_id(path),) * 3,
         legacy={
             "sky_class": _legacy_color("sky_class"),
@@ -117,6 +144,15 @@ def _load_sky_mask_array(
             "sky_class_id": grey(_legacy_class_id),
         },
     )
+
+
+def _load_sky_mask_array(
+    path: Union[str, BinaryIO],
+    meta: Mapping[str, Any] | None,
+    attributes: Mapping[str, Any] | None,
+) -> np.ndarray:
+    loader = _SKY_LOADER
+    color = _sky_color(path, meta, attributes)
     with Image.open(path) as image:
         labels = np.array(image)
         if labels.ndim == 2:
@@ -196,11 +232,7 @@ def _read_intrinsics_array(
     if not isinstance(intrinsics, Mapping):
         raise ValueError("MUSES calibration JSON must contain an 'intrinsics' object.")
 
-    sensor = _select_string(
-        meta=meta,
-        attributes=attributes,
-        keys=("sensor", "camera", "intrinsics_sensor", "target_sensor"),
-    ) or "rgb"
+    sensor = _select_string(meta=meta, attributes=attributes, keys=_INTRINSICS_SENSOR_KEYS) or "rgb"
     entry = intrinsics.get(sensor)
     if not isinstance(entry, Mapping) or "K" not in entry:
         raise KeyError(
@@ -694,3 +726,194 @@ def write_sparse_depth(path: Union[str, BinaryIO], value: Any, meta: dict[str, A
 
 write_lidar_point_cloud = write_sparse_depth
 write_point_cloud = write_sparse_depth
+
+
+# ---------------------------------------------------------------------------
+# Image and calibration writers
+# ---------------------------------------------------------------------------
+
+
+def _integer_values(arr: np.ndarray, *, name: str, maximum: int) -> np.ndarray:
+    """Return *arr* as int64, refusing non-integral values or values outside ``0..maximum``."""
+    if arr.dtype == np.bool_:
+        arr = arr.astype(np.int64)
+    elif not np.issubdtype(arr.dtype, np.integer):
+        if not np.all(np.isfinite(arr)) or not np.array_equal(arr, np.rint(arr)):
+            raise ValueError(f"MUSES {name} must hold integer values")
+    values = arr.astype(np.int64)
+    if values.size and (values.min() < 0 or values.max() > maximum):
+        raise ValueError(
+            f"MUSES {name} values must lie in 0..{maximum}, got "
+            f"{int(values.min())}..{int(values.max())}"
+        )
+    return values
+
+
+@mark_stream_supported
+def write_rgb(path: Union[str, BinaryIO], value: Any, meta: dict[str, Any] | None = None) -> None:
+    """Write an RGB image as an 8-bit PNG, the format :func:`rgb` reads.
+
+    Accepts ``(H, W, 3)`` or ``(3, H, W)`` values in ``[0, 1]`` (scaled to
+    0..255 and rounded) or already in 0..255. Values :func:`rgb` returned
+    round-trip exactly.
+    """
+    arr = to_uint8(to_hwc_rgb(value, name="rgb"), scale_unit_range=True)
+    save_image(path, Image.fromarray(arr), format="PNG")
+
+
+#: Reference frames are PNGs of the same camera.
+write_reference_rgb = write_rgb
+
+
+@mark_stream_supported
+def write_semantic_segmentation(path: Union[str, BinaryIO], value: Any, meta: dict[str, Any] | None = None) -> None:
+    """Write ``labelIds`` / ``labelTrainIds`` as a single-channel 8-bit PNG.
+
+    Takes ``(H, W)`` or ``(1, H, W)`` integer labels in 0..255, as
+    :func:`semantic_segmentation` returns them.
+    """
+    labels = _integer_values(to_hw(value, name="semantic_segmentation"), name="semantic_segmentation", maximum=255)
+    save_image(path, Image.fromarray(labels.astype(np.uint8)), format="PNG")
+
+
+@mark_stream_supported
+def write_semantic_segmentation_color(path: Union[str, BinaryIO], value: Any, meta: dict[str, Any] | None = None) -> None:
+    """Write ``labelColor`` RGB values (``(H, W, 3)`` or ``(3, H, W)``, 0..255) as an RGB PNG."""
+    colors = _integer_values(
+        to_hwc_rgb(value, name="semantic_segmentation_color"),
+        name="semantic_segmentation_color",
+        maximum=255,
+    )
+    save_image(path, Image.fromarray(colors.astype(np.uint8)), format="PNG")
+
+
+@mark_stream_supported
+def write_panoptic_segmentation(path: Union[str, BinaryIO], value: Any, meta: dict[str, Any] | None = None) -> None:
+    """Write segment IDs as a COCO panoptic PNG, ``id = R + 256 G + 256^2 B``.
+
+    IDs must fit 24 bits, the range :func:`panoptic_segmentation` decodes.
+    """
+    ids = _integer_values(
+        to_hw(value, name="panoptic_segmentation"), name="panoptic_segmentation", maximum=_MAX_PANOPTIC_ID
+    )
+    channels = np.stack([ids & 0xFF, (ids >> 8) & 0xFF, (ids >> 16) & 0xFF], axis=-1).astype(np.uint8)
+    save_image(path, Image.fromarray(channels), format="PNG")
+
+
+def _non_sky_label(meta: Mapping[str, Any] | None, sky: int) -> int:
+    value = meta.get("non_sky_class_id") if isinstance(meta, Mapping) else None
+    if value is None:
+        return 255 if sky == 0 else 0
+    if isinstance(value, bool) or not isinstance(value, (int, np.integer)) or not 0 <= value <= 255:
+        raise ValueError(f"MUSES 'non_sky_class_id' must be an integer in 0..255, got {value!r}")
+    if int(value) == sky:
+        raise ValueError(f"MUSES 'non_sky_class_id' {value} equals the sky label")
+    return int(value)
+
+
+@mark_stream_supported
+def write_sky_mask(path: Union[str, BinaryIO], value: Any, meta: dict[str, Any] | None = None) -> None:
+    """Write a sky mask as a label PNG that :func:`sky_mask` reads back with the same meta.
+
+    The sky label resolves as in :func:`sky_mask` (``skyclass``, a deprecated
+    key, or 23 for ``labelIds`` file names and 10 otherwise). A grey
+    ``[v, v, v]`` writes a single-channel PNG with ``v`` on sky pixels and
+    ``meta["non_sky_class_id"]`` elsewhere (default 0, or 255 when the sky is
+    0); a colour writes an RGB PNG with that colour on black. Like the sky
+    writers of the other datasets, the file holds only sky / not sky, not the
+    other classes.
+    """
+    mask = to_bool_mask(value, name="sky_mask")
+    color = _sky_color(path, meta, None)
+    if color[0] == color[1] == color[2]:
+        labels = np.where(mask, color[0], _non_sky_label(meta, color[0])).astype(np.uint8)
+        image = Image.fromarray(labels)
+    else:
+        rgb = np.zeros(mask.shape + (3,), dtype=np.uint8)
+        rgb[mask] = color
+        image = Image.fromarray(rgb)
+    save_image(path, image, format="PNG")
+
+
+def _matrix_rows(stored: Any, matrix: np.ndarray) -> list[list[Any]]:
+    """Return *matrix* as nested lists, keeping each stored JSON number it does not change."""
+    rows: list[list[Any]] = []
+    for i in range(3):
+        row: list[Any] = []
+        for j in range(3):
+            # ``+ 0.0`` turns a -0.0 from a product into 0.0.
+            value = float(matrix[i, j]) + 0.0
+            try:
+                old = stored[i][j]
+            except (IndexError, KeyError, TypeError):
+                old = None
+            same = isinstance(old, (int, float)) and not isinstance(old, bool) and float(old) == value
+            row.append(old if same else value)
+        rows.append(row)
+    return rows
+
+
+@mark_stream_supported
+def write_intrinsics(path: Union[str, BinaryIO], value: Any, meta: dict[str, Any] | None = None) -> None:
+    """Write a camera matrix into MUSES ``calib.json`` as ``intrinsics[<sensor>].K``.
+
+    *value* is what :func:`read_intrinsics` returns for the same *meta*: the
+    ``rgb`` (frame camera) matrix unless ``sensor`` (or ``camera``,
+    ``intrinsics_sensor``, ``target_sensor``) names another.
+
+    An existing file is updated, not replaced. The change from its stored
+    ``K`` to *value* must be a crop or rescale of the pixel grid (an
+    axis-aligned scale and shift); it is applied to the stored float64
+    matrix, whole-pixel crops as exact integer shifts. Everything else is
+    kept: the sensor's distortion ``D`` (it acts on normalised image
+    coordinates, which a crop or rescale leaves alone; the released frame
+    camera images are already undistorted), the other sensors and all
+    extrinsics. An unchanged matrix leaves the file untouched. Any other change
+    is refused. The image size is not recorded, as ``calib.json`` has no field
+    for it, so ``meta["width"]`` / ``meta["height"]`` are ignored.
+
+    A new file, or a stream target, receives ``{"intrinsics": {<sensor>: {"K": value}}}``.
+    """
+    matrix = to_numpy(value).astype(np.float64)
+    if matrix.shape != (3, 3):
+        raise ValueError(f"intrinsics must have shape (3, 3), got {matrix.shape}")
+    if not np.all(np.isfinite(matrix)):
+        raise ValueError("intrinsics must be finite")
+    options = meta if isinstance(meta, Mapping) else {}
+    sensor = _select_string(meta=options, attributes=None, keys=_INTRINSICS_SENSOR_KEYS) or "rgb"
+
+    if not (isinstance(path, (str, os.PathLike)) and os.path.exists(path)):
+        replace_json(path, {"intrinsics": {sensor: {"K": _matrix_rows(None, matrix)}}}, indent=2)
+        return
+
+    name = os.fspath(path)
+    try:
+        document = _load_json(path)
+    except ValueError as exc:
+        raise ValueError(
+            f"Refusing to overwrite {name!r}: it exists but is not a calibration JSON "
+            f"object, so its contents cannot be preserved ({exc})."
+        ) from exc
+    intrinsics = document.get("intrinsics")
+    entry = intrinsics.get(sensor) if isinstance(intrinsics, Mapping) else None
+    if not isinstance(entry, dict) or "K" not in entry:
+        raise ValueError(
+            f"Refusing to update {name!r}: it has no intrinsics for sensor {sensor!r} to update."
+        )
+    try:
+        stored = np.asarray(entry["K"], dtype=np.float64)
+    except (TypeError, ValueError):
+        stored = np.empty(0)
+    if stored.shape != (3, 3) or not np.all(np.isfinite(stored)) or abs(np.linalg.det(stored)) < 1e-12:
+        raise ValueError(f"Refusing to update {name!r}: its {sensor!r} K is not an invertible 3x3 matrix.")
+    transform = pixel_grid_transform(matrix @ np.linalg.inv(stored))
+    if transform is None:
+        raise ValueError(
+            f"Refusing to update {name!r}: the new {sensor!r} intrinsics are not a crop or "
+            "rescale of its stored K, so its distortion and extrinsics may no longer "
+            "belong to them. Write them to a new file instead."
+        )
+    if np.array_equal(transform, np.eye(3)):
+        return
+    entry["K"] = _matrix_rows(entry["K"], transform @ stored)
+    replace_json(path, document, indent=2)

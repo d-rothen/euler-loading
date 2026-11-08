@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- MUSES writers for every image and calibration modality, so derived datasets
+  such as crops keep the MUSES formats: `write_rgb` / `write_reference_rgb`
+  (8-bit PNG), `write_semantic_segmentation` (single-channel label PNG),
+  `write_semantic_segmentation_color`, `write_panoptic_segmentation` (COCO RGB
+  IDs), `write_sky_mask` (a sky / not-sky label PNG using the loader's sky
+  label) and `write_intrinsics`. `write_intrinsics` updates
+  `intrinsics[<sensor>].K` in an existing `calib.json`. The change must be a
+  crop or rescale of the stored matrix and is applied to its float64 values,
+  whole-pixel crops as exact integer shifts. `D`, the other sensors and all
+  extrinsics are kept, and an unchanged matrix leaves the file untouched.
+
 - Require ds-crawler 2.14.0, whose writers implement `path_prefix`. On an older
   ds-crawler, `path_prefix` now raises instead of being taken as a dataset
   property, which wrote the files to the root.

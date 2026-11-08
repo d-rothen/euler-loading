@@ -20,14 +20,15 @@ GNSS_LINE = (
     "-120000 250000 9000000 50000 50000 120000 35000 -2000 947000 5800 -1200 "
     "30 5833 120 145 300 150\n"
 )
+# Synthetic timestamps (UTC us) and mount; MUSES side data stays out of the repo.
 FRAMES = {
-    "REC0176_frame_670857": ("/test/fog/day/670857", 1676367085765123, 1676367085765803, 1676367085705051, 1676367085789506),
-    "REC0176_frame_670890": ("/test/fog/day/670890", 1676367089038100, 1676367089038674, 1676367089004414, 1676367089089059),
+    "REC0176_frame_670857": ("/test/fog/day/670857", 1700000000765100, 1700000000765800, 1700000000705000, 1700000000789500),
+    "REC0176_frame_670890": ("/test/fog/day/670890", 1700000004038100, 1700000004038700, 1700000004004400, 1700000004089000),
 }
 LIDAR_TO_GNSS = [
-    [0.999997568, -0.00134750821, 0.00174611242, 0.048],
-    [-0.00134607756, -0.999998758, -0.00082024856, 0.286],
-    [0.00174721554, 0.000817896162, -0.999998139, -0.039],
+    [0.99995, -0.002, 0.003, 0.05],
+    [-0.002, -0.99995, -0.001, 0.3],
+    [0.003, 0.001, -0.99995, -0.04],
     [0.0, 0.0, 0.0, 1.0],
 ]
 
@@ -119,8 +120,8 @@ def test_sensor_timing_table_and_file_index(tmp_path):
     table = cpu.sensor_timing(str(path))
     assert set(table) == set(FRAMES)
     record = table["REC0176_frame_670890"]
-    assert record["camera_exposure_start_us"] == 1676367089038100
-    assert record["lidar_end_us"] == 1676367089089059
+    assert record["camera_exposure_start_us"] == FRAMES["REC0176_frame_670890"][1]
+    assert record["lidar_end_us"] == FRAMES["REC0176_frame_670890"][4]
     assert table.frame_for_file("lidar/x/REC0176_frame_670857_lidar.bin") == "REC0176_frame_670857"
     assert table.frame_for_file("REC0001_frame_000001_lidar.bin") is None
 

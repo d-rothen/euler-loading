@@ -27,8 +27,12 @@ Return types
 - **read_lidar_to_gnss** -- ``torch.FloatTensor`` of shape ``(4, 4)``, the
   ``lidar2gnss`` transform from ``calib.json``.
 
-Writers: ``write_sparse_depth`` (aliases ``write_lidar_point_cloud``,
-``write_point_cloud``) writes ``(N, 6)`` float64 ``.bin`` files.
+Writers are shared with :mod:`euler_loading.loaders.cpu.muses` and accept
+tensors or arrays: ``write_rgb`` / ``write_reference_rgb``,
+``write_semantic_segmentation``, ``write_semantic_segmentation_color``,
+``write_panoptic_segmentation``, ``write_sky_mask``, ``write_intrinsics``
+(updates ``K`` in ``calib.json``) and ``write_sparse_depth`` (aliases
+``write_lidar_point_cloud``, ``write_point_cloud``).
 """
 
 from __future__ import annotations
@@ -442,3 +446,12 @@ def read_lidar_to_gnss(path: Union[str, BinaryIO], meta: dict[str, Any] | None =
 write_sparse_depth = _cpu.write_sparse_depth
 write_lidar_point_cloud = _cpu.write_lidar_point_cloud
 write_point_cloud = _cpu.write_point_cloud
+
+# Image and calibration writers take tensors or arrays alike.
+write_rgb = _cpu.write_rgb
+write_reference_rgb = _cpu.write_reference_rgb
+write_semantic_segmentation = _cpu.write_semantic_segmentation
+write_semantic_segmentation_color = _cpu.write_semantic_segmentation_color
+write_panoptic_segmentation = _cpu.write_panoptic_segmentation
+write_sky_mask = _cpu.write_sky_mask
+write_intrinsics = _cpu.write_intrinsics

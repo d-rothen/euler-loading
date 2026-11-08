@@ -16,6 +16,7 @@ from PIL import Image
 
 from euler_loading.loaders._writer_utils import (
     mark_stream_supported,
+    pixel_grid_transform,
     replace_json,
     to_numpy,
 )
@@ -338,31 +339,13 @@ def _pixel_transform(transform: np.ndarray, name: str) -> np.ndarray:
     whole-pixel crop (unit scale, integer shift) is snapped to exact values, so
     the stored float64 entries are shifted without float32 rounding noise.
     """
-    tolerance = 1e-6
-    if (
-        not np.all(np.isfinite(transform))
-        or abs(transform[0, 1]) > tolerance
-        or abs(transform[1, 0]) > tolerance
-        or not np.allclose(transform[2], (0.0, 0.0, 1.0), rtol=0.0, atol=tolerance)
-        or transform[0, 0] <= 0.0
-        or transform[1, 1] <= 0.0
-    ):
+    exact = pixel_grid_transform(transform)
+    if exact is None:
         raise ValueError(
             f"Refusing to update {name!r}: the new intrinsics are not a crop or "
             "rescale of its stored matrix, so its K and P cannot be kept "
             "consistent. Write them to a new file instead."
         )
-    exact = np.eye(3)
-    exact[0, 0], exact[1, 1] = transform[0, 0], transform[1, 1]
-    exact[:2, 2] = transform[:2, 2]
-    shift = np.round(exact[:2, 2])
-    if (
-        abs(exact[0, 0] - 1.0) <= tolerance
-        and abs(exact[1, 1] - 1.0) <= tolerance
-        and np.all(np.abs(exact[:2, 2] - shift) <= 1e-3)
-    ):
-        exact[0, 0] = exact[1, 1] = 1.0
-        exact[:2, 2] = shift
     return exact
 
 

@@ -444,9 +444,30 @@ same resolution. Loaders preserve the stored resolution.
 | `gnss` | dict | — | Per-frame `gnss/…_gnss.txt` u-blox record, in physical units |
 | `sensor_timing` | dict | — | The frame's sensor timestamps from `meta.json`, in UTC µs · *hierarchical, selected per sample* |
 
-`point_cloud` is an alias for `lidar_point_cloud`. `write_sparse_depth` (and
-`write_lidar_point_cloud` / `write_point_cloud`) writes `(N, 6)` float64
-`.bin` files that read back unchanged.
+`point_cloud` is an alias for `lidar_point_cloud`. Writers exist for every
+image, lidar and intrinsics function, and what they write reads back unchanged:
+
+- `write_rgb` / `write_reference_rgb`: 8-bit RGB PNG;
+- `write_semantic_segmentation`: single-channel 8-bit label PNG;
+- `write_semantic_segmentation_color`: RGB PNG;
+- `write_panoptic_segmentation`: COCO RGB-encoded IDs, which must fit 24 bits;
+- `write_sky_mask`: only sky / not sky. A grey `skyclass` gives a
+  single-channel PNG with the sky label, and `non_sky_class_id` (default 0)
+  elsewhere; a colour gives an RGB PNG with that colour on black;
+- `write_sparse_depth` (and `write_lidar_point_cloud` / `write_point_cloud`):
+  `(N, 6)` float64 `.bin`;
+- `write_intrinsics`: updates `intrinsics[<sensor>].K` (default `rgb`) in an
+  existing `calib.json`. The change from the stored `K` must be a crop or
+  rescale, and it is applied to the stored float64 values, whole-pixel crops
+  as exact integer shifts. `D`, the other sensors and all extrinsics are kept:
+  `D` acts on normalised coordinates, which a crop or rescale leaves alone.
+  An unchanged matrix leaves the file byte-identical, e.g. after cutting rows
+  off the bottom. A new file gets `{"intrinsics": {<sensor>: {"K": ...}}}`.
+
+`calib.json` holds `K` and every extrinsic, so a derived dataset that changes
+`K` should write the same updated file for `read_extrinsics` and
+`read_lidar_to_gnss`, as `euler-preprocess crop` does. The released
+frame-camera PNGs are already undistorted: project with plain `K`.
 
 #### Ego-motion inputs
 
