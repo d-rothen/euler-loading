@@ -195,6 +195,7 @@ All of them accept both filesystem paths and in-memory buffers.
 | `real_drive_sim` | Real Drive Sim | rgb, depth, class segmentation, sky mask, calibration, intrinsics, extrinsics |
 | `princeton_dense` | Princeton DENSE / SeeingThroughFog | rgb, rccb, sparse depth, intrinsics, extrinsics |
 | `kitti_carla` | KITTI-CARLA | rgb, depth, semantic segmentation, sky mask, lidar point cloud, intrinsics, extrinsics, lidar pose |
+| `driving_stereo` | DrivingStereo | rgb, depth, disparity (half- and full-size, aligned to the half-size left image), intrinsics |
 | `generic_dense_depth` | *any* — inferred from file extension | rgb, depth, sky mask, intrinsics |
 | `generic` | *any* — `.npy` / `.npz` modalities | points 3d, maps, segmentation, spherical maps, SH coefficients, … |
 

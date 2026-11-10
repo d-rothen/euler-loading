@@ -27,6 +27,7 @@ Every submodule exists under both ``gpu`` and ``cpu``:
 - ``muses`` — MUSES
 - ``princeton_dense`` — Princeton DENSE / SeeingThroughFog
 - ``kitti_carla`` — KITTI-CARLA
+- ``driving_stereo`` — DrivingStereo
 - ``generic`` — format-agnostic NumPy modalities
 - ``generic_dense_depth`` — format-agnostic dense-depth modalities
 

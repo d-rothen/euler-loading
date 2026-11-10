@@ -2,6 +2,53 @@
 
 ## Unreleased
 
+- Add the `driving_stereo` loader module (GPU and CPU) for DrivingStereo,
+  resolvable as `loader: "driving_stereo"`. Everything is returned on the
+  pixel grid of the half-size left image:
+  - `rgb` reads the left or right JPEGs;
+  - `depth` and `disparity` decode the half-size uint16 PNGs (`/ 256`, metres
+    and half-size pixels, `0` invalid), which share the left image's grid;
+  - `depth_full_size` and `disparity_full_size` decode the full-size maps
+    (`/ 256` and `/ 128`) and resample them onto the half-size grid. Half-size
+    pixel `(y, x)` sits on full-size pixel `(2y, 2x)`, where the calibrations
+    (`P_full = 2 × P_half`) and the two map sizes agree. The default
+    `full_size_resampling: "nearest"` falls back to the nearest valid sample
+    within half a pixel, nearer surface first; `"subsample"` keeps only the
+    co-located one. Disparity is halved into half-size pixels;
+  - `read_intrinsics` returns the rectified `P_rect_101[:, :3]` from a
+    `half-image-calib` file (`camera: "right"` for `P_rect_103`);
+  - writers for every function: the uint16 encodings, full-size maps with
+    each value at `(2y, 2x)`, and `write_intrinsics`, which applies a crop or
+    rescale to every `P_rect_*` row of an existing calibration file.
+- `_writer_utils.replace_text`, the text counterpart of `replace_json`, which
+  now delegates to it.
+
+- Resizing that respects invalid pixels, for sparse ground truth such as
+  lidar depth:
+  - `interpolation="sparse"` (in `FieldSpec` and `resize_raster`) moves every
+    valid pixel to the nearest pixel of the resized grid, through the same
+    pixel-centre mapping `resize_intrinsics` applies, and keeps the smallest
+    value where several land on one pixel. It never interpolates or
+    duplicates samples;
+  - `invalid_value=` makes `bilinear`/`bicubic` validity-aware: valid values
+    and their support are resized separately, and unsupported pixels get the
+    sentinel;
+  - `SamplePreprocessor.bind_to_dataset` picks these up for depth fields from
+    the dataset head: `"sparse": true` selects `sparse`, and
+    `"invalid": {"sentinel": s}` alone validity-aware bilinear. Explicit field
+    specs still win; heads declaring neither resize as before;
+  - descriptor export refuses `sparse`, and `invalid_value` without a
+    matching `validity_aware` policy, rather than recording a different
+    resize.
+- **Behaviour change:** `nearest` resizing in `SamplePreprocessor` and
+  `resize_raster` samples pixel centres on the torch path too
+  (`nearest-exact`). It used torch's legacy floor-based `nearest`, half a
+  source pixel off the `align_corners=False` convention `resize_intrinsics`
+  assumes, and one source pixel off the Pillow fallback when halving. Masks
+  and segmentations resized with `nearest` now line up with the resized
+  images and intrinsics, and come out the same with or without torch.
+  Transform descriptors keep their recorded per-backend convention.
+
 - MUSES writers for every image and calibration modality, so derived datasets
   such as crops keep the MUSES formats: `write_rgb` / `write_reference_rgb`
   (8-bit PNG), `write_semantic_segmentation` (single-channel label PNG),

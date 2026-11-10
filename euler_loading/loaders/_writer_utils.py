@@ -228,6 +228,25 @@ def replace_json(
     if not isinstance(target, (str, os.PathLike)):
         write_json(target, payload, indent=indent)
         return
+    replace_text(target, json.dumps(payload, indent=indent))
+
+
+def replace_text(
+    target: str | os.PathLike[str] | BinaryIO,
+    text: str,
+    *,
+    encoding: str = "utf-8",
+    newline: str | None = None,
+) -> None:
+    """Write *text* to *target*, replacing an existing file in one step.
+
+    The text counterpart of :func:`replace_json`, with the same guarantees.
+    *newline* is passed to :func:`open`; ``""`` writes line endings verbatim.
+    Stream targets cannot be replaced and are written directly.
+    """
+    if not isinstance(target, (str, os.PathLike)):
+        write_text(target, text, encoding=encoding)
+        return
     # The temporary lands beside the target so the replace stays on one
     # filesystem, which means the parent has to exist first.
     ensure_parent(target)
@@ -245,12 +264,12 @@ def replace_json(
     )
     try:
         try:
-            stream = os.fdopen(handle, "w", encoding="utf-8")
+            stream = os.fdopen(handle, "w", encoding=encoding, newline=newline)
         except BaseException:
             os.close(handle)
             raise
         with stream:
-            json.dump(payload, stream, indent=indent)
+            stream.write(text)
         # mkstemp creates 0600; carry over the mode the file had, or the one a
         # plain open() would have produced, so a written dataset stays as
         # readable as the rest of it.

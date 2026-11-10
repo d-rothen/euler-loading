@@ -700,6 +700,126 @@ dataset = MultiModalDataset(
 sample = dataset[0]  # full_id "/town:Town01/camera:0/frame-0000"
 ```
 
+### DrivingStereo — `driving_stereo`
+
+[DrivingStereo](https://drivingstereo-dataset.github.io/) is a rectified
+stereo driving dataset with lidar-derived depth and disparity. Its images are
+released at half resolution, about 881×400; the foggy weather subset is
+879×400. The test set and the four weather subsets (500 frames each) also ship
+full-size maps at exactly twice that size. A weather archive such as
+`left-image-half-size.zip` holds
+`<weather>/left-image-half-size/<sequence>_<timestamp>.jpg`, and the
+`depth-map-*`, `disparity-map-*` and `right-image-*` archives use the same
+file stems. Calibration is one KITTI-style text file per sequence,
+`calibration/<train|test>/<half|full>-image-calib/<sequence>.txt`. Camera
+`101` is the left camera and `103` the right one.
+
+| Function | Shape | dtype | Notes |
+|---|---|---|---|
+| `rgb` | CHW / HWC | float32 | Left or right JPEG, `[0, 1]` |
+| `depth` | 1HW / HW | float32 | `depth-map-half-size`, uint16 / 256, planar metres; `0` invalid |
+| `depth_full_size` | 1HW / HW | float32 | `depth-map-full-size` (uint16 / 256), resampled onto the half-size left image |
+| `disparity` | 1HW / HW | float32 | `disparity-map-half-size`, uint16 / 256, half-size pixels; `0` invalid |
+| `disparity_full_size` | 1HW / HW | float32 | `disparity-map-full-size` (uint16 / 128, full-size pixels), resampled and halved into half-size pixels |
+| `read_intrinsics` | 3×3 | float32 | Rectified `P_rect_101[:, :3]`; `camera: "right"` reads `P_rect_103` · *hierarchical* |
+
+Writers exist for every function, and what they write reads back unchanged.
+`write_depth` and `write_disparity` write the half-size uint16 encodings.
+`write_depth_full_size` and `write_disparity_full_size` write a native
+full-size map with each value at pixel `(2y, 2x)`. `write_rgb` writes JPEG
+(quality 95) for `.jpg` names and PNG otherwise. `write_intrinsics` updates
+an existing calibration file. The change must be a crop or rescale. It is
+applied to every `P_rect_*` row, so both cameras and the baseline term stay
+consistent, and `meta["width"]`/`["height"]` update `S_rect_*`. All other
+lines are kept, and an unchanged matrix leaves the file byte-identical.
+
+#### Alignment with the half-size left image
+
+Every function returns data on the pixel grid of `left-image-half-size`:
+
+- Depth and disparity belong to the **rectified left camera**. The half-size
+  maps have the left image's size and grid, so `depth` and `disparity`
+  return them unchanged.
+- The full-size calibration is the half-size one doubled exactly. On the
+  foggy sequence `P_rect_101` has `fx = 2002.991`, `cx = 905.3329` against
+  `1001.496`, `452.6664`, with no half-pixel offset. Half-size pixel `(y, x)`
+  therefore sits on full-size pixel `(2y, 2x)`, which is also where the two
+  released map sizes agree. `depth_full_size` and `disparity_full_size`
+  resample onto that grid. `full_size_resampling`, read from the file's
+  attributes and then the head's meta, selects how:
+
+  | Value | Each half-size pixel takes |
+  |---|---|
+  | `nearest` (default) | the full-size sample at `(2y, 2x)`, else the nearest valid one within half a half-size pixel: the four direct neighbours, then the four diagonal ones. Within a ring the nearer surface wins (smaller depth, larger disparity). |
+  | `subsample` | only the sample at `(2y, 2x)`; exact, but it keeps about a quarter of the measurements |
+
+- The half-size maps are **not** a downsampling of the full-size ones. On
+  the foggy subset about half of their valid pixels have no full-size sample
+  in the matching 2×2 block. About 21% of half-size pixels are valid, against
+  5% of full-size pixels and 26% after `nearest` resampling. Where both are
+  valid, 97% of the resampled full-size depths are within 5% of the
+  half-size ones. Prefer `depth` and `disparity` where both sizes exist.
+- `depth × disparity = fx × baseline` holds per pixel with the half-size `fx`
+  and the baseline `|T_103|` (0.545 m), to within 0.05% on the foggy subset.
+  The depth is therefore planar, not radial.
+
+Index the **`half-image-calib`** file for intrinsics. The `full-image-calib`
+file describes the same camera at twice the resolution. In the half-size
+files, `P_rect_103[0, 3]` was not halved and still holds the full-size
+`-fx × baseline`, so take the baseline from `T_103`. `K_*`, `D_*` and `S_*`
+describe the raw, unrectified sensor images, which are not released.
+
+#### Indexing with ds-crawler
+
+Each archive is its own root. IDs are the timestamp and the hierarchy is the
+sequence, so the per-sequence calibration joins every frame below it. The
+contract requires `range` in an rgb head and `radial_depth`,
+`scale_to_meters` and `range` in a depth head. Also declare that the maps are
+sparse, so the [preprocessor](preprocessing.md#resampling-sparse-depth)
+resizes them without blending in the invalid zeros:
+
+```json
+"modality": {"key": "depth", "meta": {
+  "radial_depth": false, "scale_to_meters": 0.00390625, "range": [0, 65535],
+  "invalid": {"non_finite": false, "sentinel": 0}, "sparse": true
+}}
+```
+
+The `left-image-half-size` config:
+
+```json
+"indexing": {
+  "id": {"regex": "^[^/]+/left-image-half-size/[0-9-]+_(?P<frame>[0-9-]+)\\.jpg$", "join_char": "+"},
+  "hierarchy": {"regex": "^[^/]+/left-image-half-size/(?P<sequence>[0-9-]+)_[0-9-]+\\.jpg$", "separator": ":"},
+  "files": {"extensions": [".jpg"]}
+}
+```
+
+The map archives swap in their folder name and the `png` extension, with
+`function: "depth"`, `"depth_full_size"`, `"disparity"` or
+`"disparity_full_size"` in their heads. A calibration root holding
+`half-image-calib/<sequence>.txt` uses the id regex
+`^(half-image-calib)/[0-9-]+\.txt$` with `override: "intrinsics"`, and the
+hierarchy `^half-image-calib/(?P<sequence>[0-9-]+)\.txt$`.
+
+```python
+from euler_loading import Modality, MultiModalDataset
+
+foggy = "/data/DrivingStereo/weather/foggy"
+dataset = MultiModalDataset(
+    modalities={
+        "rgb": Modality(f"{foggy}/left-image-half-size.zip"),
+        "depth": Modality(f"{foggy}/depth-map-half-size.zip"),
+        "disparity": Modality(f"{foggy}/disparity-map-half-size.zip"),
+    },
+    hierarchical_modalities={
+        "intrinsics": Modality("/data/DrivingStereo/calibration/train", collapse_single=True),
+    },
+)
+sample = dataset[0]  # full_id "/sequence:2018-10-25-07-37-26/frame-2018-10-25-07-41-58-446"
+sample["rgb"].shape, sample["depth"].shape  # (3, 400, 879), (1, 400, 879)
+```
+
 ### Generic dense depth — `generic_dense_depth`
 
 Format-agnostic; the loading strategy is inferred from the file extension.

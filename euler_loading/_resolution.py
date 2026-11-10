@@ -33,6 +33,7 @@ _LOADER_MODULES: dict[str, str] = {
     "princeton_dense": "euler_loading.loaders.gpu.princeton_dense",
     "seeing_through_fog": "euler_loading.loaders.gpu.princeton_dense",
     "kitti_carla": "euler_loading.loaders.gpu.kitti_carla",
+    "driving_stereo": "euler_loading.loaders.gpu.driving_stereo",
 }
 
 

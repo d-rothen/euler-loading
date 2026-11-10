@@ -100,6 +100,41 @@ If your `Modality(...)` definitions already set `modality_type`, calling
 metadata. With `infer_fields=True` (the default) common field names such as
 `rgb`, `depth` and `sky_mask` are inferred even without an explicit spec.
 
+`bind_to_dataset` (which `MultiModalDataset` calls for its transforms) also
+reads how a depth head marks missing measurements, so sparse ground truth is
+never blended with its invalid pixels:
+
+| Head `modality.meta` | Depth resize |
+|---|---|
+| `"sparse": true` (with or without `invalid.sentinel`, default `0`) | `interpolation: "sparse"` |
+| `"invalid": {"sentinel": s}` only | validity-aware bilinear with `invalid_value: s` |
+| neither | bilinear, as before |
+
+The field counts as depth through its `modality_type`, else its loader's
+`@modality_meta` type, else its name. An explicit field spec always wins.
+
+### Resampling sparse depth
+
+Lidar-derived depth such as DrivingStereo or KITTI is sparse: most pixels hold
+an invalid sentinel (usually `0`). Plain bilinear blends that sentinel into the
+neighbouring measurements. A pixel between a 10 m sample and an empty one
+becomes 5 m. The two invalid-aware modes avoid that:
+
+- `interpolation: "sparse"` moves every valid pixel to the nearest pixel of the
+  resized grid, through the same pixel-centre mapping `resize_intrinsics`
+  applies to the camera, and keeps the smallest depth (the nearest surface)
+  where several land on one pixel. Every output value is a real measurement,
+  nothing is interpolated across object edges, and upsampling leaves the map
+  sparse rather than duplicating samples. Use it for lidar-like ground truth.
+- `invalid_value` with `bilinear` or `bicubic` resizes the valid values and
+  their support separately and divides, so invalid pixels carry no weight.
+  Pixels without support get `invalid_value`. It still averages across depth
+  edges, so use it for dense depth with holes (sky, missing returns), not
+  for sparse samples.
+
+For evaluation, prefer not to resample ground truth at all: resize the
+prediction to the ground-truth grid and score the valid pixels.
+
 ## Field kinds
 
 | Kind | Default interpolation | Behaviour |
@@ -118,10 +153,15 @@ Per-field options:
 |---|---|
 | `kind` | One of the kinds above. |
 | `layout` | Explicit layout: `HW`, `CHW`, `HWC`, `NHW`, `NCHW`, `NHWC`. Inferred when omitted. |
-| `interpolation` | Override the default: `nearest`, `bilinear`, `bicubic`. |
+| `interpolation` | Override the default: `nearest`, `bilinear`, `bicubic`, or `sparse` (see above). |
+| `invalid_value` | Finite value marking pixels without a measurement; non-finite values then count as invalid too. Makes `bilinear`/`bicubic` validity-aware, and is the sentinel for `sparse` (default `0`). |
 | `normalize_vectors` | Force vector renormalisation on or off (defaults on for `ray_map`). |
 | `threshold` | Binarisation threshold for masks (default `0.5`). |
 | `reduce` | For hierarchical fields that arrive as `{file_id: value}` — `"first"` picks a single entry. Useful for one intrinsics file per scene/camera. |
+
+`nearest` samples at pixel centres with torch (`nearest-exact`) and Pillow
+alike, the convention `resize_intrinsics` assumes. Halving a row picks source
+pixels 1, 3, 5, … rather than torch's legacy 0, 2, 4, ….
 
 ## Intrinsics helpers
 
@@ -144,13 +184,20 @@ code that resizes outside a `SamplePreprocessor`:
 from euler_loading import resize_raster
 
 rgb = resize_raster(rgb, layout="HWC", size=(512, 960), interpolation="bilinear")
-depth = resize_raster(depth, layout="HW", size=(512, 960), interpolation="nearest")
+depth = resize_raster(depth, layout="HW", size=(512, 960), interpolation="sparse")
 ```
 
 The layout is explicit (`HW`, `HWC`, `CHW` or a batched form) and the
-interpolation is `nearest`, `bilinear` or `bicubic` with `align_corners=False`,
-so the result matches `resize_intrinsics`. Integer values are rounded and
-booleans thresholded after interpolation; dtype and container are kept.
+interpolation is `nearest`, `bilinear`, `bicubic` or `sparse`, all in the
+`align_corners=False` convention, so the result matches `resize_intrinsics`.
+`invalid_value=` works as the field option of the same name. Integer values
+are rounded and booleans thresholded after interpolation; dtype and container
+are kept.
+
+Transform descriptors cannot export `sparse`, and export `invalid_value` only
+with `policy.invalid_depth: "validity_aware"` and a matching profile
+sentinel. Export refuses both otherwise rather than recording a different
+resize than the one that runs.
 
 `infer_field_spec(name, value=None)` exposes the name-based inference used
 internally, returning a `FieldSpec` or `None`.

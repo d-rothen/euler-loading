@@ -1,6 +1,215 @@
 {
     "supportedLoaders": [
         {
+            "name": "driving_stereo",
+            "modalities": [
+                {
+                    "type": "depth",
+                    "function": "depth",
+                    "hierarchical": false,
+                    "dtype": "float32",
+                    "access": "key",
+                    "output_range": [
+                        0.0,
+                        255.99609375
+                    ],
+                    "output_unit": "meters",
+                    "file_formats": [
+                        ".png"
+                    ],
+                    "meta": {
+                        "encoding": "uint16_png",
+                        "decode": "value / 256",
+                        "raw_range": [
+                            0,
+                            65535
+                        ],
+                        "scale_to_meters": 0.00390625,
+                        "radial_depth": false,
+                        "invalid": {
+                            "non_finite": false,
+                            "sentinel": 0
+                        },
+                        "sparse": true,
+                        "camera": "rectified_left",
+                        "resolution": "half"
+                    },
+                    "cpu": {
+                        "shape": "HW"
+                    },
+                    "gpu": {
+                        "shape": "1HW"
+                    }
+                },
+                {
+                    "type": "depth",
+                    "function": "depth_full_size",
+                    "hierarchical": false,
+                    "dtype": "float32",
+                    "access": "key",
+                    "output_range": [
+                        0.0,
+                        255.99609375
+                    ],
+                    "output_unit": "meters",
+                    "file_formats": [
+                        ".png"
+                    ],
+                    "meta": {
+                        "encoding": "uint16_png",
+                        "decode": "value / 256",
+                        "raw_range": [
+                            0,
+                            65535
+                        ],
+                        "scale_to_meters": 0.00390625,
+                        "radial_depth": false,
+                        "invalid": {
+                            "non_finite": false,
+                            "sentinel": 0
+                        },
+                        "sparse": true,
+                        "camera": "rectified_left",
+                        "resolution": "full",
+                        "aligned_to": "left_image_half_size",
+                        "full_size_resampling": [
+                            "nearest",
+                            "subsample"
+                        ]
+                    },
+                    "cpu": {
+                        "shape": "HW"
+                    },
+                    "gpu": {
+                        "shape": "1HW"
+                    }
+                },
+                {
+                    "type": "disparity",
+                    "function": "disparity",
+                    "hierarchical": false,
+                    "dtype": "float32",
+                    "access": "key",
+                    "output_range": [
+                        0.0,
+                        255.99609375
+                    ],
+                    "output_unit": "pixels",
+                    "file_formats": [
+                        ".png"
+                    ],
+                    "meta": {
+                        "encoding": "uint16_png",
+                        "raw_range": [
+                            0,
+                            65535
+                        ],
+                        "invalid": {
+                            "non_finite": false,
+                            "sentinel": 0
+                        },
+                        "sparse": true,
+                        "camera": "rectified_left",
+                        "disparity_unit": "half_size_pixels",
+                        "decode": "value / 256",
+                        "resolution": "half"
+                    },
+                    "cpu": {
+                        "shape": "HW"
+                    },
+                    "gpu": {
+                        "shape": "1HW"
+                    }
+                },
+                {
+                    "type": "disparity",
+                    "function": "disparity_full_size",
+                    "hierarchical": false,
+                    "dtype": "float32",
+                    "access": "key",
+                    "output_range": [
+                        0.0,
+                        255.99609375
+                    ],
+                    "output_unit": "pixels",
+                    "file_formats": [
+                        ".png"
+                    ],
+                    "meta": {
+                        "encoding": "uint16_png",
+                        "raw_range": [
+                            0,
+                            65535
+                        ],
+                        "invalid": {
+                            "non_finite": false,
+                            "sentinel": 0
+                        },
+                        "sparse": true,
+                        "camera": "rectified_left",
+                        "disparity_unit": "half_size_pixels",
+                        "decode": "value / 128 / 2",
+                        "resolution": "full",
+                        "aligned_to": "left_image_half_size",
+                        "full_size_resampling": [
+                            "nearest",
+                            "subsample"
+                        ]
+                    },
+                    "cpu": {
+                        "shape": "HW"
+                    },
+                    "gpu": {
+                        "shape": "1HW"
+                    }
+                },
+                {
+                    "type": "intrinsics",
+                    "function": "read_intrinsics",
+                    "hierarchical": true,
+                    "dtype": "float32",
+                    "access": "key",
+                    "file_formats": [
+                        ".txt"
+                    ],
+                    "meta": {
+                        "matrix": "P_rect[:, :3]",
+                        "camera": [
+                            "left",
+                            "right"
+                        ]
+                    },
+                    "cpu": {
+                        "shape": "3x3"
+                    },
+                    "gpu": {
+                        "shape": "3x3"
+                    }
+                },
+                {
+                    "type": "rgb",
+                    "function": "rgb",
+                    "hierarchical": false,
+                    "dtype": "float32",
+                    "access": "key",
+                    "output_range": [
+                        0.0,
+                        1.0
+                    ],
+                    "file_formats": [
+                        ".jpg",
+                        ".png"
+                    ],
+                    "cpu": {
+                        "shape": "HWC"
+                    },
+                    "gpu": {
+                        "shape": "CHW"
+                    }
+                }
+            ]
+        },
+        {
             "name": "generic",
             "modalities": [
                 {

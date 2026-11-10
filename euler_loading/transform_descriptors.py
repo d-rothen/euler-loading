@@ -175,6 +175,18 @@ def export_preprocessor(
             raise ValueError(
                 f"Field {name!r}: passthrough has no spatial output binding"
             )
+        if spec.interpolation == "sparse":
+            raise ValueError(
+                f"Field {name!r}: sparse resampling cannot be exported to a descriptor"
+            )
+        if spec.invalid_value is not None and (
+            binding.get("policy", {}).get("invalid_depth") != "validity_aware"
+            or profile["invalid"]["sentinel"] != spec.invalid_value
+        ):
+            raise ValueError(
+                f"Field {name!r}: invalid_value needs policy.invalid_depth "
+                "'validity_aware' and a matching profile sentinel to export"
+            )
         default_interpolation = "nearest" if profile["kind"] == "mask" else "bilinear"
         if profile["kind"] == "generic" and profile["dtype"] not in {
             "float32",

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from copy import deepcopy
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 import numpy as np
@@ -35,6 +35,11 @@ _PIL_MODES = {
     "bilinear": _PIL_RESAMPLING.BILINEAR,
     "bicubic": _PIL_RESAMPLING.BICUBIC,
 }
+# "sparse" forward-maps valid samples instead of interpolating; see _resize_sparse.
+_INTERPOLATIONS = (*_PIL_MODES, "sparse")
+# torch's "nearest" is floor-based; "nearest-exact" samples pixel centres like
+# Pillow's NEAREST and the align_corners=False convention of resize_intrinsics.
+_TORCH_MODES = {"nearest": "nearest-exact", "bilinear": "bilinear", "bicubic": "bicubic"}
 _FIELD_KIND_ALIASES = {
     "auto": "generic",
     "camera_rays": "ray_map",
@@ -113,9 +118,43 @@ def _infer_kind_from_name(name: str) -> str | None:
     return None
 
 
+def _check_interpolation(interpolation: Any) -> str:
+    mode = str(interpolation).strip().lower()
+    if mode not in _INTERPOLATIONS:
+        available = ", ".join(sorted(_INTERPOLATIONS))
+        raise ValueError(
+            f"Unsupported interpolation {interpolation!r}. "
+            f"Available interpolations: {available}"
+        )
+    return mode
+
+
+def _check_invalid_value(value: Any) -> float | None:
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, (int, float, np.integer, np.floating)):
+        raise ValueError(f"invalid_value must be a finite number, got {value!r}")
+    value = float(value)
+    if not np.isfinite(value):
+        raise ValueError(
+            f"invalid_value must be finite, got {value!r}; non-finite values are always invalid"
+        )
+    return value
+
+
 @dataclass(frozen=True)
 class FieldSpec:
-    """How a sample field should participate in spatial preprocessing."""
+    """How a sample field should participate in spatial preprocessing.
+
+    ``invalid_value`` marks pixels without a measurement, e.g. ``0`` in sparse
+    lidar depth; non-finite values then count as invalid too. With a
+    ``bilinear`` or ``bicubic`` resize the valid values and their support are
+    resized separately, so invalid pixels never blend into valid ones, and
+    pixels without support get ``invalid_value``. ``interpolation="sparse"``
+    instead moves every valid pixel to the nearest pixel of the resized grid,
+    keeping the smallest value (the nearest surface, for depth) where several
+    land on one pixel; ``invalid_value`` defaults to ``0`` for it.
+    """
 
     kind: str = "generic"
     layout: str | None = None
@@ -123,21 +162,15 @@ class FieldSpec:
     normalize_vectors: bool | None = None
     threshold: float = 0.5
     reduce: str | None = None
+    invalid_value: float | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "kind", _canonical_kind(self.kind))
         object.__setattr__(self, "layout", _canonical_layout(self.layout))
+        object.__setattr__(self, "invalid_value", _check_invalid_value(self.invalid_value))
 
-        interpolation = self.interpolation
-        if interpolation is not None:
-            interpolation = str(interpolation).strip().lower()
-            if interpolation not in _PIL_MODES:
-                available = ", ".join(sorted(_PIL_MODES))
-                raise ValueError(
-                    f"Unsupported interpolation {self.interpolation!r}. "
-                    f"Available interpolations: {available}"
-                )
-            object.__setattr__(self, "interpolation", interpolation)
+        if self.interpolation is not None:
+            object.__setattr__(self, "interpolation", _check_interpolation(self.interpolation))
 
         reduce = self.reduce
         if reduce is not None:
@@ -167,6 +200,7 @@ class FieldSpec:
             normalize_vectors=cfg.get("normalize_vectors"),
             threshold=float(cfg.get("threshold", 0.5)),
             reduce=cfg.get("reduce"),
+            invalid_value=cfg.get("invalid_value"),
         )
 
     def effective_interpolation(self, value: Any) -> str:
@@ -211,6 +245,8 @@ class FieldSpec:
             parts.append(f"threshold={self.threshold:g}")
         if self.reduce is not None:
             parts.append(f"reduce={self.reduce}")
+        if self.invalid_value is not None:
+            parts.append(f"invalid_value={self.invalid_value:g}")
         return ", ".join(parts)
 
 
@@ -560,6 +596,36 @@ def _from_torch_nchw(
     return tensor.cpu().numpy().astype(original.dtype, copy=False)
 
 
+def _numpy_to_nchw(array: np.ndarray, layout: str) -> np.ndarray:
+    if layout == "HW":
+        return array[np.newaxis, np.newaxis, :, :]
+    if layout == "CHW":
+        return array[np.newaxis, :, :, :]
+    if layout == "HWC":
+        return np.moveaxis(array, -1, 0)[np.newaxis, :, :, :]
+    if layout == "NHW":
+        return array[:, np.newaxis, :, :]
+    if layout == "NCHW":
+        return array
+    if layout == "NHWC":
+        return np.moveaxis(array, -1, 1)
+    raise ValueError(f"Unsupported layout {layout!r}")  # pragma: no cover - guarded by layout validation
+
+
+def _numpy_from_nchw(nchw: np.ndarray, layout: str, dtype: Any) -> np.ndarray:
+    if layout == "HW":
+        return nchw[0, 0].astype(dtype, copy=False)
+    if layout == "CHW":
+        return nchw[0].astype(dtype, copy=False)
+    if layout == "HWC":
+        return np.moveaxis(nchw[0], 0, -1).astype(dtype, copy=False)
+    if layout == "NHW":
+        return nchw[:, 0].astype(dtype, copy=False)
+    if layout == "NCHW":
+        return nchw.astype(dtype, copy=False)
+    return np.moveaxis(nchw, 1, -1).astype(dtype, copy=False)
+
+
 def _resize_numpy_fallback(
     value: np.ndarray,
     *,
@@ -569,20 +635,7 @@ def _resize_numpy_fallback(
 ) -> np.ndarray:
     target_h, target_w = size
     array = np.asarray(value)
-    if layout == "HW":
-        nchw = array[np.newaxis, np.newaxis, :, :]
-    elif layout == "CHW":
-        nchw = array[np.newaxis, :, :, :]
-    elif layout == "HWC":
-        nchw = np.moveaxis(array, -1, 0)[np.newaxis, :, :, :]
-    elif layout == "NHW":
-        nchw = array[:, np.newaxis, :, :]
-    elif layout == "NCHW":
-        nchw = array
-    elif layout == "NHWC":
-        nchw = np.moveaxis(array, -1, 1)
-    else:  # pragma: no cover - guarded by layout validation
-        raise ValueError(f"Unsupported layout {layout!r}")
+    nchw = _numpy_to_nchw(array, layout)
 
     resized = np.empty(
         (nchw.shape[0], nchw.shape[1], target_h, target_w),
@@ -598,17 +651,79 @@ def _resize_numpy_fallback(
                 dtype=np.float32,
             )
 
-    if layout == "HW":
-        return resized[0, 0].astype(array.dtype, copy=False)
-    if layout == "CHW":
-        return resized[0].astype(array.dtype, copy=False)
-    if layout == "HWC":
-        return np.moveaxis(resized[0], 0, -1).astype(array.dtype, copy=False)
-    if layout == "NHW":
-        return resized[:, 0].astype(array.dtype, copy=False)
-    if layout == "NCHW":
-        return resized.astype(array.dtype, copy=False)
-    return np.moveaxis(resized, 1, -1).astype(array.dtype, copy=False)
+    return _numpy_from_nchw(resized, layout, array.dtype)
+
+
+def _resize_sparse(
+    value: Any,
+    *,
+    layout: str,
+    size: tuple[int, int],
+    invalid_value: float,
+) -> Any:
+    """Move each valid pixel to the nearest pixel of the resized grid.
+
+    A source pixel centre ``x`` lands at ``(x + 0.5) * scale - 0.5``, the
+    ``align_corners=False`` mapping :func:`resize_intrinsics` applies to the
+    camera, and is rounded to the nearest target pixel. Where several land on
+    one pixel the smallest value is kept: the nearest surface, for depth.
+    Nothing is interpolated or duplicated, so every output value is a source
+    measurement; pixels nothing lands on get *invalid_value*, as do invalid
+    (non-finite or *invalid_value*) source pixels.
+    """
+    tensor_input = _is_torch_tensor(value)
+    array = value.detach().cpu().numpy() if tensor_input else np.asarray(value)
+    nchw = _numpy_to_nchw(array, layout)
+    batch, channels, height, width = nchw.shape
+    target_h, target_w = size
+
+    valid = np.isfinite(nchw) & (nchw != invalid_value)
+    n, c, ys, xs = np.nonzero(valid)
+    ty = np.minimum(np.floor((ys + 0.5) * (target_h / height)).astype(np.int64), target_h - 1)
+    tx = np.minimum(np.floor((xs + 0.5) * (target_w / width)).astype(np.int64), target_w - 1)
+    flat = np.full(batch * channels * target_h * target_w, np.inf)
+    target = ((n * channels + c) * target_h + ty) * target_w + tx
+    np.minimum.at(flat, target, nchw[valid].astype(np.float64))
+    flat[~np.isfinite(flat)] = invalid_value
+    resized = _numpy_from_nchw(
+        flat.reshape(batch, channels, target_h, target_w), layout, array.dtype
+    )
+    if tensor_input:
+        return torch.from_numpy(np.ascontiguousarray(resized)).to(value.device)
+    return resized
+
+
+def _resize_validity_aware(
+    value: Any,
+    *,
+    layout: str,
+    size: tuple[int, int],
+    interpolation: str,
+    invalid_value: float,
+) -> Any:
+    """Resize valid values and their support separately; see :class:`FieldSpec`."""
+    if _is_torch_tensor(value):
+        valid = torch.isfinite(value) & (value != invalid_value)
+        clean = torch.where(valid, value, torch.zeros_like(value))
+        weight = valid.to(dtype=value.dtype)
+    else:
+        valid = np.isfinite(value) & (value != invalid_value)
+        clean = np.where(valid, value, 0).astype(value.dtype, copy=False)
+        weight = valid.astype(value.dtype)
+    options = {"layout": layout, "size": size, "interpolation": interpolation,
+               "normalize_vectors": False, "threshold": 0.5}
+    numerator = _resize_spatial_value(clean, **options)
+    support = _resize_spatial_value(weight, **options)
+    if _is_torch_tensor(numerator):
+        supported = support > 1e-6
+        safe = torch.where(supported, support, torch.ones_like(support))
+        return torch.where(
+            supported, numerator / safe, torch.full_like(numerator, invalid_value)
+        )
+    supported = support > 1e-6
+    out = np.full_like(numerator, invalid_value)
+    np.divide(numerator, support, out=out, where=supported)
+    return out
 
 
 def _resize_spatial_value(
@@ -619,16 +734,34 @@ def _resize_spatial_value(
     interpolation: str,
     normalize_vectors: bool,
     threshold: float,
+    invalid_value: float | None = None,
 ) -> Any:
+    if interpolation == "sparse":
+        return _resize_sparse(
+            value, layout=layout, size=size,
+            invalid_value=0.0 if invalid_value is None else invalid_value,
+        )
+    floating = (
+        value.is_floating_point() if _is_torch_tensor(value)
+        else isinstance(value, np.ndarray) and value.dtype.kind == "f"
+    )
+    if invalid_value is not None and interpolation != "nearest" and floating:
+        if normalize_vectors:
+            raise ValueError("invalid_value cannot be combined with vector normalization.")
+        return _resize_validity_aware(
+            value, layout=layout, size=size,
+            interpolation=interpolation, invalid_value=invalid_value,
+        )
     if _is_torch_tensor(value) or torch is not None:
         tensor, original_is_torch = _to_torch_nchw(value, layout)
         original_dtype = tensor.dtype
         work = tensor.to(dtype=torch.float32)
+        mode = _TORCH_MODES[interpolation]
         work = F.interpolate(
             work,
             size=size,
-            mode=interpolation,
-            align_corners=False if interpolation != "nearest" else None,
+            mode=mode,
+            align_corners=False if mode in {"bilinear", "bicubic"} else None,
         )
         if normalize_vectors:
             work = F.normalize(work, dim=1)
@@ -675,23 +808,24 @@ def resize_raster(
     layout: str,
     size: tuple[int, int],
     interpolation: str = "bilinear",
+    invalid_value: float | None = None,
 ) -> np.ndarray | "torch.Tensor":
     """Resize one raster to ``size = (height, width)``, as :class:`Resize` resizes sample fields.
 
     *layout* is ``"HW"``, ``"HWC"`` or ``"CHW"`` (or a batched ``N...`` form).
-    *interpolation* is ``"nearest"``, ``"bilinear"`` or ``"bicubic"``, with
-    ``align_corners=False`` -- the pixel-centre convention
-    :func:`resize_intrinsics` assumes. Integer values are rounded and boolean
-    values thresholded at 0.5 after interpolation; the dtype and the container
-    (array or tensor) are kept.
+    *interpolation* is ``"nearest"``, ``"bilinear"``, ``"bicubic"`` or
+    ``"sparse"``, all in the pixel-centre (``align_corners=False``) convention
+    :func:`resize_intrinsics` assumes. ``nearest`` samples at pixel centres
+    with torch and Pillow alike. Integer values are rounded and boolean values
+    thresholded at 0.5 after interpolation; the dtype and the container (array
+    or tensor) are kept. *invalid_value* marks pixels without a measurement;
+    see :class:`FieldSpec` for how it and ``"sparse"`` treat them.
     """
     canonical = _canonical_layout(layout)
     if canonical is None:
         raise ValueError("layout is required")
-    mode = str(interpolation).strip().lower()
-    if mode not in _PIL_MODES:
-        available = ", ".join(sorted(_PIL_MODES))
-        raise ValueError(f"Unsupported interpolation {interpolation!r}. Available: {available}")
+    mode = _check_interpolation(interpolation)
+    invalid_value = _check_invalid_value(invalid_value)
     height, width = int(size[0]), int(size[1])
     if height <= 0 or width <= 0:
         raise ValueError(f"Resize dimensions must be positive, got {size}")
@@ -704,6 +838,7 @@ def resize_raster(
         interpolation=mode,
         normalize_vectors=False,
         threshold=0.5,
+        invalid_value=invalid_value,
     )
 
 
@@ -746,6 +881,47 @@ def _crop_spatial_value(
     slices[h_axis] = slice(top, top + target_h)
     slices[w_axis] = slice(left, left + target_w)
     return value[tuple(slices)]
+
+
+def _dataset_lookup(dataset: Any, accessor: str, name: str) -> Any:
+    lookup = getattr(dataset, accessor, None)
+    if not callable(lookup):
+        return None
+    try:
+        return lookup(name)
+    except Exception:
+        return None
+
+
+def _bind_invalid_depth(dataset: Any, name: str, spec: FieldSpec | None) -> FieldSpec | None:
+    """Return *spec* with the invalid-pixel handling a depth head declares.
+
+    Reads ``invalid.sentinel`` and ``sparse`` from the modality's head meta.
+    The field kind comes from *spec*, else the loader's ``@modality_meta``
+    type, else the field name; only depth fields are changed, and only where
+    *spec* sets neither ``interpolation`` nor ``invalid_value``.
+    """
+    meta = _dataset_lookup(dataset, "get_modality_metadata", name)
+    if not isinstance(meta, Mapping):
+        return spec
+    invalid = meta.get("invalid")
+    sentinel = invalid.get("sentinel") if isinstance(invalid, Mapping) else None
+    sparse = meta.get("sparse") is True
+    if sentinel is None and not sparse:
+        return spec
+    if spec is None:
+        annotation = _dataset_lookup(dataset, "get_loader_meta", name)
+        loader_type = annotation.get("type") if isinstance(annotation, Mapping) else None
+        if _canonical_kind(loader_type or _infer_kind_from_name(name)) != "depth":
+            return None
+        spec = FieldSpec(kind="depth")
+    if spec.kind != "depth" or spec.interpolation is not None or spec.invalid_value is not None:
+        return spec
+    return replace(
+        spec,
+        interpolation="sparse" if sparse else None,
+        invalid_value=sentinel if sentinel is not None else 0.0,
+    )
 
 
 @dataclass
@@ -823,7 +999,14 @@ class SamplePreprocessor:
         return result
 
     def bind_to_dataset(self, dataset: Any) -> None:
-        """Optionally enrich field specs from dataset modality metadata."""
+        """Optionally enrich field specs from dataset modality metadata.
+
+        A modality's ``modality_type`` sets its field kind. A depth field whose
+        dataset head declares invalid pixels is resized without blending them
+        in: ``sparse: true`` selects ``interpolation="sparse"``, and
+        ``invalid.sentinel`` alone a validity-aware bilinear resize. Explicit
+        ``field_specs`` always win.
+        """
 
         bound_specs = dict(self.field_specs)
 
@@ -832,9 +1015,10 @@ class SamplePreprocessor:
                 if name in bound_specs:
                     continue
                 modality_type = getattr(modality, "modality_type", None)
-                if not modality_type:
-                    continue
-                bound_specs[name] = FieldSpec(kind=str(modality_type))
+                spec = FieldSpec(kind=str(modality_type)) if modality_type else None
+                spec = _bind_invalid_depth(dataset, name, spec)
+                if spec is not None:
+                    bound_specs[name] = spec
 
         bind_group(getattr(dataset, "_modalities", {}))
         bind_group(getattr(dataset, "_hierarchical_modalities", {}))
@@ -943,6 +1127,7 @@ class SamplePreprocessor:
                 interpolation=spec.effective_interpolation(value),
                 normalize_vectors=spec.should_normalize_vectors(),
                 threshold=spec.threshold,
+                invalid_value=spec.invalid_value,
             )
 
         top, left, target_h, target_w = operation.resolve_box(reference_size)
