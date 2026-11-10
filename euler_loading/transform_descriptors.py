@@ -179,6 +179,11 @@ def export_preprocessor(
                 raise ValueError(f"Field {name!r} is not configured for preprocessing")
             # A declared profile takes precedence over authoring name heuristics.
             spec = legacy.FieldSpec(kind=profile["kind"])
+        if spec.kind == "disparity":
+            raise ValueError(
+                f"Field {name!r}: disparity is rescaled with a resize, which a "
+                "descriptor cannot record"
+            )
         if spec.kind != profile["kind"]:
             raise ValueError(f"Field {name!r}: kind conflicts with declared profile")
         if spec.layout is not None and spec.layout != profile["layout"]:

@@ -43,6 +43,7 @@ _TORCH_MODES = {"nearest": "nearest-exact", "bilinear": "bilinear", "bicubic": "
 _FIELD_KIND_ALIASES = {
     "auto": "generic",
     "camera_rays": "ray_map",
+    "disparity": "disparity",
     "image": "image",
     "intrinsic": "intrinsics",
     "intrinsics": "intrinsics",
@@ -55,9 +56,11 @@ _FIELD_KIND_ALIASES = {
     "segmentation": "mask",
     "sky_mask": "mask",
     "spherical_map": "ray_map",
+    "stereo_disparity": "disparity",
 }
 _DEFAULT_INTERPOLATION = {
     "depth": "bilinear",
+    "disparity": "bilinear",
     "generic": None,
     "image": "bilinear",
     "intrinsics": None,
@@ -113,6 +116,8 @@ def _infer_kind_from_name(name: str) -> str | None:
         return "mask"
     if "rgb" in lowered or "image" in lowered:
         return "image"
+    if "disparity" in lowered:
+        return "disparity"
     if "depth" in lowered:
         return "depth"
     return None
@@ -152,8 +157,12 @@ class FieldSpec:
     resized separately, so invalid pixels never blend into valid ones, and
     pixels without support get ``invalid_value``. ``interpolation="sparse"``
     instead moves every valid pixel to the nearest pixel of the resized grid,
-    keeping the smallest value (the nearest surface, for depth) where several
-    land on one pixel; ``invalid_value`` defaults to ``0`` for it.
+    keeping the nearest surface where several land on one pixel: the smallest
+    depth, or the largest disparity. ``invalid_value`` defaults to ``0`` for it.
+
+    ``kind="disparity"`` is stereo disparity in pixels of the field's own
+    grid. A resize scales its valid values by the width ratio, since the
+    pixels it is measured in change size; a crop leaves them unchanged.
     """
 
     kind: str = "generic"
@@ -206,7 +215,9 @@ class FieldSpec:
     def effective_interpolation(self, value: Any) -> str:
         if self.interpolation is not None:
             return self.interpolation
-        default = _DEFAULT_INTERPOLATION[self.kind]
+        # Kinds without a default (e.g. a modality type such as
+        # "semantic_segmentation") resize like generic arrays, by dtype.
+        default = _DEFAULT_INTERPOLATION.get(self.kind)
         if default is not None:
             return default
         if _is_torch_tensor(value):
@@ -660,17 +671,21 @@ def _resize_sparse(
     layout: str,
     size: tuple[int, int],
     invalid_value: float,
+    keep: str = "min",
 ) -> Any:
     """Move each valid pixel to the nearest pixel of the resized grid.
 
     A source pixel centre ``x`` lands at ``(x + 0.5) * scale - 0.5``, the
     ``align_corners=False`` mapping :func:`resize_intrinsics` applies to the
     camera, and is rounded to the nearest target pixel. Where several land on
-    one pixel the smallest value is kept: the nearest surface, for depth.
+    one pixel the nearest surface wins: the smallest value with
+    ``keep="min"`` (depth), the largest with ``keep="max"`` (disparity).
     Nothing is interpolated or duplicated, so every output value is a source
     measurement; pixels nothing lands on get *invalid_value*, as do invalid
     (non-finite or *invalid_value*) source pixels.
     """
+    if keep not in {"min", "max"}:
+        raise ValueError(f"keep must be 'min' or 'max', got {keep!r}")
     tensor_input = _is_torch_tensor(value)
     array = value.detach().cpu().numpy() if tensor_input else np.asarray(value)
     nchw = _numpy_to_nchw(array, layout)
@@ -681,9 +696,13 @@ def _resize_sparse(
     n, c, ys, xs = np.nonzero(valid)
     ty = np.minimum(np.floor((ys + 0.5) * (target_h / height)).astype(np.int64), target_h - 1)
     tx = np.minimum(np.floor((xs + 0.5) * (target_w / width)).astype(np.int64), target_w - 1)
-    flat = np.full(batch * channels * target_h * target_w, np.inf)
     target = ((n * channels + c) * target_h + ty) * target_w + tx
-    np.minimum.at(flat, target, nchw[valid].astype(np.float64))
+    if keep == "min":
+        flat = np.full(batch * channels * target_h * target_w, np.inf)
+        np.minimum.at(flat, target, nchw[valid].astype(np.float64))
+    else:
+        flat = np.full(batch * channels * target_h * target_w, -np.inf)
+        np.maximum.at(flat, target, nchw[valid].astype(np.float64))
     flat[~np.isfinite(flat)] = invalid_value
     resized = _numpy_from_nchw(
         flat.reshape(batch, channels, target_h, target_w), layout, array.dtype
@@ -735,11 +754,13 @@ def _resize_spatial_value(
     normalize_vectors: bool,
     threshold: float,
     invalid_value: float | None = None,
+    sparse_keep: str = "min",
 ) -> Any:
     if interpolation == "sparse":
         return _resize_sparse(
             value, layout=layout, size=size,
             invalid_value=0.0 if invalid_value is None else invalid_value,
+            keep=sparse_keep,
         )
     floating = (
         value.is_floating_point() if _is_torch_tensor(value)
@@ -893,35 +914,76 @@ def _dataset_lookup(dataset: Any, accessor: str, name: str) -> Any:
         return None
 
 
-def _bind_invalid_depth(dataset: Any, name: str, spec: FieldSpec | None) -> FieldSpec | None:
-    """Return *spec* with the invalid-pixel handling a depth head declares.
+#: Kinds whose pixels are measurements, resized without blending in invalid ones.
+_MEASURED_KINDS = ("depth", "disparity")
 
-    Reads ``invalid.sentinel`` and ``sparse`` from the modality's head meta.
+
+def _bind_measured_map(dataset: Any, name: str, spec: FieldSpec | None) -> FieldSpec | None:
+    """Return *spec* with the kind and invalid-pixel handling a measured map declares.
+
     The field kind comes from *spec*, else the loader's ``@modality_meta``
-    type, else the field name; only depth fields are changed, and only where
-    *spec* sets neither ``interpolation`` nor ``invalid_value``.
+    type, else the field name. Only depth and disparity fields are changed:
+
+    - ``invalid.sentinel`` and ``sparse`` select the resize, where *spec*
+      sets neither ``interpolation`` nor ``invalid_value``: ``sparse: true``
+      moves each measurement to its nearest target pixel
+      (``interpolation="sparse"``), a sentinel alone selects a validity-aware
+      bilinear resize. Each key is read from the modality's head meta, else
+      from the meta of the loader's annotation, which states what the loader
+      always returns (DrivingStereo's maps are sparse with ``0`` invalid);
+    - a disparity field is bound even when its head declares neither, because
+      its values rescale with a resize; see :class:`FieldSpec`.
     """
-    meta = _dataset_lookup(dataset, "get_modality_metadata", name)
-    if not isinstance(meta, Mapping):
-        return spec
-    invalid = meta.get("invalid")
-    sentinel = invalid.get("sentinel") if isinstance(invalid, Mapping) else None
-    sparse = meta.get("sparse") is True
-    if sentinel is None and not sparse:
-        return spec
-    if spec is None:
-        annotation = _dataset_lookup(dataset, "get_loader_meta", name)
-        loader_type = annotation.get("type") if isinstance(annotation, Mapping) else None
-        if _canonical_kind(loader_type or _infer_kind_from_name(name)) != "depth":
+    candidate = spec
+    annotation = _dataset_lookup(dataset, "get_loader_meta", name)
+    if not isinstance(annotation, Mapping):
+        annotation = {}
+    if candidate is None:
+        loader_type = annotation.get("type")
+        kind = _canonical_kind(loader_type or _infer_kind_from_name(name))
+        if kind not in _MEASURED_KINDS:
             return None
-        spec = FieldSpec(kind="depth")
-    if spec.kind != "depth" or spec.interpolation is not None or spec.invalid_value is not None:
+        candidate = FieldSpec(kind=kind)
+    if (
+        candidate.kind not in _MEASURED_KINDS
+        or candidate.interpolation is not None
+        or candidate.invalid_value is not None
+    ):
         return spec
+    head = _dataset_lookup(dataset, "get_modality_metadata", name)
+    head = head if isinstance(head, Mapping) else {}
+    loader_meta = annotation.get("meta")
+    loader_meta = loader_meta if isinstance(loader_meta, Mapping) else {}
+
+    def declared(key: str) -> Any:
+        return head[key] if key in head else loader_meta.get(key)
+
+    invalid = declared("invalid")
+    sentinel = invalid.get("sentinel") if isinstance(invalid, Mapping) else None
+    sparse = declared("sparse") is True
+    if sentinel is None and not sparse:
+        return candidate if candidate.kind == "disparity" else spec
     return replace(
-        spec,
+        candidate,
         interpolation="sparse" if sparse else None,
         invalid_value=sentinel if sentinel is not None else 0.0,
     )
+
+
+def _scale_valid(value: Any, factor: float, invalid_value: float | None) -> Any:
+    """Multiply the valid (finite, non-sentinel) pixels of *value* by *factor*."""
+    if factor == 1:
+        return value
+    if _is_torch_tensor(value):
+        valid = torch.isfinite(value)
+        if invalid_value is not None:
+            valid &= value != invalid_value
+        return torch.where(valid, value * factor, value)
+    array = np.asarray(value)
+    valid = np.isfinite(array)
+    if invalid_value is not None:
+        valid &= array != invalid_value
+    return np.where(valid, array * factor, array).astype(array.dtype, copy=False)
 
 
 @dataclass
@@ -1001,11 +1063,13 @@ class SamplePreprocessor:
     def bind_to_dataset(self, dataset: Any) -> None:
         """Optionally enrich field specs from dataset modality metadata.
 
-        A modality's ``modality_type`` sets its field kind. A depth field whose
-        dataset head declares invalid pixels is resized without blending them
-        in: ``sparse: true`` selects ``interpolation="sparse"``, and
-        ``invalid.sentinel`` alone a validity-aware bilinear resize. Explicit
-        ``field_specs`` always win.
+        A modality's ``modality_type`` sets its field kind. A depth or
+        disparity field whose dataset head declares invalid pixels is resized
+        without blending them in: ``sparse: true`` selects
+        ``interpolation="sparse"``, and ``invalid.sentinel`` alone a
+        validity-aware bilinear resize. A disparity field is recognised from
+        its loader's type even without those, so a resize rescales its values.
+        Explicit ``field_specs`` always win.
         """
 
         bound_specs = dict(self.field_specs)
@@ -1016,7 +1080,7 @@ class SamplePreprocessor:
                     continue
                 modality_type = getattr(modality, "modality_type", None)
                 spec = FieldSpec(kind=str(modality_type)) if modality_type else None
-                spec = _bind_invalid_depth(dataset, name, spec)
+                spec = _bind_measured_map(dataset, name, spec)
                 if spec is not None:
                     bound_specs[name] = spec
 
@@ -1120,7 +1184,8 @@ class SamplePreprocessor:
         if isinstance(operation, Resize):
             if value_size == operation.size:
                 return value
-            return _resize_spatial_value(
+            disparity = spec.kind == "disparity"
+            resized = _resize_spatial_value(
                 value,
                 layout=layout,
                 size=operation.size,
@@ -1128,7 +1193,16 @@ class SamplePreprocessor:
                 normalize_vectors=spec.should_normalize_vectors(),
                 threshold=spec.threshold,
                 invalid_value=spec.invalid_value,
+                # The nearest surface has the largest disparity.
+                sparse_keep="max" if disparity else "min",
             )
+            if disparity:
+                # Disparity is measured in pixels of this grid, which the
+                # resize makes wider or narrower.
+                resized = _scale_valid(
+                    resized, operation.size[1] / value_size[1], spec.invalid_value
+                )
+            return resized
 
         top, left, target_h, target_w = operation.resolve_box(reference_size)
         if value_size == (target_h, target_w):
