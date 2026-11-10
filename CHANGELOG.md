@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+- New loader module `nuscenes` (GPU and CPU) for nuScenes as prepared by
+  euler-known-datasets:
+  - `rgb`;
+  - `lidar_point_cloud` (`(N, 5)` float32 `.pcd.bin`), with aliases
+    `point_cloud` and `sparse_depth`;
+  - `read_intrinsics`;
+  - `read_extrinsics`, the frame's lidar→camera transform through both vehicle
+    poses, selected per sample by ID from the scene's calibration file
+    (format `euler_known_datasets.nuscenes.camera_frames` v1).
+
+  Writers exist for rgb, the point clouds and intrinsics. `write_intrinsics`
+  accepts crops and rescales only.
+- **Fixed:** with an explicit CPU loader, the modality's writer resolves from
+  the CPU module too. It used to import the GPU module, which fails without
+  torch. If the GPU module cannot be imported, writer resolution also falls
+  back to the CPU module, whose writers accept arrays and tensors alike.
+- The `euler_loading` addon rules come from euler-dataset-contract (0.14+),
+  which now owns them, and ds-crawler applies them too. With an older contract
+  euler-loading registers its own copy as before.
 - Maps whose holes are NaN resize without the holes growing:
   `invalid_value=NaN` (`"nan"` in a config) makes `bilinear`/`bicubic`
   validity-aware with non-finite pixels as the invalid ones, and `sparse`

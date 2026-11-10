@@ -11,83 +11,91 @@ from euler_dataset_contract import (
     validate_token,
 )
 
+try:  # euler-dataset-contract >= 0.14 owns the addon rules
+    from euler_dataset_contract import (
+        register_euler_loading_addon_validator,
+        validate_euler_loading_addon,
+    )
+except ImportError:  # pragma: no cover - older contract; remove once >= 0.14 is required
+    _ALLOWED_USED_AS = {"condition", "input", "output", "target"}
+    _ALLOWED_KEYS = {
+        "version",
+        "used_as",
+        "slot",
+        "hierarchy_scope",
+        "applies_to",
+        "task",
+        "loader",
+        "function",
+        "writer_function",
+    }
 
-_ALLOWED_USED_AS = {"condition", "input", "output", "target"}
-_ALLOWED_KEYS = {
-    "version",
-    "used_as",
-    "slot",
-    "hierarchy_scope",
-    "applies_to",
-    "task",
-    "loader",
-    "function",
-    "writer_function",
-}
+    def validate_euler_loading_addon(value: Any, context: str) -> None:
+        if not isinstance(value, dict):
+            raise ValueError(f"{context} must be an object")
 
+        unknown = sorted(set(value.keys()) - _ALLOWED_KEYS)
+        if unknown:
+            joined = ", ".join(unknown)
+            raise ValueError(f"Unknown {context} key(s): {joined}")
 
-def validate_euler_loading_addon(value: Any, context: str) -> None:
-    if not isinstance(value, dict):
-        raise ValueError(f"{context} must be an object")
+        validate_addon_version(value.get("version"), f"{context}.version")
 
-    unknown = sorted(set(value.keys()) - _ALLOWED_KEYS)
-    if unknown:
-        joined = ", ".join(unknown)
-        raise ValueError(f"Unknown {context} key(s): {joined}")
+        used_as = value.get("used_as")
+        if used_as is not None:
+            if not isinstance(used_as, str) or not used_as:
+                raise ValueError(f"{context}.used_as must be a non-empty string")
+            if used_as not in _ALLOWED_USED_AS:
+                allowed = ", ".join(sorted(_ALLOWED_USED_AS))
+                raise ValueError(
+                    f"{context}.used_as must be one of {{{allowed}}}, got {used_as!r}"
+                )
 
-    validate_addon_version(value.get("version"), f"{context}.version")
+        slot = value.get("slot")
+        if slot is not None:
+            validate_slot(slot, f"{context}.slot")
 
-    used_as = value.get("used_as")
-    if used_as is not None:
-        if not isinstance(used_as, str) or not used_as:
-            raise ValueError(f"{context}.used_as must be a non-empty string")
-        if used_as not in _ALLOWED_USED_AS:
-            allowed = ", ".join(sorted(_ALLOWED_USED_AS))
+        task = value.get("task")
+        if task is not None:
+            validate_token(task, f"{context}.task")
+
+        loader = value.get("loader")
+        function = value.get("function")
+        if loader is not None:
+            validate_token(loader, f"{context}.loader")
+        if function is not None:
+            validate_token(function, f"{context}.function")
+        if (loader is None) != (function is None):
             raise ValueError(
-                f"{context}.used_as must be one of {{{allowed}}}, got {used_as!r}"
+                f"{context}.loader and {context}.function must either both be set "
+                "or both be omitted"
             )
 
-    slot = value.get("slot")
-    if slot is not None:
-        validate_slot(slot, f"{context}.slot")
+        writer_function = value.get("writer_function")
+        if writer_function is not None:
+            validate_token(writer_function, f"{context}.writer_function")
 
-    task = value.get("task")
-    if task is not None:
-        validate_token(task, f"{context}.task")
+        hierarchy_scope = value.get("hierarchy_scope")
+        applies_to = value.get("applies_to")
+        if hierarchy_scope is not None or applies_to is not None:
+            if used_as != "condition":
+                raise ValueError(
+                    f"{context}.hierarchy_scope and {context}.applies_to are only "
+                    "allowed when used_as is 'condition'"
+                )
+            if hierarchy_scope is not None:
+                validate_token(hierarchy_scope, f"{context}.hierarchy_scope")
+            if applies_to is not None:
+                validate_string_list(
+                    applies_to,
+                    f"{context}.applies_to",
+                    allow_wildcard=True,
+                )
 
-    loader = value.get("loader")
-    function = value.get("function")
-    if loader is not None:
-        validate_token(loader, f"{context}.loader")
-    if function is not None:
-        validate_token(function, f"{context}.function")
-    if (loader is None) != (function is None):
-        raise ValueError(
-            f"{context}.loader and {context}.function must either both be set "
-            "or both be omitted"
-        )
+    register_addon_validator(
+        "euler_loading", validate_euler_loading_addon, overwrite=True
+    )
+else:
+    register_euler_loading_addon_validator()
 
-    writer_function = value.get("writer_function")
-    if writer_function is not None:
-        validate_token(writer_function, f"{context}.writer_function")
-
-    hierarchy_scope = value.get("hierarchy_scope")
-    applies_to = value.get("applies_to")
-    if hierarchy_scope is not None or applies_to is not None:
-        if used_as != "condition":
-            raise ValueError(
-                f"{context}.hierarchy_scope and {context}.applies_to are only "
-                "allowed when used_as is 'condition'"
-            )
-        if hierarchy_scope is not None:
-            validate_token(hierarchy_scope, f"{context}.hierarchy_scope")
-        if applies_to is not None:
-            validate_string_list(
-                applies_to,
-                f"{context}.applies_to",
-                allow_wildcard=True,
-            )
-
-
-register_addon_validator("euler_loading", validate_euler_loading_addon, overwrite=True)
 register_descriptor_validators()

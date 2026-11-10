@@ -1068,6 +1068,140 @@
             ]
         },
         {
+            "name": "nuscenes",
+            "modalities": [
+                {
+                    "type": "point_cloud",
+                    "function": "lidar_point_cloud",
+                    "hierarchical": false,
+                    "dtype": "float32",
+                    "access": "key",
+                    "file_formats": [
+                        ".bin"
+                    ],
+                    "meta": {
+                        "columns": [
+                            "x",
+                            "y",
+                            "z",
+                            "intensity",
+                            "ring"
+                        ],
+                        "coordinate_frame": "LIDAR_TOP",
+                        "axes": "x right, y forward, z up",
+                        "coordinate_unit": "meters"
+                    },
+                    "cpu": {
+                        "shape": "NC"
+                    },
+                    "gpu": {
+                        "shape": "NC"
+                    }
+                },
+                {
+                    "type": "camera_extrinsics",
+                    "function": "read_extrinsics",
+                    "hierarchical": true,
+                    "dtype": "float32",
+                    "access": "key",
+                    "file_formats": [
+                        ".json"
+                    ],
+                    "meta": {
+                        "transform": "lidar_to_camera",
+                        "source_frame": "LIDAR_TOP",
+                        "target_frame": "camera",
+                        "camera_axes": "optical: x right, y down, z forward",
+                        "translation_unit": "meters",
+                        "selected_at": "the sample's camera frame",
+                        "matched_by": "sample ID (the camera timestamp)",
+                        "options": {
+                            "transform_direction": [
+                                "lidar_to_camera",
+                                "camera_to_lidar"
+                            ]
+                        }
+                    },
+                    "cpu": {
+                        "shape": "4x4"
+                    },
+                    "gpu": {
+                        "shape": "4x4"
+                    }
+                },
+                {
+                    "type": "intrinsics",
+                    "function": "read_intrinsics",
+                    "hierarchical": true,
+                    "dtype": "float32",
+                    "access": "key",
+                    "file_formats": [
+                        ".json"
+                    ],
+                    "meta": {
+                        "model": "pinhole",
+                        "distortion": null,
+                        "source": "calibration/<scene>/<camera>.json"
+                    },
+                    "cpu": {
+                        "shape": "3x3"
+                    },
+                    "gpu": {
+                        "shape": "3x3"
+                    }
+                },
+                {
+                    "type": "rgb",
+                    "function": "rgb",
+                    "hierarchical": false,
+                    "dtype": "float32",
+                    "access": "key",
+                    "output_range": [
+                        0.0,
+                        1.0
+                    ],
+                    "file_formats": [
+                        ".jpg"
+                    ],
+                    "cpu": {
+                        "shape": "HWC"
+                    },
+                    "gpu": {
+                        "shape": "CHW"
+                    }
+                },
+                {
+                    "type": "sparse_depth",
+                    "function": "sparse_depth",
+                    "hierarchical": false,
+                    "dtype": "float32",
+                    "access": "key",
+                    "file_formats": [
+                        ".bin"
+                    ],
+                    "meta": {
+                        "representation": "point_cloud",
+                        "columns": [
+                            "x",
+                            "y",
+                            "z",
+                            "intensity",
+                            "ring"
+                        ],
+                        "coordinate_frame": "LIDAR_TOP",
+                        "axes": "x right, y forward, z up",
+                        "coordinate_unit": "meters"
+                    },
+                    "cpu": {
+                        "shape": "NC"
+                    },
+                    "gpu": {
+                        "shape": "NC"
+                    }
+                }
+            ]
+        },
+        {
             "name": "princeton_dense",
             "modalities": [
                 {

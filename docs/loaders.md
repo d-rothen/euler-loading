@@ -478,26 +478,40 @@ camera's mid-exposure using the frame's GNSS record. These three loaders
 supply that SDK's inputs per sample; the compensation itself is left to
 consumers.
 
-- `gnss`: index `gnss/` as a regular modality with the same hierarchy and ID
-  rules as `frame_camera` and `lidar`, so samples join it by ID. Leave out
-  `gnss/dataformat.txt`, e.g. with `include_regex` `_gnss\.txt$`. The record
-  carries `ground_speed_m_s`, `roll_rate_deg_s`, `pitch_rate_deg_s` and
-  `heading_rate_deg_s`; the heading rate is positive clockwise seen from
-  above. It also has position, attitude, NED velocity and accuracies. Every
-  key names its unit.
-- `sensor_timing`: index `meta.json` as a root-level file, like `calib.json`,
-  with `include_regex` `^meta\.json$`. It is decoded once. Each sample then
-  receives its own `{"frame", "camera_exposure_start_us",
+- `gnss`: the frame's u-blox GNSS/IMU record, a regular modality joined by
+  sample ID. The record carries `ground_speed_m_s`, `roll_rate_deg_s`,
+  `pitch_rate_deg_s` and `heading_rate_deg_s`; the heading rate is positive
+  clockwise seen from above. It also has position, attitude, NED velocity and
+  accuracies. Every key names its unit.
+- `sensor_timing`: `meta.json`, a root-level hierarchical file decoded once.
+  Each sample then receives its own `{"frame", "camera_exposure_start_us",
   "camera_exposure_end_us", "lidar_start_us", "lidar_end_us",
   "radar_start_us", "radar_end_us"}` record. The record is found through the
   file names the `meta.json` entries list under `path_to_*`, so it does not
   depend on how IDs are built, but the sample's files must keep their native
   MUSES names.
-- `read_lidar_to_gnss`: index `calib.json` once more for this modality. It
-  maps lidar points into the GNSS record's frame.
+- `read_lidar_to_gnss`: `extrinsics.lidar2gnss` from `calib.json`. It maps
+  lidar points into the GNSS record's frame.
 
 The per-point lidar timestamp (column 6, seconds) together with these inputs
 is all the compensation needs.
+
+#### Preparing the dataset
+
+[euler-known-datasets](https://github.com/d-rothen/euler-known-datasets)
+indexes MUSES from its packages (`frame_camera_trainvaltest.zip`,
+`lidar_trainvaltest.zip`, `gnss_trainvaltest.zip`, …) or the extracted
+`muses/` tree. It writes every scope these loaders read, including the three
+ego-motion inputs:
+
+```bash
+euler-known-datasets prepare muses /data/downloads/muses /data/muses
+```
+
+Samples are `/<split>/<weather>/<time_of_day>/<frame>`, e.g.
+`/test/fog/day/670832`, with `train`, `val` and `test` splits. Its
+[MUSES page](https://github.com/d-rothen/euler-known-datasets/blob/main/docs/datasets/muses.md)
+documents the layout, the IDs and the scopes.
 
 ### Real Drive Sim — `real_drive_sim`
 
@@ -650,51 +664,40 @@ points_h = np.c_[points[:, :3], np.ones(len(points))]
 world = np.einsum("nij,nj->ni", table.at_times(points[:, 4]), points_h)[:, :3]
 ```
 
-#### Indexing with ds-crawler
+#### Preparing the dataset
 
-All modalities of a town share one root (a `TownNN` folder or zip), so give
-each its own metadata scope. Regular modalities must agree on hierarchy and
-IDs, so the regexes name the town and camera as hierarchy and the frame as ID
-— the `1`/`2` prefixes of the segmentation and depth names are not part of
-either. The rgb scope, for example:
+[euler-known-datasets](https://github.com/d-rothen/euler-known-datasets)
+prepares KITTI-CARLA from its town archives (`TownNN.zip`, or extracted
+towns):
 
-```json
-"indexing": {
-  "id": {"regex": "^Town\\d+/generated/images_rgb/(?P<frame>\\d+)_\\d\\.png$", "join_char": "+"},
-  "hierarchy": {"regex": "^(?P<town>Town\\d+)/generated/images_rgb/\\d+_(?P<camera>\\d)\\.png$", "separator": ":"}
-}
+```bash
+euler-known-datasets prepare kitti_carla /data/KITTI-CARLA/dataset /data/kitti_carla
 ```
 
-Depth and segmentation use `images_depth/(?P<frame>\d+)_2\d\.png` and
-`images_ss/(?P<frame>\d+)_1\d\.png` with the matching `_2(?P<camera>\d)` and
-`_1(?P<camera>\d)` hierarchies, and declare `skyclass: [70, 130, 180]` in the
-segmentation head. For the calibration scopes, the hierarchy regex
-`^(?P<town>Town\d+)/generated/lidar_to_cam(?P<camera>\d)\.txt$` gives each
-camera its own file, with `id.override` set to `intrinsics` or `extrinsics`.
-Index `full_poses_lidar.txt` at the town level,
-`^(?P<town>Town\d+)/generated/full_poses_lidar\.txt$`, so it is an ancestor of
-every sample.
-
-Lidar sweeps have no camera, so they join camera images only when the images
-are indexed without a camera level too: restrict the rgb scope to one camera
-(`images_rgb/(?P<frame>\d+)_0\.png$`, hierarchy
-`^(?P<town>Town\d+)/generated/images_rgb/\d+_0\.png$`) and index
-`frames/frame_(?P<frame>\d+)\.ply$` with the town as hierarchy.
+It writes the scopes `rgb`, `depth`, `semantic_segmentation`, `lidar`,
+`intrinsics`, `camera_extrinsics` and `lidar_pose`. Samples are
+`/town:TownNN/camera:N/frame-NNNN`. Each lidar sweep is indexed under every
+camera, so images, depth, segmentation and lidar join by ID and each sample
+takes its camera's calibration from the hierarchy. Its
+[KITTI-CARLA page](https://github.com/d-rothen/euler-known-datasets/blob/main/docs/datasets/kitti_carla.md)
+documents the regexes, the options (towns, cameras, frame step) and the
+dataset facts they rest on.
 
 ```python
 from euler_loading import Modality, MultiModalDataset
 
-town = "/data/KITTI-CARLA/dataset/Town01.zip"
+root = "/data/kitti_carla"
 dataset = MultiModalDataset(
     modalities={
-        "rgb": Modality(town, metadata_scope="rgb"),
-        "depth": Modality(town, metadata_scope="depth"),
-        "semantic": Modality(town, metadata_scope="semantic_segmentation"),
+        "rgb": Modality(root, metadata_scope="rgb"),
+        "depth": Modality(root, metadata_scope="depth"),
+        "semantic": Modality(root, metadata_scope="semantic_segmentation"),
+        "lidar": Modality(root, metadata_scope="lidar"),
     },
     hierarchical_modalities={
-        "intrinsics": Modality(town, metadata_scope="intrinsics", collapse_single=True),
-        "extrinsics": Modality(town, metadata_scope="camera_extrinsics", collapse_single=True),
-        "pose": Modality(town, metadata_scope="lidar_pose", collapse_single=True),
+        "intrinsics": Modality(root, metadata_scope="intrinsics", collapse_single=True),
+        "extrinsics": Modality(root, metadata_scope="camera_extrinsics", collapse_single=True),
+        "pose": Modality(root, metadata_scope="lidar_pose", collapse_single=True),
     },
 )
 sample = dataset[0]  # full_id "/town:Town01/camera:0/frame-0000"
@@ -769,59 +772,109 @@ files, `P_rect_103[0, 3]` was not halved and still holds the full-size
 `-fx × baseline`, so take the baseline from `T_103`. `K_*`, `D_*` and `S_*`
 describe the raw, unrectified sensor images, which are not released.
 
-#### Indexing with ds-crawler
+#### Preparing the dataset
 
-Each archive is its own root. IDs are the timestamp and the hierarchy is the
-sequence, so the per-sequence calibration joins every frame below it. The
-contract requires `range` in an rgb head and `radial_depth`,
-`scale_to_meters` and `range` in a depth head. The loader's annotations
-already state that the maps are sparse with `0` invalid, so the
-[preprocessor](preprocessing.md#resampling-sparse-depth) resizes depth and
-disparity without blending in the invalid zeros (disparity also rescaled to
-the new width) even if the head omits it. Declaring it in the head as well
-keeps the head self-describing for other readers:
+[euler-known-datasets](https://github.com/d-rothen/euler-known-datasets)
+prepares DrivingStereo from its downloads: the train, test and weather
+subsets, and the calibration files.
 
-```json
-"modality": {"key": "depth", "meta": {
-  "radial_depth": false, "scale_to_meters": 0.00390625, "range": [0, 65535],
-  "invalid": {"non_finite": false, "sentinel": 0}, "sparse": true
-}}
+```bash
+euler-known-datasets prepare driving_stereo /data/downloads/DrivingStereo /data/driving_stereo
 ```
 
-The `left-image-half-size` config:
-
-```json
-"indexing": {
-  "id": {"regex": "^[^/]+/left-image-half-size/[0-9-]+_(?P<frame>[0-9-]+)\\.jpg$", "join_char": "+"},
-  "hierarchy": {"regex": "^[^/]+/left-image-half-size/(?P<sequence>[0-9-]+)_[0-9-]+\\.jpg$", "separator": ":"},
-  "files": {"extensions": [".jpg"]}
-}
-```
-
-The map archives swap in their folder name and the `png` extension, with
-`function: "depth"`, `"depth_full_size"`, `"disparity"` or
-`"disparity_full_size"` in their heads. A calibration root holding
-`half-image-calib/<sequence>.txt` uses the id regex
-`^(half-image-calib)/[0-9-]+\.txt$` with `override: "intrinsics"`, and the
-hierarchy `^half-image-calib/(?P<sequence>[0-9-]+)\.txt$`.
+It writes one scope per modality (`rgb`, `rgb_right`, `depth`, `disparity`,
+the `*_full_size` variants and `intrinsics`), with the heads this module
+expects. Samples are `/subset:<subset>/sequence:<sequence>/frame-<timestamp>`,
+and every subset (`train`, `test`, `foggy`, …) is a split. Its
+[DrivingStereo page](https://github.com/d-rothen/euler-known-datasets/blob/main/docs/datasets/driving_stereo.md)
+documents the layout, the regexes and head meta, and how calibration is
+matched to weather sequences.
 
 ```python
 from euler_loading import Modality, MultiModalDataset
 
-foggy = "/data/DrivingStereo/weather/foggy"
+root = "/data/driving_stereo"
 dataset = MultiModalDataset(
     modalities={
-        "rgb": Modality(f"{foggy}/left-image-half-size.zip"),
-        "depth": Modality(f"{foggy}/depth-map-half-size.zip"),
-        "disparity": Modality(f"{foggy}/disparity-map-half-size.zip"),
+        "rgb": Modality(root, metadata_scope="rgb", split="foggy"),
+        "depth": Modality(root, metadata_scope="depth", split="foggy"),
+        "disparity": Modality(root, metadata_scope="disparity", split="foggy"),
     },
     hierarchical_modalities={
-        "intrinsics": Modality("/data/DrivingStereo/calibration/train", collapse_single=True),
+        "intrinsics": Modality(root, metadata_scope="intrinsics", collapse_single=True),
     },
 )
-sample = dataset[0]  # full_id "/sequence:2018-10-25-07-37-26/frame-2018-10-25-07-41-58-446"
+sample = dataset[0]  # full_id "/subset:foggy/sequence:2018-10-25-07-37-26/frame-2018-10-25-07-41-58-446"
 sample["rgb"].shape, sample["depth"].shape  # (3, 400, 879), (1, 400, 879)
 ```
+
+### nuScenes — `nuscenes`
+
+[nuScenes](https://www.nuscenes.org/nuscenes) keeps its calibration and
+vehicle poses in relational JSON tables. Its lidar sweeps never share a
+timestamp with the camera frames they belong to. These loaders therefore read
+nuScenes as prepared by
+[euler-known-datasets](https://github.com/d-rothen/euler-known-datasets),
+which turns the downloads into ds-crawler scopes:
+
+```bash
+euler-known-datasets prepare nuscenes /data/downloads/nuscenes /data/nuscenes --cameras CAM_FRONT_LEFT
+```
+
+| Function | Shape | dtype | Notes |
+|---|---|---|---|
+| `rgb` | CHW / HWC | float32 | Camera JPEG, `[0, 1]` |
+| `lidar_point_cloud` | (N, 5) | float32 | `.pcd.bin`: `x, y, z` (metres, LIDAR_TOP frame: x right, y forward, z up), `intensity`, `ring` |
+| `read_intrinsics` | 3×3 | float32 | `camera.intrinsics` from `calibration/<scene>/<camera>.json`; pinhole, no distortion · *hierarchical* |
+| `read_extrinsics` | 4×4 | float32 | The frame's lidar→camera transform (optical axes), through both vehicle poses · *hierarchical, selected per sample* |
+
+`point_cloud` and `sparse_depth` are aliases for `lidar_point_cloud`. The
+prepared `lidar` scope holds, for every camera frame, the sweep synchronised
+with it, under the frame's sample ID
+`/scene:<scene>/camera:<camera>/<camera timestamp>`. Joining `rgb` and `lidar`
+therefore pairs each image with its sweep. `read_extrinsics` selects the
+frame's record from the scene's calibration file by that ID.
+
+```python
+import torch
+from euler_loading import Modality, MultiModalDataset
+
+root = "/data/nuscenes"
+dataset = MultiModalDataset(
+    modalities={
+        "rgb": Modality(root, metadata_scope="rgb", split="test"),
+        "lidar": Modality(root, metadata_scope="lidar", split="test"),
+    },
+    hierarchical_modalities={
+        "intrinsics": Modality(root, metadata_scope="intrinsics", collapse_single=True),
+        "extrinsics": Modality(root, metadata_scope="camera_extrinsics", collapse_single=True),
+    },
+)
+sample = dataset[0]
+points = sample["lidar"][:, :3]
+camera = (sample["extrinsics"] @ torch.cat([points, torch.ones(len(points), 1)], 1).T)[:3]
+uvw = sample["intrinsics"] @ camera[:, camera[2] > 1]   # pixels: uvw[:2] / uvw[2]
+```
+
+The transform is per frame, not per scene: every image and every sweep has
+its own vehicle pose. Ignoring that is off by about 0.4 m at 10 m/s.
+`transform_direction: camera_to_lidar` in the file's attributes or the head's
+meta returns the inverse. Calling `read_extrinsics` directly returns the
+scene's whole `CameraFrames` table, with `lidar_to_camera(id)` and
+`camera_to_global(id)` per frame. A frame without a synchronised sweep raises
+`KeyError`. The prepared `lidar` scope leaves those frames out, so they drop
+from a joined dataset.
+
+Writers exist for `rgb` (JPEG for `.jpg` names, PNG otherwise), the point
+clouds (the native `.pcd.bin` layout) and `read_intrinsics`.
+`write_intrinsics` updates `camera.intrinsics` in an existing calibration
+file. The change must be a crop or rescale, and `meta["width"]`/`["height"]`
+update the recorded size. The frame records stay as they are: a crop or
+rescale only moves the pixel grid, so lidar projected with the written matrix
+lands on the cropped pixels. The calibration file format, the pairing of
+frames with sweeps, and how both were established are documented in
+euler-known-datasets'
+[nuScenes page](https://github.com/d-rothen/euler-known-datasets/blob/main/docs/datasets/nuscenes.md).
 
 ### Generic dense depth — `generic_dense_depth`
 

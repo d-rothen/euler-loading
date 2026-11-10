@@ -34,6 +34,7 @@ _LOADER_MODULES: dict[str, str] = {
     "seeing_through_fog": "euler_loading.loaders.gpu.princeton_dense",
     "kitti_carla": "euler_loading.loaders.gpu.kitti_carla",
     "driving_stereo": "euler_loading.loaders.gpu.driving_stereo",
+    "nuscenes": "euler_loading.loaders.gpu.nuscenes",
 }
 
 
@@ -249,6 +250,12 @@ def _resolve_writer(
     if module_name is None or read_function_name is None:
         return None
 
+    # An explicit NumPy loader pairs with the NumPy variant's writers; the
+    # torch variant may not even be importable on a torch-free install.
+    explicit_module = getattr(modality.loader, "__module__", "") or ""
+    if explicit_module.startswith("euler_loading.loaders.cpu."):
+        variant = "cpu"
+
     try:
         module = resolve_writer_module(module_name, variant=variant)
     except ValueError:
@@ -258,6 +265,18 @@ def _resolve_writer(
             module_name,
         )
         return None
+    except ImportError as exc:
+        if variant == "cpu":
+            raise
+        # Writers accept NumPy arrays and tensors alike, so the NumPy variant's
+        # writers stand in when the torch variant cannot be imported.
+        logger.debug(
+            "Modality '%s': %s writers unavailable (%s); using the cpu variant.",
+            modality_name,
+            variant,
+            exc,
+        )
+        module = resolve_writer_module(module_name, variant="cpu")
 
     # The head's writer_function pairs with its own function, not an override.
     writer_names = _writer_name_candidates(

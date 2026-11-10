@@ -28,6 +28,7 @@ Every submodule exists under both ``gpu`` and ``cpu``:
 - ``princeton_dense`` — Princeton DENSE / SeeingThroughFog
 - ``kitti_carla`` — KITTI-CARLA
 - ``driving_stereo`` — DrivingStereo
+- ``nuscenes`` — nuScenes, as prepared by euler-known-datasets
 - ``generic`` — format-agnostic NumPy modalities
 - ``generic_dense_depth`` — format-agnostic dense-depth modalities
 

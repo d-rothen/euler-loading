@@ -196,6 +196,7 @@ All of them accept both filesystem paths and in-memory buffers.
 | `princeton_dense` | Princeton DENSE / SeeingThroughFog | rgb, rccb, sparse depth, intrinsics, extrinsics |
 | `kitti_carla` | KITTI-CARLA | rgb, depth, semantic segmentation, sky mask, lidar point cloud, intrinsics, extrinsics, lidar pose |
 | `driving_stereo` | DrivingStereo | rgb, depth, disparity (half- and full-size, aligned to the half-size left image), intrinsics |
+| `nuscenes` | nuScenes, as prepared by [euler-known-datasets](https://github.com/d-rothen/euler-known-datasets) | rgb, synchronised LIDAR_TOP point cloud, intrinsics, per-frame lidar→camera extrinsics |
 | `generic_dense_depth` | *any* — inferred from file extension | rgb, depth, sky mask, intrinsics |
 | `generic` | *any* — `.npy` / `.npz` modalities | points 3d, maps, segmentation, spherical maps, SH coefficients, … |
 
