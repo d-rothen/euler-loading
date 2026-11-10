@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+- **Behaviour change:** `execution_profile("torch_cpu")` records
+  `nearest: "half_pixel"`, so new transform descriptors resize masks by pixel
+  centre (torch `nearest-exact`) like `SamplePreprocessor` does since 2.36.0.
+  Before, a descriptor exported from a preprocessor replayed nearest fields
+  with torch's floor-based `nearest`, half a source pixel off the live result
+  and the resized intrinsics, so materialized masks did not match on-the-fly
+  ones. The executor now honours a recorded `nearest`: descriptors that
+  recorded `"floor"` still replay with it. `pillow_cpu` accepts
+  `"half_pixel"` only.
+- The GPU `driving_stereo` annotations are spelled out as literals, as in the
+  other GPU modules, so euler-dataset-contract's loader snapshot can read them
+  without importing the module (it failed with "Nonliteral declaration" on
+  2.36.0). The annotations themselves are unchanged.
+
 - Add the `driving_stereo` loader module (GPU and CPU) for DrivingStereo,
   resolvable as `loader: "driving_stereo"`. Everything is returned on the
   pixel grid of the half-size left image:

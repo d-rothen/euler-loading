@@ -47,40 +47,52 @@ write_disparity_full_size = _cpu.write_disparity_full_size
 write_intrinsics = _cpu.write_intrinsics
 
 
-def _annotation(name: str, shape: str) -> dict[str, Any]:
-    """The CPU annotation of *name* with this variant's *shape*."""
-    annotation = dict(getattr(_cpu, name)._modality_meta)
-    return {
-        "modality_type": annotation["type"],
-        "dtype": annotation["dtype"],
-        "hierarchical": annotation["hierarchical"],
-        "shape": shape,
-        "file_formats": annotation["file_formats"],
-        "output_range": annotation["output_range"],
-        "output_unit": annotation["output_unit"],
-        "meta": annotation["meta"],
-    }
-
-
 def _map(arr: Any) -> torch.Tensor:
     return torch.from_numpy(arr).unsqueeze(0).contiguous()
 
 
-@modality_meta(**_annotation("rgb", "CHW"))
+# The annotations repeat the CPU ones with this variant's shapes. They are
+# spelled out, as in the other GPU modules, so euler-dataset-contract's loader
+# snapshot can read them without importing the module.
+
+
+@modality_meta(
+    modality_type="rgb",
+    dtype="float32",
+    shape="CHW",
+    file_formats=[".jpg", ".png"],
+    output_range=[0.0, 1.0],
+)
 def rgb(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None, *, attributes: dict[str, Any] | None = None) -> torch.Tensor:
     """Load a left (or right) JPEG as ``(3, H, W)`` float32 in ``[0, 1]``."""
     arr = _cpu.rgb(path, meta, attributes=attributes)
     return torch.from_numpy(arr).permute(2, 0, 1).contiguous()
 
 
-@modality_meta(**_annotation("depth", "1HW"))
+@modality_meta(
+    modality_type="depth",
+    dtype="float32",
+    shape="1HW",
+    file_formats=[".png"],
+    output_range=[0.0, _cpu._UINT16_MAX / _cpu._DEPTH_SCALE],
+    output_unit="meters",
+    meta=_cpu.depth._modality_meta["meta"],
+)
 def depth(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None, *, attributes: dict[str, Any] | None = None) -> torch.Tensor:
     """Load a ``depth-map-half-size`` PNG as ``(1, H, W)`` float32 metres
     (uint16 / 256, ``0`` invalid), aligned with the half-size left image."""
     return _map(_cpu.depth(path, meta, attributes=attributes))
 
 
-@modality_meta(**_annotation("depth_full_size", "1HW"))
+@modality_meta(
+    modality_type="depth",
+    dtype="float32",
+    shape="1HW",
+    file_formats=[".png"],
+    output_range=[0.0, _cpu._UINT16_MAX / _cpu._DEPTH_SCALE],
+    output_unit="meters",
+    meta=_cpu.depth_full_size._modality_meta["meta"],
+)
 def depth_full_size(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None, *, attributes: dict[str, Any] | None = None) -> torch.Tensor:
     """Load a ``depth-map-full-size`` PNG as ``(1, H, W)`` float32 metres on the
     half-size left-image grid; see
@@ -88,14 +100,30 @@ def depth_full_size(path: Union[str, BinaryIO], meta: dict[str, Any] | None = No
     return _map(_cpu.depth_full_size(path, meta, attributes=attributes))
 
 
-@modality_meta(**_annotation("disparity", "1HW"))
+@modality_meta(
+    modality_type="disparity",
+    dtype="float32",
+    shape="1HW",
+    file_formats=[".png"],
+    output_range=[0.0, _cpu._UINT16_MAX / _cpu._DISPARITY_SCALE_HALF_SIZE],
+    output_unit="pixels",
+    meta=_cpu.disparity._modality_meta["meta"],
+)
 def disparity(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None, *, attributes: dict[str, Any] | None = None) -> torch.Tensor:
     """Load a ``disparity-map-half-size`` PNG as ``(1, H, W)`` float32 half-size
     pixels (uint16 / 256, ``0`` invalid)."""
     return _map(_cpu.disparity(path, meta, attributes=attributes))
 
 
-@modality_meta(**_annotation("disparity_full_size", "1HW"))
+@modality_meta(
+    modality_type="disparity",
+    dtype="float32",
+    shape="1HW",
+    file_formats=[".png"],
+    output_range=[0.0, _cpu._UINT16_MAX / _cpu._DISPARITY_SCALE_HALF_SIZE],
+    output_unit="pixels",
+    meta=_cpu.disparity_full_size._modality_meta["meta"],
+)
 def disparity_full_size(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None, *, attributes: dict[str, Any] | None = None) -> torch.Tensor:
     """Load a ``disparity-map-full-size`` PNG as ``(1, H, W)`` float32 half-size
     pixels on the half-size left-image grid; see
@@ -103,7 +131,14 @@ def disparity_full_size(path: Union[str, BinaryIO], meta: dict[str, Any] | None 
     return _map(_cpu.disparity_full_size(path, meta, attributes=attributes))
 
 
-@modality_meta(**_annotation("read_intrinsics", "3x3"))
+@modality_meta(
+    modality_type="intrinsics",
+    dtype="float32",
+    hierarchical=True,
+    shape="3x3",
+    file_formats=[".txt"],
+    meta=_cpu.read_intrinsics._modality_meta["meta"],
+)
 def read_intrinsics(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None, *, attributes: dict[str, Any] | None = None) -> torch.Tensor:
     """Return the rectified ``(3, 3)`` float32 matrix ``P_rect_101[:, :3]``; see
     :func:`euler_loading.loaders.cpu.driving_stereo.read_intrinsics`."""

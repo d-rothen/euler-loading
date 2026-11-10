@@ -279,7 +279,10 @@ def test_export_rejections(fixture, mutation, match):
             "execution.versions",
         ),
         (
-            lambda d: d["recipe"]["execution"].update(nearest="half_pixel"),
+            # Pillow only samples pixel centres; torch's legacy floor is torch-only.
+            lambda d: d["recipe"].update(
+                execution={**execution_profile("pillow_cpu").to_dict(), "nearest": "floor"}
+            ),
             "execution.nearest",
         ),
         (
@@ -683,6 +686,42 @@ def test_pinned_backend_matches_shared_sampling_evidence(fixture, backend, obser
     plan = resolve_transform_descriptor(_rehash(addon))
     actual = plan({"image": np.array(data["inputs"]["mask"], np.bool_)})["image"]
     np.testing.assert_array_equal(actual, data["observed"][observation]["mask"])
+
+
+@pytest.mark.parametrize(
+    "nearest,expected", [("half_pixel", [[True, True]]), ("floor", [[False, False]])]
+)
+def test_torch_nearest_replays_the_recorded_convention(fixture, nearest, expected):
+    # New torch_cpu descriptors sample pixel centres like SamplePreprocessor.
+    # Descriptors exported up to euler-loading 2.36 recorded torch's floor-based
+    # nearest and must keep replaying with it.
+    addon = _small_depth_descriptor(fixture, "torch_cpu", "legacy_blend")
+    recipe = addon["recipe"]
+    binding = recipe["fields"].pop("depth")
+    binding["profile"].pop("depth_kind")
+    binding["profile"].update(
+        kind="mask", dtype="bool", meaning="source membership", shape=[1, 4],
+        unit="dimensionless",
+    )
+    binding["policy"]["interpolation"] = "nearest"
+    recipe["fields"] = {"image": binding}
+    recipe["reference_field"] = "image"
+    recipe["image_planes"]["camera_0"]["size"] = [1, 4]
+    recipe["operations"][0]["parameters"]["size"] = [1, 2]
+    recipe["execution"]["nearest"] = nearest
+    plan = resolve_transform_descriptor(_rehash(addon))
+    actual = plan({"image": np.array([[False, True, False, True]])})["image"]
+    np.testing.assert_array_equal(actual, expected)
+
+
+def test_new_torch_descriptors_match_the_live_preprocessor_for_masks():
+    mask = np.array([[False, True, False, True]])
+    live = SamplePreprocessor.from_config(
+        {"resize": [1, 2], "reference_field": "image", "infer_fields": False,
+         "fields": {"image": {"kind": "mask", "layout": "HW"}}}
+    )({"image": mask})["image"]
+    assert execution_profile("torch_cpu").to_dict()["nearest"] == "half_pixel"
+    np.testing.assert_array_equal(live, [[True, True]])
 
 
 @pytest.mark.parametrize(

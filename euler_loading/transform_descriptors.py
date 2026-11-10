@@ -25,6 +25,13 @@ from euler_dataset_contract.canonical import canonical_digest
 
 from . import preprocessing as legacy
 
+#: Torch ``interpolate`` mode for each recorded ``execution.nearest``.
+#: ``"floor"`` is torch's legacy ``nearest``, half a source pixel off the
+#: pixel-centre convention of the resized intrinsics; descriptors exported
+#: before euler-loading 2.37 record it and replay with it. Pillow only samples
+#: pixel centres, so ``pillow_cpu`` accepts ``"half_pixel"`` alone.
+_TORCH_NEAREST_MODES = {"floor": "nearest", "half_pixel": "nearest-exact"}
+
 
 @runtime_checkable
 class SerializableTransform(Protocol):
@@ -40,6 +47,11 @@ def execution_profile(backend: str) -> ExecutionProfile:
 
     Torch works on NumPy or CPU tensors. Pillow accepts NumPy only. No CUDA or
     cross-backend equality, codec, or artifact-byte guarantee is made.
+
+    Both backends record ``nearest: "half_pixel"``, the pixel-centre sampling
+    :class:`~euler_loading.SamplePreprocessor` uses. Descriptors that recorded
+    torch's legacy ``"floor"`` still replay with it; see
+    :data:`_TORCH_NEAREST_MODES`.
     """
     if backend not in {"torch_cpu", "pillow_cpu"}:
         raise ValueError(f"Unsupported execution backend {backend!r}")
@@ -54,7 +66,7 @@ def execution_profile(backend: str) -> ExecutionProfile:
         {
             "backend": backend,
             "versions": versions,
-            "nearest": "floor" if backend == "torch_cpu" else "half_pixel",
+            "nearest": "half_pixel",
             "antialias": backend == "pillow_cpu",
             "integer_rounding": "ties_to_even"
             if backend == "torch_cpu"
@@ -401,7 +413,12 @@ def _check_support(recipe: dict) -> None:
     execution = recipe["execution"]
     installed = execution_profile(execution["backend"]).to_dict()
     for key, value in installed.items():
-        if execution[key] != value:
+        if key == "nearest" and execution["backend"] == "torch_cpu":
+            # Recorded conventions replay as recorded; see _TORCH_NEAREST_MODES.
+            supported = execution[key] in _TORCH_NEAREST_MODES
+        else:
+            supported = execution[key] == value
+        if not supported:
             raise ValueError(
                 f"Unsupported execution.{key}: declared {execution[key]!r}, installed {value!r}"
             )
@@ -512,11 +529,14 @@ def _float_resize(
 ) -> Any:
     if execution["backend"] == "torch_cpu":
         tensor, _ = legacy._to_torch_nchw(value, layout)
+        nearest = policy["interpolation"] == "nearest"
         return legacy.F.interpolate(
             tensor.to(dtype=legacy.torch.float32),
             size=size,
-            mode=policy["interpolation"],
-            align_corners=False if policy["interpolation"] != "nearest" else None,
+            mode=_TORCH_NEAREST_MODES[execution["nearest"]]
+            if nearest
+            else policy["interpolation"],
+            align_corners=None if nearest else False,
             antialias=False,
         )
     return legacy._resize_numpy_fallback(
