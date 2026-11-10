@@ -108,10 +108,12 @@ ground truth is never blended with its invalid pixels:
 |---|---|
 | `"sparse": true` (with or without `invalid.sentinel`, default `0`) | `interpolation: "sparse"` |
 | `"invalid": {"non_finite": …, "sentinel": s}` only, `s` not `null` | validity-aware bilinear with `invalid_value: s` |
+| `"invalid": {"non_finite": true, "sentinel": null}` only (NaN holes) | validity-aware bilinear with `invalid_value: NaN`: holes stay NaN without spreading |
 | neither | bilinear, as before |
 
 `invalid` and `sparse` are euler-dataset-contract's shared meta fields;
-`invalid.sentinel: null` declares no sentinel and leaves the resize as it is.
+`{"non_finite": false, "sentinel": null}` declares no invalid pixels and leaves
+the resize as it is.
 The field counts as depth or disparity through its `modality_type`, else its
 loader's `@modality_meta` type, else its name. A head that does not declare
 `sparse` or `invalid` takes them from the loader annotation's `meta`, which
@@ -163,7 +165,7 @@ Per-field options:
 | `kind` | One of the kinds above. |
 | `layout` | Explicit layout: `HW`, `CHW`, `HWC`, `NHW`, `NCHW`, `NHWC`. Inferred when omitted. |
 | `interpolation` | Override the default: `nearest`, `bilinear`, `bicubic`, or `sparse` (see above). |
-| `invalid_value` | Finite value marking pixels without a measurement; non-finite values then count as invalid too. Makes `bilinear`/`bicubic` validity-aware, and is the sentinel for `sparse` (default `0`). |
+| `invalid_value` | Finite value marking pixels without a measurement; non-finite values then count as invalid too. Makes `bilinear`/`bicubic` validity-aware, and is the sentinel for `sparse` (default `0`). `NaN` (`"nan"` in a config) is for maps whose holes are NaN: only non-finite pixels are invalid, and unsupported pixels become NaN instead of NaN spreading into valid neighbours. |
 | `normalize_vectors` | Force vector renormalisation on or off (defaults on for `ray_map`). |
 | `threshold` | Binarisation threshold for masks (default `0.5`). |
 | `reduce` | For hierarchical fields that arrive as `{file_id: value}` — `"first"` picks a single entry. Useful for one intrinsics file per scene/camera. |

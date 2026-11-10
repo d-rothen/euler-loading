@@ -115,8 +115,10 @@ def test_field_spec_options():
     assert "interpolation=sparse" in spec.describe() and "invalid_value=0" in spec.describe()
     with pytest.raises(ValueError, match="sparse"):
         FieldSpec(interpolation="area")
-    with pytest.raises(ValueError, match="finite"):
-        FieldSpec(invalid_value=float("nan"))
+    # NaN marks NaN-filled holes; "nan" spells it in a config file.
+    assert np.isnan(FieldSpec.from_config({"invalid_value": "nan"}).invalid_value)
+    with pytest.raises(ValueError, match="finite number or NaN"):
+        FieldSpec(invalid_value="zero")
 
 
 def test_preprocessor_applies_field_specs():
@@ -315,3 +317,52 @@ def test_export_refuses_disparity():
             execution=execution_profile("torch_cpu"),
             sample=make_sample(evidence("documented-five-field")),
         )
+
+
+# ---------------------------------------------------------------------------
+# NaN-marked holes
+# ---------------------------------------------------------------------------
+
+
+def test_nan_invalid_value_keeps_nan_holes_from_spreading(container):
+    depth = np.full((4, 8), 10.0, dtype=np.float32)
+    depth[:, :2] = np.nan  # a hole two columns wide
+    depth[0, 5] = np.nan   # an isolated missing pixel
+    plain = _np(resize_raster(container(depth), layout="HW", size=(2, 4)))
+    aware = _np(resize_raster(container(depth), layout="HW", size=(2, 4), invalid_value="nan"))
+    assert np.isnan(plain[0, 2])  # plain bilinear spreads the isolated NaN
+    np.testing.assert_array_equal(np.isnan(aware), np.isnan(depth[::2, ::2]) & np.isnan(depth[1::2, 1::2]))
+    np.testing.assert_allclose(aware[np.isfinite(aware)], 10.0)
+
+
+def test_nan_invalid_value_with_sparse_resampling():
+    depth = np.full((2, 2), np.nan, dtype=np.float32)
+    depth[1, 1] = 4.0
+    out = resize_raster(depth, layout="HW", size=(1, 1), interpolation="sparse", invalid_value=float("nan"))
+    np.testing.assert_array_equal(out, [[4.0]])
+    empty = resize_raster(np.full((2, 2), np.nan, np.float32), layout="HW", size=(1, 1),
+                          interpolation="sparse", invalid_value=float("nan"))
+    assert np.isnan(empty).all()
+    with pytest.raises(ValueError, match="floating-point"):
+        resize_raster(np.zeros((2, 2), np.int32), layout="HW", size=(1, 1),
+                      interpolation="sparse", invalid_value=float("nan"))
+
+
+def test_infinite_invalid_value_is_rejected():
+    with pytest.raises(ValueError, match="finite number or NaN"):
+        FieldSpec(kind="depth", invalid_value=float("inf"))
+
+
+def test_bind_maps_a_non_finite_invalid_declaration_to_nan():
+    heads = {
+        "nan_depth": {"invalid": {"non_finite": True, "sentinel": None}},
+        "nan_sparse_depth": {"invalid": {"non_finite": True, "sentinel": None}, "sparse": True},
+        "clean_depth": {"invalid": {"non_finite": False, "sentinel": None}},
+    }
+    preprocessor = SamplePreprocessor.from_config({"resize": [2, 2]})
+    preprocessor.bind_to_dataset(_dataset(heads))
+    specs = preprocessor._bound_field_specs
+    assert specs["nan_depth"].interpolation is None and np.isnan(specs["nan_depth"].invalid_value)
+    assert specs["nan_sparse_depth"].interpolation == "sparse"
+    assert np.isnan(specs["nan_sparse_depth"].invalid_value)
+    assert "clean_depth" not in specs  # no invalid pixels: resized as before

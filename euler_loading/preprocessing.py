@@ -135,14 +135,18 @@ def _check_interpolation(interpolation: Any) -> str:
 
 
 def _check_invalid_value(value: Any) -> float | None:
+    """Return *value* as a float: a finite sentinel, or NaN for NaN-marked holes."""
     if value is None:
         return None
+    if isinstance(value, str) and value.strip().lower() == "nan":
+        return float("nan")  # config files: "invalid_value": "nan"
     if isinstance(value, bool) or not isinstance(value, (int, float, np.integer, np.floating)):
-        raise ValueError(f"invalid_value must be a finite number, got {value!r}")
+        raise ValueError(f"invalid_value must be a finite number or NaN, got {value!r}")
     value = float(value)
-    if not np.isfinite(value):
+    if np.isinf(value):
         raise ValueError(
-            f"invalid_value must be finite, got {value!r}; non-finite values are always invalid"
+            f"invalid_value must be a finite number or NaN, got {value!r}; "
+            "non-finite values are always invalid"
         )
     return value
 
@@ -155,7 +159,10 @@ class FieldSpec:
     lidar depth; non-finite values then count as invalid too. With a
     ``bilinear`` or ``bicubic`` resize the valid values and their support are
     resized separately, so invalid pixels never blend into valid ones, and
-    pixels without support get ``invalid_value``. ``interpolation="sparse"``
+    pixels without support get ``invalid_value``. ``invalid_value=NaN`` (or
+    ``"nan"`` in a config) suits maps whose holes are NaN: non-finite pixels
+    are the invalid ones, and unsupported pixels become NaN instead of
+    spreading NaN into their neighbours. ``interpolation="sparse"``
     instead moves every valid pixel to the nearest pixel of the resized grid,
     keeping the nearest surface where several land on one pixel: the smallest
     depth, or the largest disparity. ``invalid_value`` defaults to ``0`` for it.
@@ -688,6 +695,10 @@ def _resize_sparse(
         raise ValueError(f"keep must be 'min' or 'max', got {keep!r}")
     tensor_input = _is_torch_tensor(value)
     array = value.detach().cpu().numpy() if tensor_input else np.asarray(value)
+    if np.isnan(invalid_value) and array.dtype.kind not in "fc":
+        raise ValueError(
+            f"invalid_value NaN needs a floating-point array, got {array.dtype}"
+        )
     nchw = _numpy_to_nchw(array, layout)
     batch, channels, height, width = nchw.shape
     target_h, target_w = size
@@ -924,11 +935,12 @@ def _bind_measured_map(dataset: Any, name: str, spec: FieldSpec | None) -> Field
     The field kind comes from *spec*, else the loader's ``@modality_meta``
     type, else the field name. Only depth and disparity fields are changed:
 
-    - ``invalid.sentinel`` and ``sparse`` select the resize, where *spec*
-      sets neither ``interpolation`` nor ``invalid_value``: ``sparse: true``
-      moves each measurement to its nearest target pixel
-      (``interpolation="sparse"``), a sentinel alone selects a validity-aware
-      bilinear resize. Each key is read from the modality's head meta, else
+    - ``invalid`` and ``sparse`` select the resize, where *spec* sets neither
+      ``interpolation`` nor ``invalid_value``: ``sparse: true`` moves each
+      measurement to its nearest target pixel (``interpolation="sparse"``); an
+      ``invalid.sentinel`` alone selects a validity-aware bilinear resize, as
+      does ``invalid.non_finite: true`` with no sentinel, which marks the
+      holes with NaN (``invalid_value=NaN``). Each key is read from the modality's head meta, else
       from the meta of the loader's annotation, which states what the loader
       always returns (DrivingStereo's maps are sparse with ``0`` invalid);
     - a disparity field is bound even when its head declares neither, because
@@ -960,13 +972,19 @@ def _bind_measured_map(dataset: Any, name: str, spec: FieldSpec | None) -> Field
 
     invalid = declared("invalid")
     sentinel = invalid.get("sentinel") if isinstance(invalid, Mapping) else None
+    nan_holes = isinstance(invalid, Mapping) and invalid.get("non_finite") is True
     sparse = declared("sparse") is True
-    if sentinel is None and not sparse:
+    if sentinel is None and not sparse and not nan_holes:
         return candidate if candidate.kind == "disparity" else spec
+    if sentinel is not None:
+        invalid_value = sentinel
+    else:
+        # NaN-marked holes, else the sparse default sentinel 0.
+        invalid_value = float("nan") if nan_holes else 0.0
     return replace(
         candidate,
         interpolation="sparse" if sparse else None,
-        invalid_value=sentinel if sentinel is not None else 0.0,
+        invalid_value=invalid_value,
     )
 
 
