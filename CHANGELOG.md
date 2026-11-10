@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Maps whose holes are NaN resize without the holes growing:
+  `invalid_value=NaN` (`"nan"` in a config) makes `bilinear`/`bicubic`
+  validity-aware with non-finite pixels as the invalid ones, and `sparse`
+  leaves NaN where nothing lands. Plain bilinear spreads each NaN into every
+  output pixel it touches. `bind_to_dataset` selects it for depth and
+  disparity heads declaring euler-dataset-contract's
+  `invalid: {"non_finite": true, "sentinel": null}`. An infinite
+  `invalid_value` is still rejected, as is NaN for an integer array.
 - **Fixed:** output writers (`create_output_writer`, used by euler-inference
   for outputs that mirror an input modality) save their index under
   ds-crawler's `index.json`, the file the dataset's `ds-crawler.json` names.
