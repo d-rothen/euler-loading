@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- New loader module `cerema` (GPU and CPU) for the CEREMA Pixel-Accurate Depth
+  Benchmark:
+  - `rgb` for the stereo images;
+  - `gated` for the gated slices, with the dark level removed;
+  - `depth` for the npz depth maps (ground truth, projected lidar,
+    `sparse2dense`);
+  - `sgm_depth`, `psmnet_depth` and `monodepth_depth`, which convert those
+    methods' stored disparities to metric depth on the left camera's grid, as
+    the benchmark does;
+  - `read_intrinsics`, which reuses the SeeingThroughFog camera-info reader.
+
+  Writers exist for `rgb`, `gated`, `depth` and `read_intrinsics`.
 - New loader module `scatternerf` (GPU and CPU) for ScatterNeRF's NSVF-layout
   sequences:
   - `rgb`, the rectified stereo frames;

@@ -905,6 +905,40 @@ with `euler-known-datasets prepare scatternerf`. Its
 [ScatterNeRF page](https://github.com/d-rothen/euler-known-datasets/blob/main/docs/datasets/scatternerf.md)
 covers the release's packaging and how the metric scale is derived.
 
+### CEREMA Pixel-Accurate Depth Benchmark — `cerema`
+
+The Pixel-Accurate Depth Benchmark (Gruber et al., 3DV 2019) recorded four
+static scenes in the CEREMA weather chamber. Each scene is shown in clear
+weather, in fog at 17 visibilities from 20 to 100 m, and in rain at 15 and
+55 mm/h, by day and by night, with 10 frames each. The release ships one
+folder per sensor or method. Depth is z-depth in meters on the grid of its
+camera, `0` where invalid.
+
+| Function | Shape | dtype | Notes |
+|---|---|---|---|
+| `rgb` | CHW / HWC | float32 | Rectified stereo frame (`rgb_left_8bit`, `rgb_right_8bit`), 1920×1024, `[0, 1]` |
+| `gated` | 1HW / HW | float32 | Gated slice (`gated{0,17,31}_10bit`), 1280×720: `(raw − 87) / 1023`, clipped to `[0, 1]` as the benchmark does |
+| `depth` | 1HW / HW | float32 | npz depth map: dense ground truth (`intermetric_*`, one per scene), projected HDL64 lidar (`lidar_hdl64_*`, sparse), `sparse2dense` output |
+| `sgm_depth` | 1HW / HW | float32 | SGM's half-resolution disparity of rows 70–893, as metric depth on the 1920×1024 grid |
+| `psmnet_depth` | 1HW / HW | float32 | PSMNet's 960-wide disparity, as metric depth on the full grid |
+| `monodepth_depth` | 1HW / HW | float32 | Monodepth's width-relative disparity, as metric depth on the full grid |
+| `read_intrinsics` | 3×3 | float32 | Rectified `P[:, :3]` of `calibration/calib_cam_stereo_left.json` or `calib_gated_bwv.json` · *hierarchical* |
+
+The `*_depth` functions convert disparity as the benchmark's evaluation code
+does: resized bilinearly to the full grid, then `depth = 0.202993 m ×
+2355.722801 px / disparity`. Unlike that code, they leave missing pixels at `0`
+rather than filling them from their nearest neighbour.
+
+Writers exist for `rgb`, `gated`, `depth` and `read_intrinsics`, in the
+native formats. The method conversions have none.
+
+The release has no lidar point clouds: the HDL64 scans come projected into the
+left camera and the gated camera. Prepare the dataset with
+`euler-known-datasets prepare cerema`. Its
+[CEREMA page](https://github.com/d-rothen/euler-known-datasets/blob/main/docs/datasets/cerema.md)
+covers the packaging, the scopes, how ground truth applies to every frame of
+its scene, and the benchmark's evaluation protocol.
+
 ### Generic dense depth — `generic_dense_depth`
 
 Format-agnostic; the loading strategy is inferred from the file extension.

@@ -41,66 +41,96 @@ def _map(values) -> torch.Tensor:
     return torch.from_numpy(values).unsqueeze(0)
 
 
-def _like(cpu_function, **overrides):
-    """The CPU function's annotation, with the tensor layout."""
-    stored = cpu_function._modality_meta
-    annotation = {
-        "modality_type": stored["type"],
-        "dtype": stored["dtype"],
-        "hierarchical": stored["hierarchical"],
-        "shape": stored["shape"],
-        "file_formats": stored["file_formats"],
-        "output_range": stored["output_range"],
-        "output_unit": stored["output_unit"],
-        "requires_meta": stored["requires_meta"],
-        "meta": stored["meta"],
-    }
-    annotation.update(overrides)
-    return modality_meta(**annotation)
-
-
-@_like(_cpu.rgb, shape="CHW")
+@modality_meta(
+    modality_type="rgb",
+    dtype="float32",
+    shape="CHW",
+    file_formats=[".png"],
+    output_range=[0.0, 1.0],
+)
 def rgb(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None, *, attributes: dict[str, Any] | None = None) -> torch.Tensor:
     """Load a rectified stereo image as ``(3, H, W)`` float32 in ``[0, 1]``."""
     return torch.from_numpy(_cpu.rgb(path, meta, attributes=attributes)).permute(2, 0, 1).contiguous()
 
 
-@_like(_cpu.gated, shape="1HW")
+@modality_meta(
+    modality_type="gated",
+    dtype="float32",
+    shape="1HW",
+    file_formats=[".png"],
+    output_range=[0.0, 1.0],
+    meta=_cpu.gated._modality_meta["meta"],
+)
 def gated(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None, *, attributes: dict[str, Any] | None = None) -> torch.Tensor:
     """Load a gated slice as ``(1, H, W)`` float32 in ``[0, 1]``, dark level removed; see
     :func:`euler_loading.loaders.cpu.cerema.gated`."""
     return _map(_cpu.gated(path, meta, attributes=attributes))
 
 
-@_like(_cpu.depth, shape="1HW")
+@modality_meta(
+    modality_type="depth",
+    dtype="float32",
+    shape="1HW",
+    file_formats=[".npz"],
+    output_unit="meters",
+    meta=_cpu.depth._modality_meta["meta"],
+)
 def depth(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None, *, attributes: dict[str, Any] | None = None) -> torch.Tensor:
     """Load a depth map as ``(1, H, W)`` float32 meters, ``0`` invalid; see
     :func:`euler_loading.loaders.cpu.cerema.depth`."""
     return _map(_cpu.depth(path, meta, attributes=attributes))
 
 
-@_like(_cpu.sgm_depth, shape="1HW")
+@modality_meta(
+    modality_type="depth",
+    dtype="float32",
+    shape="1HW",
+    file_formats=[".npz"],
+    output_unit="meters",
+    meta=_cpu.sgm_depth._modality_meta["meta"],
+)
 def sgm_depth(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None, *, attributes: dict[str, Any] | None = None) -> torch.Tensor:
     """Convert an ``sgm`` output to ``(1, 1024, 1920)`` metric depth; see
     :func:`euler_loading.loaders.cpu.cerema.sgm_depth`."""
     return _map(_cpu.sgm_depth(path, meta, attributes=attributes))
 
 
-@_like(_cpu.psmnet_depth, shape="1HW")
+@modality_meta(
+    modality_type="depth",
+    dtype="float32",
+    shape="1HW",
+    file_formats=[".npz"],
+    output_unit="meters",
+    meta=_cpu.psmnet_depth._modality_meta["meta"],
+)
 def psmnet_depth(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None, *, attributes: dict[str, Any] | None = None) -> torch.Tensor:
     """Convert a ``psmnet`` output to ``(1, 1024, 1920)`` metric depth; see
     :func:`euler_loading.loaders.cpu.cerema.psmnet_depth`."""
     return _map(_cpu.psmnet_depth(path, meta, attributes=attributes))
 
 
-@_like(_cpu.monodepth_depth, shape="1HW")
+@modality_meta(
+    modality_type="depth",
+    dtype="float32",
+    shape="1HW",
+    file_formats=[".npz"],
+    output_unit="meters",
+    meta=_cpu.monodepth_depth._modality_meta["meta"],
+)
 def monodepth_depth(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None, *, attributes: dict[str, Any] | None = None) -> torch.Tensor:
     """Convert a ``monodepth`` output to ``(1, 1024, 1920)`` metric depth; see
     :func:`euler_loading.loaders.cpu.cerema.monodepth_depth`."""
     return _map(_cpu.monodepth_depth(path, meta, attributes=attributes))
 
 
-@_like(_cpu.read_intrinsics)
+@modality_meta(
+    modality_type="intrinsics",
+    dtype="float32",
+    hierarchical=True,
+    shape="3x3",
+    file_formats=[".json"],
+    meta=_cpu.read_intrinsics._modality_meta["meta"],
+)
 def read_intrinsics(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None, *, attributes: dict[str, Any] | None = None) -> torch.Tensor:
     """Return the rectified ``(3, 3)`` float32 camera matrix; see
     :func:`euler_loading.loaders.cpu.cerema.read_intrinsics`."""
