@@ -20,7 +20,22 @@ from .loaders._writer_utils import supports_stream_target
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_WRITER_INDEX_FILENAME = "output.json"
+#: Fallback index filename when the writer's own default cannot be read;
+#: ds-crawler 2.x saves and loads ``index.json``.
+_DEFAULT_WRITER_INDEX_FILENAME = "index.json"
+
+
+def _writer_index_filename(save_index: Any) -> str:
+    """The filename *save_index* writes by default (ds-crawler's ``index.json``).
+
+    The dataset's ``ds-crawler.json`` names that file as its prebuilt index,
+    so saving under another name leaves a dataset that cannot be loaded back.
+    """
+    try:
+        default = inspect.signature(save_index).parameters["filename"].default
+    except (KeyError, TypeError, ValueError):
+        return _DEFAULT_WRITER_INDEX_FILENAME
+    return default if isinstance(default, str) and default else _DEFAULT_WRITER_INDEX_FILENAME
 
 
 # Type aliases are evaluated at import time even with postponed annotations.
@@ -39,6 +54,7 @@ def _wrap_writer_save_index(
     metadata_scope: str | None = None,
 ) -> DatasetWriter | ZipDatasetWriter:
     original_save_index = writer.save_index
+    default_filename = _writer_index_filename(original_save_index)
 
     def _build_legacy_fields() -> dict[str, Any]:
         output = writer.build_output()
@@ -76,7 +92,10 @@ def _wrap_writer_save_index(
 
         return result
 
-    def save_index(filename: str = _DEFAULT_WRITER_INDEX_FILENAME):
+    def save_index(filename: str | None = None):
+        # The legacy top-level fields (name, type, meta, euler_* addons,
+        # dataset) stay in the index for readers of the old single-file layout.
+        filename = filename or default_filename
         legacy_fields = _build_legacy_fields()
         path = original_save_index(filename=filename)
 

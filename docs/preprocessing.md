@@ -107,9 +107,11 @@ ground truth is never blended with its invalid pixels:
 | Head `modality.meta` | Depth / disparity resize |
 |---|---|
 | `"sparse": true` (with or without `invalid.sentinel`, default `0`) | `interpolation: "sparse"` |
-| `"invalid": {"sentinel": s}` only | validity-aware bilinear with `invalid_value: s` |
+| `"invalid": {"non_finite": …, "sentinel": s}` only, `s` not `null` | validity-aware bilinear with `invalid_value: s` |
 | neither | bilinear, as before |
 
+`invalid` and `sparse` are euler-dataset-contract's shared meta fields;
+`invalid.sentinel: null` declares no sentinel and leaves the resize as it is.
 The field counts as depth or disparity through its `modality_type`, else its
 loader's `@modality_meta` type, else its name. A head that does not declare
 `sparse` or `invalid` takes them from the loader annotation's `meta`, which

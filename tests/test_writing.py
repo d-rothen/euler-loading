@@ -293,7 +293,7 @@ class TestWriteSample:
         assert expected_path.read_text() == "prediction"
         assert calls == [(str(expected_path), "prediction", {"unit": "meters"})]
 
-        with open(tmp_path / "out" / ".ds_crawler" / "output.json") as f:
+        with open(tmp_path / "out" / ".ds_crawler" / "index.json") as f:
             output_index = json.load(f)
         assert output_index["euler_loading"]["function"] == "rgb"
 
@@ -325,7 +325,7 @@ class TestWriteSample:
         with zipfile.ZipFile(tmp_path / "out.zip") as zf:
             with zf.open("scene/f001.txt") as entry:
                 assert entry.read().decode("utf-8") == "prediction"
-            with zf.open(".ds_crawler/output.json") as entry:
+            with zf.open(".ds_crawler/index.json") as entry:
                 output_index = json.load(io.TextIOWrapper(entry, encoding="utf-8"))
         assert output_index["type"] == "txt"
 
@@ -353,12 +353,12 @@ class TestWriteSample:
         ds.write_sample(0, {"depth": "prediction"}, output_writer)
         output_writer.save_index()
 
-        scoped_index = tmp_path / "out" / ".ds_crawler" / "depth" / "output.json"
+        scoped_index = tmp_path / "out" / ".ds_crawler" / "depth" / "index.json"
         manifest_path = tmp_path / "out" / ".ds_crawler" / "scopes.json"
         assert json.loads(scoped_index.read_text())["type"] == "txt"
         manifest = json.loads(manifest_path.read_text())
         assert manifest["scopes"]["depth"]["metadata_dir"] == ".ds_crawler/depth"
-        assert "output.json" in manifest["scopes"]["depth"]["files"]
+        assert "index.json" in manifest["scopes"]["depth"]["files"]
 
     def test_zip_output_writer_writes_scoped_metadata_and_manifest(self, tmp_path):
         def writer(path: str, value: Any, meta: dict[str, Any] | None = None) -> None:
@@ -386,7 +386,7 @@ class TestWriteSample:
 
         with zipfile.ZipFile(tmp_path / "out.zip") as zf:
             scoped_index = json.loads(
-                zf.read(".ds_crawler/depth/output.json").decode("utf-8")
+                zf.read(".ds_crawler/depth/index.json").decode("utf-8")
             )
             manifest = json.loads(
                 zf.read(".ds_crawler/scopes.json").decode("utf-8")
@@ -420,7 +420,7 @@ class TestWriteSample:
         )
         output_writer.save_index()
 
-        with open(tmp_path / "out" / ".ds_crawler" / "output.json") as f:
+        with open(tmp_path / "out" / ".ds_crawler" / "index.json") as f:
             written_index = json.load(f)
         entry = written_index["index"]["children"]["scene"]["files"][0]
         assert entry["attributes"] == {"checkpoint": "v3.2", "noise_sigma": 0.1}
@@ -452,7 +452,7 @@ class TestWriteSample:
         output_writer.save_index()
 
         with zipfile.ZipFile(tmp_path / "out.zip") as zf:
-            with zf.open(".ds_crawler/output.json") as entry:
+            with zf.open(".ds_crawler/index.json") as entry:
                 written_index = json.load(io.TextIOWrapper(entry, encoding="utf-8"))
         file_entry = written_index["index"]["children"]["scene"]["files"][0]
         assert file_entry["attributes"] == {
@@ -486,7 +486,7 @@ class TestWriteSample:
         ds.write_sample(0, {"depth": "prediction"}, output_writer)
         output_writer.save_index()
 
-        with open(tmp_path / "out" / ".ds_crawler" / "output.json") as f:
+        with open(tmp_path / "out" / ".ds_crawler" / "index.json") as f:
             written_index = json.load(f)
         entry = written_index["index"]["children"]["scene"]["files"][0]
         assert entry["attributes"] == {"src": "blender"}
@@ -551,3 +551,38 @@ class TestWriteSample:
             with zf.open("scene/f001.png") as entry:
                 loaded = np.array(Image.open(io.BytesIO(entry.read())))
         np.testing.assert_array_equal(loaded, image)
+
+
+@pytest.mark.parametrize("zip_output", [False, True])
+def test_output_writer_datasets_load_back(tmp_path, zip_output):
+    """A mirrored output must be a dataset ds-crawler can load: its config names
+    the index file it was saved under (``index.json``)."""
+    import numpy as np
+    from ds_crawler import DatasetWriter
+
+    from euler_loading.loaders.cpu.generic_dense_depth import write_rgb
+
+    source = tmp_path / "rgb"
+    writer = DatasetWriter(
+        source, name="rgb", type="rgb", separator=None, meta={"range": [0, 255]},
+        euler_train={"used_as": "input", "modality_type": "rgb"},
+        euler_loading={"loader": "generic_dense_depth", "function": "rgb"},
+    )
+    image = np.zeros((4, 6, 3), dtype=np.uint8)
+    image[1:3, 2:5] = (10, 120, 250)
+    write_rgb(str(writer.get_path("scene/0001", "0001.png")), image)
+    writer.save_index()
+
+    dataset = MultiModalDataset(modalities={"rgb": Modality(str(source))})
+    out = tmp_path / ("out.zip" if zip_output else "out")
+    output_writer = dataset.create_output_writer("rgb", out, zip=zip_output)
+    dataset.write_sample(0, {"rgb": dataset[0]["rgb"]}, output_writer)
+    output_writer.save_index()
+    if hasattr(output_writer, "close"):
+        output_writer.close()
+
+    reloaded = MultiModalDataset(modalities={"rgb": Modality(str(out))})
+    assert len(reloaded) == 1
+    np.testing.assert_allclose(
+        np.asarray(reloaded[0]["rgb"]), np.asarray(dataset[0]["rgb"]), atol=1 / 255
+    )

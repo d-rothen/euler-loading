@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- **Fixed:** output writers (`create_output_writer`, used by euler-inference
+  for outputs that mirror an input modality) save their index under
+  ds-crawler's `index.json`, the file the dataset's `ds-crawler.json` names.
+  They saved `output.json`, which ds-crawler 2.x does not read, so such an
+  output could not be loaded back (by euler-eval, for example). The legacy
+  top-level fields (`name`, `type`, `meta`, `euler_*`, `dataset`) stay in the
+  index.
 - Disparity resizes as a measurement in `SamplePreprocessor`, field kind
   `"disparity"` (alias `stereo_disparity`):
   - a resize multiplies valid values by the width ratio, since disparity is
