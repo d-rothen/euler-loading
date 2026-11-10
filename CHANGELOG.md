@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Require `euler-dataset-contract>=0.14.0`, which owns the `euler_loading`
+  addon rules; the local copy kept for older contracts is gone.
 - New loader module `nuscenes` (GPU and CPU) for nuScenes as prepared by
   euler-known-datasets:
   - `rgb`;
