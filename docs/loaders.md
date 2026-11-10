@@ -939,6 +939,25 @@ left camera and the gated camera. Prepare the dataset with
 covers the packaging, the scopes, how ground truth applies to every frame of
 its scene, and the benchmark's evaluation protocol.
 
+### ACDC — `acdc`
+
+ACDC, the Adverse Conditions Dataset with Correspondences (Sakaridis et al.,
+ICCV 2021), holds 4006 images of drives in fog, at night, in rain and in
+snow. Each image has a reference image of the same place in normal conditions,
+named with the same sequence and frame.
+
+| Function | Shape | dtype | Notes |
+|---|---|---|---|
+| `rgb` | CHW / HWC | float32 | Adverse-condition image (`rgb_anon/<condition>/<split>/…_rgb_anon.png`), `[0, 1]` |
+| `reference_rgb` | CHW / HWC | float32 | Its normal-condition reference (`<split>_ref/…_rgb_ref_anon.png`), `[0, 1]` |
+
+Writers exist for both (8-bit PNG). The images are the anonymised ones ACDC
+distributes by default. A reference image comes from another drive, so it is
+not pixel-aligned with its adverse image. Prepare the dataset with
+`euler-known-datasets prepare acdc`. Its
+[ACDC page](https://github.com/d-rothen/euler-known-datasets/blob/main/docs/datasets/acdc.md)
+covers the downloads, IDs and splits.
+
 ### Generic dense depth — `generic_dense_depth`
 
 Format-agnostic; the loading strategy is inferred from the file extension.

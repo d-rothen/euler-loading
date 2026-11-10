@@ -1,6 +1,55 @@
 {
     "supportedLoaders": [
         {
+            "name": "acdc",
+            "modalities": [
+                {
+                    "type": "rgb",
+                    "function": "reference_rgb",
+                    "hierarchical": false,
+                    "dtype": "float32",
+                    "access": "key",
+                    "output_range": [
+                        0.0,
+                        1.0
+                    ],
+                    "file_formats": [
+                        ".png"
+                    ],
+                    "meta": {
+                        "source": "reference_frames",
+                        "condition": "normal"
+                    },
+                    "cpu": {
+                        "shape": "HWC"
+                    },
+                    "gpu": {
+                        "shape": "CHW"
+                    }
+                },
+                {
+                    "type": "rgb",
+                    "function": "rgb",
+                    "hierarchical": false,
+                    "dtype": "float32",
+                    "access": "key",
+                    "output_range": [
+                        0.0,
+                        1.0
+                    ],
+                    "file_formats": [
+                        ".png"
+                    ],
+                    "cpu": {
+                        "shape": "HWC"
+                    },
+                    "gpu": {
+                        "shape": "CHW"
+                    }
+                }
+            ]
+        },
+        {
             "name": "cerema",
             "modalities": [
                 {

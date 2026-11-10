@@ -37,6 +37,7 @@ _LOADER_MODULES: dict[str, str] = {
     "nuscenes": "euler_loading.loaders.gpu.nuscenes",
     "scatternerf": "euler_loading.loaders.gpu.scatternerf",
     "cerema": "euler_loading.loaders.gpu.cerema",
+    "acdc": "euler_loading.loaders.gpu.acdc",
 }
 
 

@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- New loader module `acdc` (GPU and CPU) for ACDC: `rgb` for the
+  adverse-condition images and `reference_rgb` for their normal-condition
+  references, with writers for both.
 - New loader module `cerema` (GPU and CPU) for the CEREMA Pixel-Accurate Depth
   Benchmark:
   - `rgb` for the stereo images;

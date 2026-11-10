@@ -196,7 +196,7 @@ def gated(path: Union[str, BinaryIO], meta: dict[str, Any] | None = None, *, att
     """Load a gated slice (1280x720 16-bit PNG) as ``(H, W)`` float32 in ``[0, 1]``.
 
     The raw values sit on a dark level and reach somewhat past 10 bits (up to
-    about 1180). As the benchmark's code does, the dark level (87, or
+    about 1240). As the benchmark's code does, the dark level (87, or
     ``dark_level`` from the attributes or meta) is subtracted and the result
     clipped to ``[0, 1023]`` and divided by 1023.
     """
