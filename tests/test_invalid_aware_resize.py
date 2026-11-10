@@ -190,3 +190,128 @@ def test_export_refuses_sparse_resampling():
             SamplePreprocessor.from_config(config).export_descriptor(
                 **copy.deepcopy(bindings), sample=sample
             )
+
+
+# ---------------------------------------------------------------------------
+# disparity
+# ---------------------------------------------------------------------------
+
+
+def _resize(config, sample):
+    return SamplePreprocessor.from_config(config)(sample)
+
+
+def test_disparity_scales_with_the_width_and_not_with_a_crop(container):
+    disparity = container(np.full((4, 8), 10.0, dtype=np.float32))
+    spec = {"disparity": {"kind": "disparity", "layout": "HW"}}
+    for size, expected in [([2, 4], 5.0), ([4, 16], 20.0), ([2, 8], 10.0)]:
+        out = _resize({"resize": size, "fields": spec}, {"disparity": disparity})
+        np.testing.assert_allclose(_np(out["disparity"]), expected)
+    out = _resize({"crop": {"size": [2, 4]}, "fields": spec}, {"disparity": disparity})
+    np.testing.assert_allclose(_np(out["disparity"]), 10.0)
+
+
+def test_sparse_disparity_keeps_the_nearest_surface_and_scales_it(container):
+    disparity = container(np.array([[2.0, 4.0], [0.0, 6.0]], dtype=np.float32))
+    out = _resize(
+        {"resize": [1, 1], "fields": {"disparity": {
+            "kind": "disparity", "layout": "HW", "interpolation": "sparse"}}},
+        {"disparity": disparity},
+    )
+    # The largest disparity is the nearest surface; halving the width halves it.
+    np.testing.assert_allclose(_np(out["disparity"]), [[3.0]])
+
+
+def test_disparity_sentinel_survives_the_rescale():
+    disparity = np.array([[-1.0, -1.0, 8.0, 8.0]], dtype=np.float32)
+    out = _resize(
+        {"resize": [1, 2], "fields": {"disparity": {
+            "kind": "disparity", "layout": "HW", "invalid_value": -1}}},
+        {"disparity": disparity},
+    )
+    np.testing.assert_allclose(out["disparity"], [[-1.0, 4.0]])
+
+
+def test_bind_recognises_disparity_and_falls_back_to_the_loader_meta():
+    sparse_meta = {"invalid": {"non_finite": False, "sentinel": 0}, "sparse": True}
+    annotations = {
+        "disparity": {"type": "disparity", "meta": sparse_meta},
+        "disp": {"type": "disparity"},
+        "depth": {"type": "depth", "meta": sparse_meta},
+        "opted_out": {"type": "depth", "meta": sparse_meta},
+    }
+    dataset = SimpleNamespace(
+        _modalities={name: SimpleNamespace(modality_type=None) for name in annotations},
+        _hierarchical_modalities={},
+        get_modality_metadata=lambda name: {"sparse": False} if name == "opted_out" else {},
+        get_loader_meta=lambda name: annotations[name],
+    )
+    preprocessor = SamplePreprocessor.from_config({"resize": [2, 2]})
+    preprocessor.bind_to_dataset(dataset)
+    specs = preprocessor._bound_field_specs
+    # A head that declares nothing gets what the loader always returns.
+    assert specs["disparity"] == FieldSpec(kind="disparity", interpolation="sparse", invalid_value=0)
+    assert specs["depth"] == FieldSpec(kind="depth", interpolation="sparse", invalid_value=0)
+    # Disparity is bound for its rescale even without invalid pixels.
+    assert specs["disp"] == FieldSpec(kind="disparity")
+    # A head's own key wins over the loader's.
+    assert specs["opted_out"] == FieldSpec(kind="depth", invalid_value=0)
+
+
+def test_a_modality_type_without_a_resize_default_resizes_like_a_generic_array():
+    labels = np.arange(16, dtype=np.int64).reshape(4, 4)
+    out = _resize(
+        {"resize": [2, 2], "fields": {"labels": {"kind": "semantic_segmentation", "layout": "HW"}}},
+        {"labels": labels},
+    )
+    assert out["labels"].dtype == np.int64
+    assert set(np.unique(out["labels"])) <= set(range(16))  # nearest, never blended
+
+
+def test_driving_stereo_depth_and_disparity_stay_consistent_after_a_resize():
+    from euler_loading.loaders.cpu import driving_stereo
+
+    fx, baseline = 1001.496, 0.545
+    rng = np.random.default_rng(0)
+    depth = np.where(rng.random((40, 88)) < 0.2, rng.uniform(5, 80, (40, 88)), 0).astype(np.float32)
+    disparity = np.where(depth > 0, fx * baseline / np.maximum(depth, 1e-6), 0).astype(np.float32)
+    annotations = {"depth": driving_stereo.depth._modality_meta,
+                   "disparity": driving_stereo.disparity._modality_meta}
+    dataset = SimpleNamespace(
+        _modalities={name: SimpleNamespace(modality_type=None) for name in annotations},
+        _hierarchical_modalities={},
+        get_modality_metadata=lambda name: {},
+        get_loader_meta=lambda name: annotations[name],
+    )
+    for size in ([20, 44], [80, 176], [23, 50]):
+        preprocessor = SamplePreprocessor.from_config({"resize": size})
+        preprocessor.bind_to_dataset(dataset)
+        out = preprocessor({"depth": depth, "disparity": disparity})
+        both = (out["depth"] > 0) & (out["disparity"] > 0)
+        assert both.any()
+        np.testing.assert_allclose(
+            out["depth"][both] * out["disparity"][both],
+            fx * size[1] / 88 * baseline,
+            rtol=1e-5,
+        )
+        assert np.isin(out["depth"][out["depth"] > 0], depth).all()
+
+
+def test_export_refuses_disparity():
+    from euler_dataset_contract.testing import fixtures_root
+    from euler_dataset_contract.testing.checks._support import evidence, make_sample
+    from euler_loading import execution_profile
+
+    fixture = json.loads((fixtures_root() / "descriptors/five-field.json").read_text())
+    addon = copy.deepcopy(fixture["addon"])
+    fields = addon["recipe"]["fields"]
+    depth = next(name for name, b in fields.items() if b["profile"]["kind"] == "depth")
+    config = copy.deepcopy(evidence("documented-five-field")["config"])
+    config.setdefault("fields", {})[depth] = {"kind": "disparity"}
+    with pytest.raises(ValueError, match="disparity"):
+        SamplePreprocessor.from_config(config).export_descriptor(
+            sources=addon["sources"], fields=fields,
+            image_planes=addon["recipe"]["image_planes"],
+            execution=execution_profile("torch_cpu"),
+            sample=make_sample(evidence("documented-five-field")),
+        )

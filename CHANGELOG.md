@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+- Disparity resizes as a measurement in `SamplePreprocessor`, field kind
+  `"disparity"` (alias `stereo_disparity`):
+  - a resize multiplies valid values by the width ratio, since disparity is
+    measured in pixels of the grid being resized; a crop leaves them. Plain
+    bilinear used to leave DrivingStereo disparity unscaled and blend in its
+    invalid zeros (a resized minimum of 0.004 px against 6.8 px);
+  - `bind_to_dataset` applies the depth rules to disparity: `sparse: true`
+    selects `interpolation="sparse"`, which now keeps the nearest surface for
+    disparity as the largest value, and `invalid.sentinel` alone a
+    validity-aware bilinear resize. A disparity field is recognised from its
+    loader's type or its name even without either;
+  - a head that does not declare `sparse` or `invalid` takes them from the
+    loader annotation's `meta`, which states what the loader always returns.
+    DrivingStereo's depth and disparity therefore resample as sparse even
+    from a head that omits both; no other loader declares them;
+  - descriptor export refuses disparity fields, whose rescale it cannot
+    record;
+  - a field kind without a default interpolation, such as an explicit
+    `modality_type="semantic_segmentation"`, resizes like a generic array by
+    dtype instead of raising `KeyError`.
 - **Behaviour change:** `execution_profile("torch_cpu")` records
   `nearest: "half_pixel"`, so new transform descriptors resize masks by pixel
   centre (torch `nearest-exact`) like `SamplePreprocessor` does since 2.36.0.

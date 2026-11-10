@@ -101,17 +101,23 @@ metadata. With `infer_fields=True` (the default) common field names such as
 `rgb`, `depth` and `sky_mask` are inferred even without an explicit spec.
 
 `bind_to_dataset` (which `MultiModalDataset` calls for its transforms) also
-reads how a depth head marks missing measurements, so sparse ground truth is
-never blended with its invalid pixels:
+reads how a depth or disparity head marks missing measurements, so sparse
+ground truth is never blended with its invalid pixels:
 
-| Head `modality.meta` | Depth resize |
+| Head `modality.meta` | Depth / disparity resize |
 |---|---|
 | `"sparse": true` (with or without `invalid.sentinel`, default `0`) | `interpolation: "sparse"` |
 | `"invalid": {"sentinel": s}` only | validity-aware bilinear with `invalid_value: s` |
 | neither | bilinear, as before |
 
-The field counts as depth through its `modality_type`, else its loader's
-`@modality_meta` type, else its name. An explicit field spec always wins.
+The field counts as depth or disparity through its `modality_type`, else its
+loader's `@modality_meta` type, else its name. A head that does not declare
+`sparse` or `invalid` takes them from the loader annotation's `meta`, which
+states what the loader always returns: DrivingStereo's `driving_stereo` maps
+are sparse with `0` invalid, so they resample as sparse even from a head that
+omits both. A disparity field is bound from its loader type even without
+either, because its values rescale (see [Field kinds](#field-kinds)). An
+explicit field spec always wins.
 
 ### Resampling sparse depth
 
@@ -122,8 +128,8 @@ becomes 5 m. The two invalid-aware modes avoid that:
 
 - `interpolation: "sparse"` moves every valid pixel to the nearest pixel of the
   resized grid, through the same pixel-centre mapping `resize_intrinsics`
-  applies to the camera, and keeps the smallest depth (the nearest surface)
-  where several land on one pixel. Every output value is a real measurement,
+  applies to the camera, and keeps the nearest surface where several land on
+  one pixel: the smallest depth, or the largest disparity. Every output value is a real measurement,
   nothing is interpolated across object edges, and upsampling leaves the map
   sparse rather than duplicating samples. Use it for lidar-like ground truth.
 - `invalid_value` with `bilinear` or `bicubic` resizes the valid values and
@@ -141,6 +147,7 @@ prediction to the ground-truth grid and score the valid pixels.
 |---|---|---|
 | `image` | bilinear | Standard image resampling. Aliases: `rgb`. |
 | `depth` | bilinear | Same resampling, kept distinct for clarity. |
+| `disparity` | bilinear | Stereo disparity in pixels of its own grid. A resize multiplies valid values by the width ratio (halving the width halves the disparity); a crop leaves them. `sparse` keeps the largest disparity. Not exportable to a transform descriptor. Alias: `stereo_disparity`. |
 | `mask` | nearest | Preserves mask dtype. Aliases: `segmentation`, `sky_mask`. |
 | `ray_map` | bilinear | Resized, then vectors renormalised to unit length. Aliases: `rays`, `ray`, `camera_rays`, `spherical_map`. |
 | `intrinsics` | — | Camera matrix rescaled on resize; principal point shifted on crop. Alias: `intrinsic`. |

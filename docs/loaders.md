@@ -774,9 +774,12 @@ describe the raw, unrectified sensor images, which are not released.
 Each archive is its own root. IDs are the timestamp and the hierarchy is the
 sequence, so the per-sequence calibration joins every frame below it. The
 contract requires `range` in an rgb head and `radial_depth`,
-`scale_to_meters` and `range` in a depth head. Also declare that the maps are
-sparse, so the [preprocessor](preprocessing.md#resampling-sparse-depth)
-resizes them without blending in the invalid zeros:
+`scale_to_meters` and `range` in a depth head. The loader's annotations
+already state that the maps are sparse with `0` invalid, so the
+[preprocessor](preprocessing.md#resampling-sparse-depth) resizes depth and
+disparity without blending in the invalid zeros (disparity also rescaled to
+the new width) even if the head omits it. Declaring it in the head as well
+keeps the head self-describing for other readers:
 
 ```json
 "modality": {"key": "depth", "meta": {
