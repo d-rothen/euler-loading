@@ -29,6 +29,8 @@ Every submodule exists under both ``gpu`` and ``cpu``:
 - ``kitti_carla`` — KITTI-CARLA
 - ``driving_stereo`` — DrivingStereo
 - ``nuscenes`` — nuScenes, as prepared by euler-known-datasets
+- ``scatternerf`` — ScatterNeRF (rectified SeeingThroughFog stereo, NSVF layout)
+- ``cerema`` — CEREMA Pixel-Accurate Depth Benchmark (stereo, gated, lidar, dense ground truth)
 - ``generic`` — format-agnostic NumPy modalities
 - ``generic_dense_depth`` — format-agnostic dense-depth modalities
 

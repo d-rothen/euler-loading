@@ -876,6 +876,35 @@ frames with sweeps, and how both were established are documented in
 euler-known-datasets'
 [nuScenes page](https://github.com/d-rothen/euler-known-datasets/blob/main/docs/datasets/nuscenes.md).
 
+### ScatterNeRF — `scatternerf`
+
+ScatterNeRF (Ramazzina et al., ICCV 2023) releases
+foggy driving sequences in the NSVF layout of NeRF pipelines:
+`<sequence>/{rgb,intrinsics,pose}/<camera>_<frame>_<timestamp ns>.{png,txt}`,
+one file of each per image. The release has no lidar.
+
+| Function | Shape | dtype | Notes |
+|---|---|---|---|
+| `rgb` | CHW / HWC | float32 | Rectified SeeingThroughFog stereo frame, 1704×908 PNG, `[0, 1]` |
+| `read_intrinsics` | 3×3 | float32 | Upper-left block of the stored 4×4; ideal pinhole, principal point at the image centre |
+| `camera_pose` | 4×4 | float64 | Camera-to-world, optical camera axes, world frame per sequence; stored units |
+| `camera_pose_metric` | 4×4 | float64 | The same pose with translations in meters (needs `scale_to_meters`) |
+
+Writers exist for `rgb`, `read_intrinsics` and `camera_pose`, in the native
+formats.
+
+The poses are scaled per sequence, as NeRF data usually is. The rig's 0.203 m
+stereo baseline measures between 0.021 and 0.038 units depending on the
+sequence. euler-known-datasets records each sequence's `scale_to_meters` in
+the pose files' attributes, and `camera_pose_metric` applies it:
+`Modality(root, metadata_scope="camera_pose", function="camera_pose_metric")`.
+
+The images, intrinsics and poses are each a regular modality joined by sample
+ID, `/sequence:<n>/camera:<left|right>/frame-<frame>`. Prepare the dataset
+with `euler-known-datasets prepare scatternerf`. Its
+[ScatterNeRF page](https://github.com/d-rothen/euler-known-datasets/blob/main/docs/datasets/scatternerf.md)
+covers the release's packaging and how the metric scale is derived.
+
 ### Generic dense depth — `generic_dense_depth`
 
 Format-agnostic; the loading strategy is inferred from the file extension.

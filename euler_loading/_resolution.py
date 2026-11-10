@@ -35,6 +35,8 @@ _LOADER_MODULES: dict[str, str] = {
     "kitti_carla": "euler_loading.loaders.gpu.kitti_carla",
     "driving_stereo": "euler_loading.loaders.gpu.driving_stereo",
     "nuscenes": "euler_loading.loaders.gpu.nuscenes",
+    "scatternerf": "euler_loading.loaders.gpu.scatternerf",
+    "cerema": "euler_loading.loaders.gpu.cerema",
 }
 
 

@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- New loader module `scatternerf` (GPU and CPU) for ScatterNeRF's NSVF-layout
+  sequences:
+  - `rgb`, the rectified stereo frames;
+  - `read_intrinsics`, the 3×3 from the stored 4×4;
+  - `camera_pose`, the 4×4 camera-to-world pose in the per-sequence normalized
+    units it is stored in;
+  - `camera_pose_metric`, the same pose in meters, using the
+    `scale_to_meters` attribute.
+
+  Writers exist for `rgb`, `read_intrinsics` and `camera_pose`.
 - Require `euler-dataset-contract>=0.14.0`, which owns the `euler_loading`
   addon rules; the local copy kept for older contracts is gone.
 - New loader module `nuscenes` (GPU and CPU) for nuScenes as prepared by
