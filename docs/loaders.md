@@ -250,6 +250,7 @@ for a single-channel label `v`:
 | Synscapes | single-channel Cityscapes label IDs | `[23, 23, 23]` |
 | MUSES `labelIds` | single-channel Cityscapes label IDs | `[23, 23, 23]` |
 | UrbanSyn | Cityscapes train IDs in an RGB PNG with R = G = B | `[10, 10, 10]` |
+| SHIFT | class ID in the red channel of an RGB PNG | `[13, 0, 0]` |
 | Cityscapes train IDs, e.g. `generic` `.npy` maps | single-channel | `[10, 10, 10]` |
 
 `skyclass: null`, the contract's default, declares no sky. `[0, 0, 0]` is taken
@@ -1025,6 +1026,37 @@ depth between frames that see the same street. Prepare the dataset with
 [UrbanSyn page](https://github.com/d-rothen/euler-known-datasets/blob/main/docs/datasets/urbansyn.md)
 covers the downloads, the scenes, the incomplete depth maps of frames
 6973–7029 and how the conventions were checked.
+
+### SHIFT — `shift`
+
+SHIFT (Sun et al., CVPR 2022) renders drives in CARLA under fixed weather and
+light. euler-known-datasets prepares the front camera of its discrete set,
+1280×800, in shift-dev's image-rate layout
+(`discrete/images/<split>/front/{img,depth,semseg}/<seq>/<frame>_<group>_front.<ext>`)
+with one calibration file per sequence (`calibration/<split>/<seq>.json`).
+The ego vehicle's hood covers an arc over the bottom rows, from row 770 at
+the image centre, 1.0–1.2 m from the camera.
+
+| Function | Shape | dtype | Notes |
+|---|---|---|---|
+| `rgb` | CHW / HWC | float32 | PNG (frames decoded from SHIFT's videos) or the released JPEG, `[0, 1]` |
+| `depth` | 1HW / HW | float32 | Planar depth in meters from CARLA's 24-bit code, `(R + 256 G + 65536 B) / (2**24 - 1) × 1000`; the sky (and a few distant pixels beyond the far plane) reads 999.9997 m; no invalid pixels |
+| `radial_distance` | 1HW / HW | float32 | The depth times `‖K⁻¹[x, y, 1]‖`: Euclidean distance to the camera centre. `K` from `intrinsics` in the attributes or meta, else the release's camera for 1280×800 |
+| `semantic_segmentation` | 1HW / HW | int64 | Class ID from the red channel (green = blue = 0): CARLA's 23 tags as released, or the merged set of frames decoded from the videos (head `classes`) |
+| `sky_mask` | 1HW / HW | bool | Where the labels hold `skyclass`, `[13, 0, 0]` by default; exact in both label sets |
+| `read_intrinsics` | 3×3 | float32 | `camera.intrinsics` of the calibration file: `fx = fy = 640`, centre `(640, 400)` as released · *hierarchical* |
+| `camera_pose` | 4×4 | float32 | Camera-to-world pose of the sample's frame in meters, optical axes, in CARLA's world with y negated (right-handed, z up) · *hierarchical*, selected per sample |
+
+Writers exist for every function except `camera_pose`, whose frames share
+one file: `rgb` as PNG (JPEG for a `.jpg` target), `depth` and
+`radial_distance` in the 24-bit code, labels and sky masks as red-channel
+PNGs, and `write_intrinsics` updates a calibration file after a crop or
+rescale. The video-decoded labels merge nine pairs of classes that SHIFT's
+segmentation videos cannot tell apart; the sky and four other classes stay
+exact. Prepare the dataset with `euler-known-datasets prepare shift`. Its
+[SHIFT page](https://github.com/d-rothen/euler-known-datasets/blob/main/docs/datasets/shift.md)
+covers the downloads, decoding the videos, the frame selection and how the
+depth and pose conventions were checked.
 
 ### Generic dense depth — `generic_dense_depth`
 

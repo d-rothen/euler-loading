@@ -202,6 +202,7 @@ All of them accept both filesystem paths and in-memory buffers.
 | `acdc` | ACDC (fog, night, rain, snow, with normal-condition references) | rgb, reference_rgb |
 | `hypersim` | Hypersim (synthetic indoor scenes; needs `h5py`) | tone-mapped rgb, planar depth, radial distance, intrinsics, camera-to-world pose |
 | `urbansyn` | UrbanSyn (synthetic Barcelona and Berlin streets; depth and poses need OpenEXR) | rgb, planar depth, Cityscapes train-ID segmentation, sky mask, intrinsics, camera-to-world pose |
+| `shift` | SHIFT (CARLA drives in changing weather), as prepared by euler-known-datasets | rgb, planar depth, radial distance, semantic segmentation, sky mask, intrinsics, camera-to-world pose |
 | `generic_dense_depth` | *any* — inferred from file extension | rgb, depth, sky mask, intrinsics |
 | `generic` | *any* — `.npy` / `.npz` modalities | points 3d, maps, segmentation, spherical maps, SH coefficients, … |
 

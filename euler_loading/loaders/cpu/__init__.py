@@ -21,6 +21,7 @@ Available submodules:
 - :mod:`euler_loading.loaders.cpu.acdc` — ACDC
 - :mod:`euler_loading.loaders.cpu.hypersim` — Hypersim
 - :mod:`euler_loading.loaders.cpu.urbansyn` — UrbanSyn
+- :mod:`euler_loading.loaders.cpu.shift` — SHIFT
 - :mod:`euler_loading.loaders.cpu.generic` — format-agnostic NumPy modalities
 - :mod:`euler_loading.loaders.cpu.generic_dense_depth` — format-agnostic
   dense-depth modalities

@@ -40,6 +40,7 @@ _LOADER_MODULES: dict[str, str] = {
     "acdc": "euler_loading.loaders.gpu.acdc",
     "hypersim": "euler_loading.loaders.gpu.hypersim",
     "urbansyn": "euler_loading.loaders.gpu.urbansyn",
+    "shift": "euler_loading.loaders.gpu.shift",
 }
 
 

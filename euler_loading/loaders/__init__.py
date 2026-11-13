@@ -34,6 +34,7 @@ Every submodule exists under both ``gpu`` and ``cpu``:
 - ``acdc`` — ACDC, adverse-condition images with normal-condition references
 - ``hypersim`` — Hypersim, tone-mapped HDR renders with planar depth and exact tilt-shift cameras
 - ``urbansyn`` — UrbanSyn, path-traced city frames with planar depth and Cityscapes labels
+- ``shift`` — SHIFT, CARLA drives in changing weather with planar depth, labels and poses
 - ``generic`` — format-agnostic NumPy modalities
 - ``generic_dense_depth`` — format-agnostic dense-depth modalities
 

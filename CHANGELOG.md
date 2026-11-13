@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+- New loader module `shift` (GPU and CPU) for SHIFT, as prepared by
+  euler-known-datasets:
+  - `rgb` for the PNG frames (decoded from SHIFT's videos) or the released JPEGs;
+  - `depth` decodes CARLA's 24-bit code as planar meters (the sky reads
+    999.9997 m), and `radial_distance` multiplies it by `||K^-1 [x, y, 1]||`;
+  - `semantic_segmentation` reads the class ID from the red channel, and
+    `sky_mask` the sky (`skyclass` `[13, 0, 0]`), exact in both the released
+    and the video-decoded label sets;
+  - `read_intrinsics` and `camera_pose` read the per-sequence calibration
+    file: the camera matrix and each frame's camera-to-world pose.
+
+  Every reader but `camera_pose` (selected per sample from a shared file) has
+  a writer in the release's format; `write_intrinsics` updates a calibration
+  file after a crop or rescale.
 - New loader module `urbansyn` (GPU and CPU) for UrbanSyn:
   - `rgb` for the images;
   - `depth` reads the Z-depth EXRs (stored in units of 1e5 m) as planar
