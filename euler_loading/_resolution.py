@@ -38,6 +38,8 @@ _LOADER_MODULES: dict[str, str] = {
     "scatternerf": "euler_loading.loaders.gpu.scatternerf",
     "cerema": "euler_loading.loaders.gpu.cerema",
     "acdc": "euler_loading.loaders.gpu.acdc",
+    "hypersim": "euler_loading.loaders.gpu.hypersim",
+    "urbansyn": "euler_loading.loaders.gpu.urbansyn",
 }
 
 

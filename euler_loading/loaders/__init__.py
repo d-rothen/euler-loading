@@ -32,6 +32,8 @@ Every submodule exists under both ``gpu`` and ``cpu``:
 - ``scatternerf`` — ScatterNeRF (rectified SeeingThroughFog stereo, NSVF layout)
 - ``cerema`` — CEREMA Pixel-Accurate Depth Benchmark (stereo, gated, lidar, dense ground truth)
 - ``acdc`` — ACDC, adverse-condition images with normal-condition references
+- ``hypersim`` — Hypersim, tone-mapped HDR renders with planar depth and exact tilt-shift cameras
+- ``urbansyn`` — UrbanSyn, path-traced city frames with planar depth and Cityscapes labels
 - ``generic`` — format-agnostic NumPy modalities
 - ``generic_dense_depth`` — format-agnostic dense-depth modalities
 

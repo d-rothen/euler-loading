@@ -200,6 +200,8 @@ All of them accept both filesystem paths and in-memory buffers.
 | `scatternerf` | ScatterNeRF (rectified SeeingThroughFog stereo, NSVF layout) | rgb, per-image intrinsics, camera-to-world pose |
 | `cerema` | CEREMA Pixel-Accurate Depth Benchmark (fog/rain chamber) | stereo rgb, gated slices, projected lidar, dense ground-truth depth, intrinsics, SGM/PSMNet/Monodepth/Sparse-to-Dense outputs as depth |
 | `acdc` | ACDC (fog, night, rain, snow, with normal-condition references) | rgb, reference_rgb |
+| `hypersim` | Hypersim (synthetic indoor scenes; needs `h5py`) | tone-mapped rgb, planar depth, radial distance, intrinsics, camera-to-world pose |
+| `urbansyn` | UrbanSyn (synthetic Barcelona and Berlin streets; depth and poses need OpenEXR) | rgb, planar depth, Cityscapes train-ID segmentation, sky mask, intrinsics, camera-to-world pose |
 | `generic_dense_depth` | *any* — inferred from file extension | rgb, depth, sky mask, intrinsics |
 | `generic` | *any* — `.npy` / `.npz` modalities | points 3d, maps, segmentation, spherical maps, SH coefficients, … |
 

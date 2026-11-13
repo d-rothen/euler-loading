@@ -2,6 +2,34 @@
 
 ## Unreleased
 
+- New loader module `urbansyn` (GPU and CPU) for UrbanSyn:
+  - `rgb` for the images;
+  - `depth` reads the Z-depth EXRs (stored in units of 1e5 m) as planar
+    meters, with rays that hit nothing as `0`;
+  - `semantic_segmentation` reads the Cityscapes train IDs (`19` for
+    everything else), and `sky_mask` their sky (`skyclass` `[10, 10, 10]`);
+  - `read_intrinsics` computes the camera matrix from the focal length and
+    sensor size in `camera_metadata.json`;
+  - `camera_pose` reads the camera-to-world pose from the render settings in
+    a depth EXR's header.
+
+  Every reader has a writer in the release's format; `write_intrinsics` and
+  `write_camera_pose` write small JSON files. Depth and poses need OpenEXR,
+  in the new extra `urbansyn`.
+- New loader module `hypersim` (GPU and CPU) for Hypersim, as prepared by
+  euler-known-datasets:
+  - `rgb` tone-maps the HDR `color.hdf5` with Hypersim's operator, using each
+    file's `tonemap_scale` attribute;
+  - `depth` converts the released Euclidean distances to planar depth with
+    each file's `intrinsics` attribute, and `radial_distance` returns them as
+    released;
+  - `read_intrinsics` and `camera_pose` read the per-trajectory calibration
+    file: an exact pinhole matrix (tilt-shift scenes included) and the
+    per-frame camera-to-world pose in meters.
+
+  Writers mark their HDF5 files so that they read back unchanged, and
+  `write_intrinsics` updates a calibration file after a crop or rescale. The
+  module needs `h5py`, in the new extra `hypersim` (also added to `dev`).
 - New loader module `acdc` (GPU and CPU) for ACDC: `rgb` for the
   adverse-condition images and `reference_rgb` for their normal-condition
   references, with writers for both.

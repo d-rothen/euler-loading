@@ -249,6 +249,7 @@ for a single-channel label `v`:
 | Real Drive Sim | class ID in the red channel of an RGBA PNG | `[29, 0, 0]` |
 | Synscapes | single-channel Cityscapes label IDs | `[23, 23, 23]` |
 | MUSES `labelIds` | single-channel Cityscapes label IDs | `[23, 23, 23]` |
+| UrbanSyn | Cityscapes train IDs in an RGB PNG with R = G = B | `[10, 10, 10]` |
 | Cityscapes train IDs, e.g. `generic` `.npy` maps | single-channel | `[10, 10, 10]` |
 
 `skyclass: null`, the contract's default, declares no sky. `[0, 0, 0]` is taken
@@ -957,6 +958,73 @@ not pixel-aligned with its adverse image. Prepare the dataset with
 `euler-known-datasets prepare acdc`. Its
 [ACDC page](https://github.com/d-rothen/euler-known-datasets/blob/main/docs/datasets/acdc.md)
 covers the downloads, IDs and splits.
+
+### Hypersim — `hypersim`
+
+Hypersim (Roberts et al., ICCV 2021) holds V-Ray renders of indoor scenes,
+1024×768, as HDF5 files. Reading and writing them needs `h5py`
+(`pip install 'euler-loading[hypersim]'`).
+
+| Function | Shape | dtype | Notes |
+|---|---|---|---|
+| `rgb` | CHW / HWC | float32 | `color.hdf5` (linear HDR) tone-mapped with Hypersim's operator, `[0, 1]`; the scale comes from `attributes["tonemap_scale"]` |
+| `depth` | 1HW / HW | float32 | Planar depth in meters: the released `depth_meters.hdf5` distances divided by `‖K⁻¹[x, y, 1]‖`, with `K` from `attributes["intrinsics"]`; `0` = no geometry |
+| `radial_distance` | 1HW / HW | float32 | The released Euclidean distances to the camera centre in meters (`radial_depth: true`) |
+| `read_intrinsics` | 3×3 | float32 | Exact pinhole matrix of the scene from `calibration/<scene>/<camera>.json`, skew included · *hierarchical* |
+| `camera_pose` | 4×4 | float32 | Camera-to-world pose of the sample's frame in meters, optical axes · *hierarchical*, selected per sample |
+
+The tone-mapping scale makes the 90th-percentile brightness of the pixels with
+geometry equal 0.8 after gamma 1/2.2, as Hypersim's
+`scene_generate_images_tonemap.py` does. `tonemap()` is exported for other
+scales.
+
+Many scenes use tilt-shift lenses: their stored camera axes are up to 41.5°
+from the image's, and their principal points lie far from the centre. The
+intrinsics, poses and planar depth all refer to the image's own optical frame,
+so `K @ X` projects a point `X` of that frame onto its pixel. Writers exist for
+every function:
+- `rgb`, `depth` and `radial_distance` write HDF5 files marked with an
+  `euler_encoding` attribute, so they read back unchanged rather than being
+  tone-mapped or converted again;
+- `write_intrinsics` updates a calibration file after a crop or rescale.
+
+Prepare the dataset with `euler-known-datasets prepare hypersim`. Its
+[Hypersim page](https://github.com/d-rothen/euler-known-datasets/blob/main/docs/datasets/hypersim.md)
+covers the partial download, the camera model and the splits.
+
+### UrbanSyn — `urbansyn`
+
+UrbanSyn (Gómez et al., Neurocomputing 2025) holds 7539 path-traced frames
+of three synthetic districts of Barcelona and Berlin, 2048×1024, released as
+one flat folder per modality: `rgb/rgb_<NNNN>.png`, `depth/depth_<NNNN>.exr`,
+`ss/ss_<NNNN>.png`, plus `camera_metadata.json`. Depth and poses need OpenEXR
+(`pip install 'euler-loading[urbansyn]'`).
+
+| Function | Shape | dtype | Notes |
+|---|---|---|---|
+| `rgb` | CHW / HWC | float32 | 8-bit sRGB PNG, `[0, 1]` |
+| `depth` | 1HW / HW | float32 | Planar depth in meters: OctaneRender's Z-depth pass (EXR channel `Y`, stored in units of 1e5 m) × 1e5; `0` where a ray hit nothing (stored `1.0`) |
+| `semantic_segmentation` | 1HW / HW | int64 | Cityscapes train IDs `0`–`18`, `19` for everything else; stored as RGB with R = G = B |
+| `sky_mask` | 1HW / HW | bool | Where the labels hold `skyclass`, train ID `10` by default |
+| `read_intrinsics` | 3×3 | float32 | From the focal length and sensor size in `camera_metadata.json`: `fx = fy = 1730.21`, principal point at the image centre `(1023.5, 511.5)` · *hierarchical* |
+| `camera_pose` | 4×4 | float64 | Camera-to-world pose in meters, optical axes, from the camera `pos`, `target` and `up` in a depth EXR's header (attribute `octane`); one world frame per district |
+
+Writers exist for every function: `rgb`, `depth` and `semantic_segmentation`
+in the release's formats (`write_depth` needs a path, since OpenEXR cannot
+write to a stream); `write_sky_mask` as a label map of sky and `19`;
+`write_intrinsics` and `write_camera_pose` as small JSON files that the
+readers return unchanged, since a cropped or resized grid no longer matches
+the physical camera description. `read_intrinsics` takes `image_size:
+[height, width]` from the attributes or meta for another grid.
+
+The sky is a finite backdrop a few hundred meters away in the depth maps:
+mask it with `sky_mask` before using depth there. The depth convention, its
+units, the intrinsics and the poses were checked together by reprojecting
+depth between frames that see the same street. Prepare the dataset with
+`euler-known-datasets prepare urbansyn`. Its
+[UrbanSyn page](https://github.com/d-rothen/euler-known-datasets/blob/main/docs/datasets/urbansyn.md)
+covers the downloads, the scenes, the incomplete depth maps of frames
+6973–7029 and how the conventions were checked.
 
 ### Generic dense depth — `generic_dense_depth`
 

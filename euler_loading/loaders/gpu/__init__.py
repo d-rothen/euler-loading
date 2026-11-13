@@ -18,6 +18,8 @@ Available submodules:
 - :mod:`euler_loading.loaders.gpu.scatternerf` — ScatterNeRF
 - :mod:`euler_loading.loaders.gpu.cerema` — CEREMA Pixel-Accurate Depth Benchmark
 - :mod:`euler_loading.loaders.gpu.acdc` — ACDC
+- :mod:`euler_loading.loaders.gpu.hypersim` — Hypersim
+- :mod:`euler_loading.loaders.gpu.urbansyn` — UrbanSyn
 - :mod:`euler_loading.loaders.gpu.generic` — format-agnostic NumPy modalities
 - :mod:`euler_loading.loaders.gpu.generic_dense_depth` — format-agnostic
   dense-depth modalities
