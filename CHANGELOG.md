@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- `loader_report()` / `python -m euler_loading.capability_report`: a versioned
+  loader capability report (euler-view change L1). Aggregates the packaged
+  `loaders.json` per persisted modality key (datasets, function count, file
+  formats) and derives identity and value semantics from
+  euler-dataset-contract: `modality_id`/`status` via `resolve_modality`,
+  `value_kind` from the inventory's `semantics` block (contract change C1),
+  with point-cloud representations reading as `points`. Tests gate releases on
+  "no loader type unknown to the contract" and tighten value-kind coverage
+  automatically as the installed contract ships semantics. euler-view's
+  cluster compatibility routine runs this per environment over SSH.
+
 - New loader module `shift` (GPU and CPU) for SHIFT, as prepared by
   euler-known-datasets:
   - `rgb` for the PNG frames (decoded from SHIFT's videos) or the released JPEGs;
