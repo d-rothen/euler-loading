@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+### 2.49.0 — batches, and readers for new datasets
+
+- **`collate(samples)` and `dataloader(dataset, **kwargs)`**
+  (`euler_loading.batching`, exported from `euler_loading`): batching for
+  `MultiModalDataset` samples. Tensors and arrays of one shape are stacked
+  (library and dtype kept; a mix becomes a tensor); `id`, `full_id`, `meta`
+  and `attributes` stay one entry per sample; a modality missing from some
+  samples (`None` or absent) stays a list with `None` at those positions;
+  dicts (uncollapsed hierarchical modalities), strings and numbers are lists.
+  Different shapes raise `BatchError` with the fix. `dataloader()` is a
+  `DataLoader` with this collate (torch, the `gpu` extra).
+- **`generic_reader(modality_key, file_type)`** (`euler_loading.registry`,
+  exported): the built-in generic loader function (`generic_dense_depth`,
+  then `generic`) that reads a key's files of a type, for the head of a
+  dataset a writer creates; `None` when none reads it without extra head meta.
+  euler-inference 2.17 uses it for every output.
+
 ### 2.48.0 — loaders from your own package
 
 Requires `euler-dataset-contract>=0.23.0` (the suite extension protocol).

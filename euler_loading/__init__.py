@@ -10,6 +10,7 @@ from .annotations import (
     modality_meta,
     selects_per_sample,
 )
+from .batching import BatchError, collate, dataloader
 from .dataset import Modality, MultiModalDataset
 from .indexing import FileRecord
 from .registry import (
@@ -17,6 +18,7 @@ from .registry import (
     LoaderRegistry,
     LoaderUnavailableError,
     RegisteredLoader,
+    generic_reader,
     loader_registry,
 )
 from .loaders.contracts import DenseDepthCodec, DenseDepthLoader, DenseDepthWriter
@@ -59,6 +61,10 @@ __all__ = [
     "DenseDepthLoader",
     "DenseDepthWriter",
     "FileRecord",
+    "BatchError",
+    "collate",
+    "dataloader",
+    "generic_reader",
     "Crop",
     "FieldSpec",
     "MaskedValueOverride",

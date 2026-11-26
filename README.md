@@ -80,11 +80,29 @@ sample["id"]          # leaf file ID, shared across modalities
 sample["full_id"]     # full hierarchical path, e.g. "/Scene01/Camera_0/00000"
 ```
 
-Drop it straight into a `DataLoader` — it is a standard `torch.utils.data.Dataset`:
+Batch it with `dataloader()` (a `torch.utils.data.DataLoader` with
+euler-loading's `collate`), which understands the sample structure: tensors of
+one shape are stacked, `id` / `full_id` / `meta` / `attributes` stay one entry
+per sample, and a modality missing from some samples (`None`) is a list with
+`None` at those positions instead of an error:
 
 ```python
-loader = DataLoader(dataset, batch_size=16, num_workers=4, pin_memory=True)
+from euler_loading import dataloader
+
+loader = dataloader(dataset, batch_size=16, shuffle=True, num_workers=4, pin_memory=True)
+batch = next(iter(loader))
+batch["rgb"]       # (16, 3, H, W)
+batch["full_id"]   # 16 ids, to match predictions back to their files
 ```
+
+Images of different sizes in one batch raise `BatchError` naming the modality
+and the shapes (resize them with a `SamplePreprocessor`). `collate(samples)` is
+the function itself, for a `DataLoader` you build.
+
+A writer of a new dataset (such as euler-inference's predictions) asks
+`generic_reader(modality_key, file_type)` for the built-in generic loader that
+reads such files back (`{"loader": "generic_dense_depth", "function":
+"depth"}` for depth `.npy`), the head's `addons.euler_loading`.
 
 ## Automatic loader resolution
 

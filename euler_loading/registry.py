@@ -279,6 +279,53 @@ def build_loader_registry() -> LoaderRegistry:
     return registry
 
 
+#: Built-in loaders that read a file by its modality key and extension rather
+#: than by a dataset's layout, in the order :func:`generic_reader` asks them.
+GENERIC_LOADERS = ("generic_dense_depth", "generic")
+
+
+def generic_reader(
+    modality_key: str,
+    file_type: str,
+    *,
+    registry: LoaderRegistry | None = None,
+) -> dict[str, str] | None:
+    """The built-in loader function that reads *modality_key* files of *file_type*.
+
+    For writers of new datasets (euler-inference's outputs in a key's default
+    storage format): the result, ``{"loader": ..., "function": ...}``, is the
+    ``addons.euler_loading`` of the head they write, so euler-loading loads the
+    files back. ``None`` when no generic loader reads that key from that file
+    type without extra head meta (a ``requires_meta`` loader, such as a sky
+    mask that needs its ``skyclass``, is never chosen).
+    """
+    extension = "." + str(file_type).lower().lstrip(".")
+    registry = registry or loader_registry()
+    for name in GENERIC_LOADERS:
+        loader = registry.loaders.get(name)
+        if loader is None:
+            continue
+        variant = "cpu" if "cpu" in loader.modules else "gpu"
+        module = loader.import_module(variant)
+        for function in sorted(vars(module)):
+            value = getattr(module, function)
+            annotation = getattr(value, "_modality_meta", None)
+            if (
+                function.startswith("_")
+                or not callable(value)
+                or not isinstance(annotation, dict)
+            ):
+                continue
+            if (
+                annotation.get("type") == modality_key
+                and extension in (annotation.get("file_formats") or [])
+                and not annotation.get("requires_meta")
+                and not annotation.get("hierarchical")
+            ):
+                return {"loader": name, "function": function}
+    return None
+
+
 _REGISTRY: LoaderRegistry | None = None
 
 
@@ -295,6 +342,7 @@ def loader_registry(*, refresh: bool = False) -> LoaderRegistry:
 
 __all__ = [
     "BUILTIN_DISTRIBUTION",
+    "GENERIC_LOADERS",
     "LOADERS_GROUP",
     "LOADER_API_VERSION",
     "LOADER_VARIANTS",
@@ -302,5 +350,6 @@ __all__ = [
     "LoaderUnavailableError",
     "RegisteredLoader",
     "build_loader_registry",
+    "generic_reader",
     "loader_registry",
 ]
