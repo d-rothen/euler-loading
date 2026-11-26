@@ -14,7 +14,7 @@ from typing import Any, BinaryIO, Union
 
 import torch
 
-from euler_loading.loaders._annotations import (
+from euler_loading.annotations import (
     SampleContext,
     modality_meta,
     selects_per_sample,

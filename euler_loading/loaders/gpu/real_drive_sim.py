@@ -35,7 +35,7 @@ import torch
 import numpy as np
 from PIL import Image
 
-from euler_loading.loaders._annotations import modality_meta
+from euler_loading.annotations import modality_meta
 from euler_loading.loaders.cpu import real_drive_sim as _cpu
 from euler_loading.loaders._writer_utils import (
     ensure_parent,

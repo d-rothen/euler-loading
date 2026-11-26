@@ -1,8 +1,15 @@
+"""Resolve a modality's loader and writer from its dataset head.
+
+A head's ``addons.euler_loading`` names a registered loader (``loader``) and a
+function in it (``function``); :mod:`euler_loading.registry` maps the name to
+modules. Writers live next to the loader functions, in the same module.
+"""
+
 from __future__ import annotations
 
-import importlib
 import inspect
 import logging
+import sys
 from collections.abc import Mapping
 from types import ModuleType
 from typing import TYPE_CHECKING, Any, Callable
@@ -10,6 +17,8 @@ from typing import TYPE_CHECKING, Any, Callable
 from ds_crawler import get_dataset_contract
 
 from ._ds_crawler_utils import as_non_empty_str
+from .annotations import get_modality_meta
+from .registry import LOADER_VARIANTS, LoaderUnavailableError, loader_registry
 
 if TYPE_CHECKING:
     from .dataset import Modality
@@ -17,50 +26,27 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-
-#: Built-in loader variants. ``gpu`` returns torch tensors, ``cpu`` NumPy
-#: arrays; automatic resolution from a dataset contract uses ``gpu``.
-LOADER_VARIANTS = ("gpu", "cpu")
-
-_LOADER_MODULES: dict[str, str] = {
-    "materialized": "euler_loading.loaders.materialized",
-    "vkitti2": "euler_loading.loaders.gpu.vkitti2",
-    "synscapes": "euler_loading.loaders.gpu.synscapes",
-    "real_drive_sim": "euler_loading.loaders.gpu.real_drive_sim",
-    "generic_dense_depth": "euler_loading.loaders.gpu.generic_dense_depth",
-    "generic": "euler_loading.loaders.gpu.generic",
-    "muses": "euler_loading.loaders.gpu.muses",
-    "princeton_dense": "euler_loading.loaders.gpu.princeton_dense",
-    "seeing_through_fog": "euler_loading.loaders.gpu.princeton_dense",
-    "kitti_carla": "euler_loading.loaders.gpu.kitti_carla",
-    "driving_stereo": "euler_loading.loaders.gpu.driving_stereo",
-    "nuscenes": "euler_loading.loaders.gpu.nuscenes",
-    "scatternerf": "euler_loading.loaders.gpu.scatternerf",
-    "cerema": "euler_loading.loaders.gpu.cerema",
-    "acdc": "euler_loading.loaders.gpu.acdc",
-    "hypersim": "euler_loading.loaders.gpu.hypersim",
-    "urbansyn": "euler_loading.loaders.gpu.urbansyn",
-    "shift": "euler_loading.loaders.gpu.shift",
-}
+__all__ = [
+    "LOADER_VARIANTS",
+    "resolve_loader_module",
+    "resolve_writer_module",
+]
 
 
-def _get_euler_loading_meta(index: Mapping[str, Any]) -> Mapping[str, Any] | None:
-    try:
-        contract = get_dataset_contract(dict(index))
-        euler_loading_meta = contract.get_addon("euler_loading")
-    except Exception:
-        euler_loading_meta = None
-    if isinstance(euler_loading_meta, Mapping):
-        return euler_loading_meta
+def _euler_loading_addon(index: Mapping[str, Any]) -> Mapping[str, Any] | None:
+    """The index's ``head.addons.euler_loading``; ``None`` when it has neither.
 
-    raw_meta = index.get("euler_loading")
-    if isinstance(raw_meta, Mapping):
-        return raw_meta
-    return None
+    A head that is present but malformed raises: it would otherwise read as
+    "no loader declared".
+    """
+    if not isinstance(index.get("head"), Mapping):
+        return None
+    addon = get_dataset_contract(dict(index)).get_addon("euler_loading")
+    return addon if isinstance(addon, Mapping) else None
 
 
 def resolve_loader_module(name: str, *, variant: str = "gpu") -> ModuleType:
-    """Import and return the loader module for *name*.
+    """Import and return the module registered as loader *name*.
 
     Example::
 
@@ -68,28 +54,21 @@ def resolve_loader_module(name: str, *, variant: str = "gpu") -> ModuleType:
         sky_fn = module.sky_mask  # get a specific function
 
     Args:
-        name: Loader name, as declared by ``addons.euler_loading.loader``.
+        name: Loader name, as declared by ``addons.euler_loading.loader``:
+            a built-in such as ``"vkitti2"`` or a name an installed package
+            registers under the ``euler.loaders`` entry-point group.
         variant: ``"gpu"`` for the torch loaders (the default, and what
             automatic resolution uses) or ``"cpu"`` for the NumPy ones.
 
     Raises:
-        ValueError: If *name* does not match any known loader, or *variant*
-            is neither ``"gpu"`` nor ``"cpu"``.
+        LoaderUnavailableError: (a ``ValueError``) if no loader is registered
+            as *name*, including when an installed package declares it but
+            the declaration was rejected; the message says why.
+        ValueError: if *variant* is neither ``"gpu"`` nor ``"cpu"``.
+        ImportError: if the module cannot be imported (e.g. torch is missing
+            for a ``gpu`` module).
     """
-    if variant not in LOADER_VARIANTS:
-        available = ", ".join(LOADER_VARIANTS)
-        raise ValueError(
-            f"Unknown loader variant {variant!r}. Available variants: {available}"
-        )
-    module_path = _LOADER_MODULES.get(name)
-    if module_path is None:
-        available = ", ".join(sorted(_LOADER_MODULES))
-        raise ValueError(f"Unknown loader {name!r}. Available loaders: {available}")
-    if variant == "cpu":
-        # Loaders that exist in one variant only (``materialized``) are not
-        # registered under ``.gpu.`` and therefore stay as they are.
-        module_path = module_path.replace(".loaders.gpu.", ".loaders.cpu.")
-    return importlib.import_module(module_path)
+    return loader_registry().get(name).import_module(variant)
 
 
 def resolve_writer_module(name: str, *, variant: str = "gpu") -> ModuleType:
@@ -100,20 +79,22 @@ def resolve_writer_module(name: str, *, variant: str = "gpu") -> ModuleType:
     return resolve_loader_module(name, variant=variant)
 
 
-def _builtin_loader_id(loader: Callable[..., Any]) -> str | None:
-    """Identify an actual supported decoder, not a callable borrowing its name."""
-    module_name = getattr(loader, "__module__", "")
-    name = getattr(loader, "__qualname__", "")
-    supported = set(_LOADER_MODULES.values())
-    supported.update(path.replace(".gpu.", ".cpu.") for path in _LOADER_MODULES.values())
-    if module_name not in supported:
+def _registered_module(loader: Callable[..., Any] | None) -> ModuleType | None:
+    """The module of *loader* when it is a registered loader module."""
+    module_name = getattr(loader, "__module__", None)
+    if not module_name or loader_registry().owner(module_name) is None:
         return None
-    # Only import the installed built-in modules, never paths from a descriptor.
-    module = importlib.import_module(module_name)
-    if getattr(module, name, None) is not loader or not hasattr(loader, "_modality_meta"):
-        return None
-    # Do not unwrap decorators: their effects are not part of the built-in.
-    return f"{module_name}.{name}"
+    return sys.modules.get(module_name)
+
+
+def _loader_functions(module: ModuleType) -> list[str]:
+    return sorted(
+        name
+        for name, value in vars(module).items()
+        if not name.startswith("_")
+        and callable(value)
+        and get_modality_meta(value) is not None
+    )
 
 
 def loader_accepts_attributes(loader: Callable[..., Any]) -> bool:
@@ -146,51 +127,50 @@ def _resolve_loader(
     *,
     modality_name: str,
     modality: Modality,
-    index: dict[str, Any],
+    index: Mapping[str, Any],
     variant: str = "gpu",
 ) -> Callable[..., Any]:
     """Return the effective loader for a modality.
 
     An explicit ``Modality.loader`` always wins; ``Modality.function`` replaces
-    the dataset head's function within its loader module. *variant* only
-    selects between the built-in GPU and CPU modules during automatic
-    resolution.
+    the dataset head's function within its loader module. *variant* selects
+    the registered loader's module during automatic resolution.
     """
     if modality.loader is not None:
         return modality.loader
 
-    euler_loading_meta = _get_euler_loading_meta(index)
-    if not isinstance(euler_loading_meta, Mapping):
+    addon = _euler_loading_addon(index)
+    if addon is None:
         raise ValueError(
             f"Modality {modality_name!r}: no explicit loader provided and the "
-            f"dataset-head contract at {modality.path!r} does not contain an "
-            f"'addons.euler_loading' entry."
+            f"dataset head at {modality.path!r} has no 'addons.euler_loading' "
+            "entry naming one."
         )
 
     required = ("loader",) if modality.function is not None else ("loader", "function")
     for key in required:
-        if key not in euler_loading_meta:
+        if key not in addon:
             raise ValueError(
                 f"Modality {modality_name!r}: no explicit loader provided and "
                 f"'addons.euler_loading.{key}' is missing from the "
                 f"dataset-head contract at {modality.path!r}."
             )
 
-    module_name: str = euler_loading_meta["loader"]
-    func_name: str = modality.function or euler_loading_meta["function"]
-
-    module = resolve_loader_module(module_name, variant=variant)
+    loader_name: str = addon["loader"]
+    func_name: str = modality.function or addon["function"]
+    try:
+        module = resolve_loader_module(loader_name, variant=variant)
+    except LoaderUnavailableError as exc:
+        raise LoaderUnavailableError(
+            f"Modality {modality_name!r} (dataset head at {modality.path!r}): {exc}"
+        ) from exc
 
     func = getattr(module, func_name, None)
     if func is None or not callable(func):
-        available = [
-            attr
-            for attr in dir(module)
-            if not attr.startswith("_") and callable(getattr(module, attr))
-        ]
         raise ValueError(
-            f"Modality {modality_name!r}: loader module {module_name!r} has no "
-            f"callable {func_name!r}. Available: {', '.join(available)}"
+            f"Modality {modality_name!r}: loader {loader_name!r} "
+            f"({module.__name__}) has no callable {func_name!r}. Loader "
+            f"functions: {', '.join(_loader_functions(module)) or 'none'}"
         )
 
     return func
@@ -206,9 +186,12 @@ def describe_loader(
     module = getattr(loader, "__module__", None) or ""
     name = getattr(loader, "__qualname__", None) or repr(loader)
     label = f"{module.rsplit('.', 1)[-1]}.{name}" if module else name
+    registered = loader_registry().owner(module) if module else None
+    if registered is not None and not registered.builtin:
+        label = f"{label} from {registered.label}"
     if modality.loader is not None:
         return f"{label} (explicit loader)"
-    declared = as_non_empty_str((_get_euler_loading_meta(index) or {}).get("function"))
+    declared = as_non_empty_str((_euler_loading_addon(index) or {}).get("function"))
     if modality.function is not None and declared not in (None, modality.function):
         return f"{label} (the index declares {declared!r})"
     return label
@@ -238,58 +221,50 @@ def _resolve_writer(
     *,
     modality_name: str,
     modality: Modality,
-    index: dict[str, Any],
+    index: Mapping[str, Any],
+    loader: Callable[..., Any] | None = None,
     variant: str = "gpu",
 ) -> Callable[..., Any] | None:
-    """Return the effective writer for a modality, if available."""
+    """Return the effective writer for a modality, if one exists.
+
+    Writers live next to their readers: when the effective *loader* belongs
+    to a registered loader module (always, for automatic resolution; also for
+    an explicit built-in or extension function), its writer comes from that
+    same module, whichever variant it is. Otherwise the head's ``loader``
+    module for *variant* is used. A writer that cannot be resolved is not an
+    error until one is asked for (``MultiModalDataset.get_writer``); the
+    reason is logged as a warning.
+    """
     if modality.writer is not None:
         return modality.writer
 
-    euler_loading_meta = _get_euler_loading_meta(index)
-    if not isinstance(euler_loading_meta, Mapping):
+    addon = _euler_loading_addon(index)
+    if addon is None:
         return None
 
-    module_name = as_non_empty_str(euler_loading_meta.get("loader"))
-    read_function_name = as_non_empty_str(
-        modality.function or euler_loading_meta.get("function")
-    )
-    if module_name is None or read_function_name is None:
+    loader_name = as_non_empty_str(addon.get("loader"))
+    read_function_name = as_non_empty_str(modality.function or addon.get("function"))
+    if loader_name is None or read_function_name is None:
         return None
 
-    # An explicit NumPy loader pairs with the NumPy variant's writers; the
-    # torch variant may not even be importable on a torch-free install.
-    explicit_module = getattr(modality.loader, "__module__", "") or ""
-    if explicit_module.startswith("euler_loading.loaders.cpu."):
-        variant = "cpu"
-
-    try:
-        module = resolve_writer_module(module_name, variant=variant)
-    except ValueError:
-        logger.warning(
-            "Modality '%s': cannot resolve writer module %r.",
-            modality_name,
-            module_name,
-        )
-        return None
-    except ImportError as exc:
-        if variant == "cpu":
-            raise
-        # Writers accept NumPy arrays and tensors alike, so the NumPy variant's
-        # writers stand in when the torch variant cannot be imported.
-        logger.debug(
-            "Modality '%s': %s writers unavailable (%s); using the cpu variant.",
-            modality_name,
-            variant,
-            exc,
-        )
-        module = resolve_writer_module(module_name, variant="cpu")
+    module = _registered_module(loader)
+    if module is None:
+        try:
+            module = resolve_writer_module(loader_name, variant=variant)
+        except (LoaderUnavailableError, ImportError) as exc:
+            logger.warning(
+                "Modality '%s': no writer, because loader %r cannot be resolved "
+                "(%s). Set Modality.writer to write this modality.",
+                modality_name,
+                loader_name,
+                exc,
+            )
+            return None
 
     # The head's writer_function pairs with its own function, not an override.
     writer_names = _writer_name_candidates(
         read_function_name,
-        None
-        if modality.function is not None
-        else euler_loading_meta.get("writer_function"),
+        None if modality.function is not None else addon.get("writer_function"),
     )
     for writer_name in writer_names:
         writer = getattr(module, writer_name, None)
@@ -299,7 +274,7 @@ def _resolve_writer(
     logger.debug(
         "Modality '%s': no writer found in %s for read function %r (tried %s).",
         modality_name,
-        module_name,
+        module.__name__,
         read_function_name,
         ", ".join(writer_names),
     )

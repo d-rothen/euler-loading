@@ -13,9 +13,9 @@ import torch
 from PIL import Image
 
 from euler_loading import Modality, MultiModalDataset, resolve_loader_module
-from euler_loading.loaders._annotations import SampleContext, get_sample_selector
+from euler_loading.annotations import SampleContext, get_sample_selector
 from euler_loading.loaders.cpu import nuscenes as cpu_nus
-from euler_loading.loaders.generate.__main__ import generate
+from euler_loading.capability_report import supported_loaders
 
 K = [[1257.86, 0.0, 827.24], [0.0, 1257.86, 450.92], [0.0, 0.0, 1.0]]
 # A real CAM_FRONT_LEFT frame of v1.0-test (scene-0830), lidar -> camera through
@@ -246,13 +246,8 @@ def test_resolution():
     assert resolve_loader_module("nuscenes", variant="cpu").__name__ == "euler_loading.loaders.cpu.nuscenes"
 
 
-def test_inventory_matches_annotations():
-    generated = {item["name"]: item for item in generate()["supportedLoaders"]}
-    checked_in = json.loads(
-        (Path(__file__).parents[1] / "euler_loading/loaders/generate/loaders.json").read_text()
-    )
-    saved = {item["name"]: item for item in checked_in["supportedLoaders"]}
-    assert generated["nuscenes"] == saved["nuscenes"]
+def test_inventory_describes_the_annotations():
+    generated = {item["name"]: item for item in supported_loaders()}
     modalities = {item["function"]: item for item in generated["nuscenes"]["modalities"]}
     assert set(modalities) == {
         "rgb", "lidar_point_cloud", "sparse_depth", "read_intrinsics", "read_extrinsics",

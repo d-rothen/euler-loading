@@ -15,7 +15,7 @@ from PIL import Image
 
 from euler_loading import Modality, MultiModalDataset, resolve_loader_module
 from euler_loading.loaders.cpu import driving_stereo as cpu_ds
-from euler_loading.loaders.generate.__main__ import generate
+from euler_loading.capability_report import supported_loaders
 from euler_loading.loaders.gpu import driving_stereo as gpu_ds
 
 # calibration/train/half-image-calib/2018-10-25-07-37-26.txt as released, the
@@ -115,13 +115,8 @@ def test_writer_resolves_for_every_reader():
         assert any(callable(getattr(module, name, None)) for name in candidates), reader
 
 
-def test_inventory_matches_annotations():
-    generated = {item["name"]: item for item in generate()["supportedLoaders"]}
-    checked_in = json.loads(
-        (Path(__file__).parents[1] / "euler_loading/loaders/generate/loaders.json").read_text()
-    )
-    saved = {item["name"]: item for item in checked_in["supportedLoaders"]}
-    assert generated["driving_stereo"] == saved["driving_stereo"]
+def test_inventory_describes_the_annotations():
+    generated = {item["name"]: item for item in supported_loaders()}
     modalities = {item["function"]: item for item in generated["driving_stereo"]["modalities"]}
     assert set(modalities) == {
         "rgb", "depth", "depth_full_size", "disparity", "disparity_full_size", "read_intrinsics",

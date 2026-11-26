@@ -14,7 +14,7 @@ from PIL import Image
 
 from euler_loading import Modality, MultiModalDataset, resolve_loader_module
 from euler_loading.loaders.cpu import cerema as cpu_c
-from euler_loading.loaders.generate.__main__ import generate
+from euler_loading.capability_report import supported_loaders
 
 BF = 0.202993 * 2355.722801
 # calibration/calib_cam_stereo_left.json as released (abridged: fields the loader reads and keeps).
@@ -155,12 +155,7 @@ def test_writers_round_trip(loaders, tmp_path):
 
 def test_resolution_and_inventory():
     assert resolve_loader_module("cerema").__name__ == "euler_loading.loaders.gpu.cerema"
-    generated = {item["name"]: item for item in generate()["supportedLoaders"]}
-    checked_in = json.loads(
-        (Path(__file__).parents[1] / "euler_loading/loaders/generate/loaders.json").read_text()
-    )
-    saved = {item["name"]: item for item in checked_in["supportedLoaders"]}
-    assert generated["cerema"] == saved["cerema"]
+    generated = {item["name"]: item for item in supported_loaders()}
     functions = {m["function"]: m for m in generated["cerema"]["modalities"]}
     assert set(functions) == {"rgb", "gated", "depth", "sgm_depth", "psmnet_depth", "monodepth_depth", "read_intrinsics"}
     assert functions["read_intrinsics"]["hierarchical"] is True

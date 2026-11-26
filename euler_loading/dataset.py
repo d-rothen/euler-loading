@@ -57,7 +57,7 @@ from ._writing import (
     _write_value_to_destination,
     create_dataset_writer_from_index,
 )
-from .loaders._annotations import SampleContext, get_modality_meta, get_sample_selector
+from .annotations import SampleContext, get_modality_meta, get_sample_selector
 from .indexing import (
     FileRecord,
     collect_files,
@@ -321,7 +321,8 @@ class Modality:
                 from ``addons.euler_loading.loader`` and
                 ``addons.euler_loading.function`` in the modality's
                 ``dataset-head.json`` contract, using the GPU variant of the
-                matching predefined loader.
+                registered loader it names (built-in, or registered by an
+                installed package under ``euler.loaders``).
         writer: Optional callable that writes a loaded/predicted modality back
                 to disk. Expected signature is
                 ``(target: str | BinaryIO, value: Any, meta: dict[str, Any] | None) -> None``.
@@ -796,7 +797,10 @@ class MultiModalDataset(_BaseDataset):
                 self._resolved_loaders[name]
             )
             self._resolved_writers[name] = _resolve_writer(
-                modality_name=name, modality=modality, index=index,
+                modality_name=name,
+                modality=modality,
+                index=index,
+                loader=self._resolved_loaders[name],
             )
             records = collect_files(_get_index_tree(index))
             lookup = {
@@ -835,7 +839,10 @@ class MultiModalDataset(_BaseDataset):
                 self._resolved_loaders[name]
             )
             self._resolved_writers[name] = _resolve_writer(
-                modality_name=name, modality=modality, index=index,
+                modality_name=name,
+                modality=modality,
+                index=index,
+                loader=self._resolved_loaders[name],
             )
             files_by_level = collect_hierarchical_files(_get_index_tree(index))
             self._hierarchical_lookups[name] = files_by_level

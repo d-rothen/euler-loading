@@ -1,12 +1,24 @@
-"""Annotations on loader functions.
+"""Annotations that make a function an euler-loading loader.
 
-The :func:`modality_meta` decorator attaches a ``_modality_meta`` dict to the
-decorated function.  This metadata is read by the generate script
-(:mod:`euler_loading.loaders.generate`) to produce ``loaders.json``.
+This is the public API a loader module needs, built-in or third-party
+(see the README section "Extending: your own loaders")::
 
-The :func:`selects_per_sample` decorator lets a hierarchical loader narrow
-its shared value to the sample being assembled; see :class:`SampleContext`.
-:func:`get_modality_meta` reads a loader's annotation.
+    from euler_loading import modality_meta
+
+    @modality_meta(modality_type="depth", dtype="float32", shape="HW",
+                   file_formats=[".npy"], output_unit="meters")
+    def depth(path, meta=None, *, attributes=None):
+        ...
+
+* :func:`modality_meta` declares what a function loads. It is what makes a
+  function nameable from a dataset head (``addons.euler_loading.function``),
+  what ``loader_report()`` describes, and what receipts accept as a decoder.
+* :func:`selects_per_sample` lets a hierarchical loader narrow its shared
+  value to the sample being assembled; see :class:`SampleContext`.
+* :func:`get_modality_meta` reads a function's annotation back.
+
+Writers live in the same module, named ``write_<function>`` (or
+``write_<x>`` for a reader named ``read_<x>``).
 """
 
 from __future__ import annotations
@@ -17,6 +29,10 @@ from dataclasses import dataclass
 from typing import Any, Callable, TypeVar
 
 _F = TypeVar("_F", bound=Callable[..., Any])
+
+#: ``modality_type``, ``dtype`` or ``shape`` of a decoder whose values are
+#: declared per file rather than fixed by the function (materialized outputs).
+DECLARED = "declared"
 _SELECTOR_ATTRIBUTE = "__euler_loading_select__"
 
 
@@ -103,7 +119,10 @@ def modality_meta(
     Parameters
     ----------
     modality_type:
-        Canonical modality name (e.g. ``"rgb"``, ``"dense_depth"``).
+        The persisted modality key the function loads (e.g. ``"rgb"``,
+        ``"depth"``). euler-dataset-contract resolves it to a modality id;
+        ``loader_report()`` marks keys the installed contract does not know
+        as ``"unknown"``.
     dtype:
         Output dtype after loading (``"float32"``, ``"int64"``, ``"bool"``).
     hierarchical:
@@ -127,18 +146,49 @@ def modality_meta(
         Domain-specific metadata dict (encoding, scale factors, …).
     """
 
+    for label, value in (("modality_type", modality_type), ("dtype", dtype), ("shape", shape)):
+        if not isinstance(value, str) or not value:
+            raise TypeError(f"modality_meta({label}=...) must be a non-empty string, got {value!r}")
+    for label, values in (("file_formats", file_formats), ("requires_meta", requires_meta)):
+        if values is not None and (
+            isinstance(values, str) or not all(isinstance(v, str) and v for v in values)
+        ):
+            raise TypeError(f"modality_meta({label}=...) must be a list of strings, got {values!r}")
+    for extension in file_formats or []:
+        if not extension.startswith("."):
+            raise ValueError(
+                f"modality_meta(file_formats=...) lists extensions with their dot, "
+                f"such as '.png'; got {extension!r}"
+            )
+    if output_range is not None and len(output_range) != 2:
+        raise ValueError(f"modality_meta(output_range=...) must be [low, high], got {output_range!r}")
+    if output_unit is not None and not isinstance(output_unit, str):
+        raise TypeError(f"modality_meta(output_unit=...) must be a string, got {output_unit!r}")
+    if meta is not None and not isinstance(meta, Mapping):
+        raise TypeError(f"modality_meta(meta=...) must be a mapping, got {type(meta).__name__}")
+
     def decorator(func: _F) -> _F:
         func._modality_meta = {  # type: ignore[attr-defined]
             "type": modality_type,
             "dtype": dtype,
             "hierarchical": hierarchical,
             "shape": shape,
-            "file_formats": file_formats or [],
+            "file_formats": list(file_formats or []),
             "output_range": output_range,
             "output_unit": output_unit,
-            "requires_meta": requires_meta or [],
-            "meta": meta or {},
+            "requires_meta": list(requires_meta or []),
+            "meta": dict(meta or {}),
         }
         return func
 
     return decorator
+
+
+__all__ = [
+    "DECLARED",
+    "SampleContext",
+    "get_modality_meta",
+    "get_sample_selector",
+    "modality_meta",
+    "selects_per_sample",
+]

@@ -22,7 +22,7 @@ from euler_loading import (
     resolve_loader_module,
 )
 from euler_loading.loaders.cpu import kitti_carla as cpu_kc
-from euler_loading.loaders.generate.__main__ import generate
+from euler_loading.capability_report import supported_loaders
 from euler_loading.loaders.gpu import kitti_carla as gpu_kc
 
 # The calibration every KITTI-CARLA town ships.
@@ -166,13 +166,8 @@ def test_writer_resolves_for_every_reader():
         assert any(callable(getattr(module, name, None)) for name in candidates), reader
 
 
-def test_inventory_matches_annotations():
-    generated = {item["name"]: item for item in generate()["supportedLoaders"]}
-    checked_in = json.loads(
-        (Path(__file__).parents[1] / "euler_loading/loaders/generate/loaders.json").read_text()
-    )
-    saved = {item["name"]: item for item in checked_in["supportedLoaders"]}
-    assert generated["kitti_carla"] == saved["kitti_carla"]
+def test_inventory_describes_the_annotations():
+    generated = {item["name"]: item for item in supported_loaders()}
     modalities = {item["function"]: item for item in generated["kitti_carla"]["modalities"]}
     assert set(modalities) == {
         "rgb", "depth", "class_segmentation", "sky_mask", "lidar_point_cloud",

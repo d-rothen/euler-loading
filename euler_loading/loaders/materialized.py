@@ -8,13 +8,13 @@ from pathlib import Path
 from euler_loading.output_encoding import decode_output
 from euler_loading.receipts import _digest_bytes, array_digest
 
-from ._annotations import modality_meta
+from euler_loading.annotations import DECLARED, modality_meta
 
 
 @modality_meta(
-    modality_type="generic",
-    dtype="declared",
-    shape="declared",
+    modality_type=DECLARED,
+    dtype=DECLARED,
+    shape=DECLARED,
     file_formats=[".npy", ".png"],
 )
 def data(source, meta=None, *, attributes=None):

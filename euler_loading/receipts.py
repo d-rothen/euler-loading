@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import hashlib
+import importlib
 import io
 from copy import deepcopy
+from dataclasses import dataclass
 
 import numpy as np
 from ds_crawler import get_dataset_contract
@@ -18,7 +20,8 @@ from euler_dataset_contract import (
     validate_execution,
 )
 
-from ._resolution import _builtin_loader_id
+from .annotations import get_modality_meta
+from .registry import loader_registry
 from .indexing import (
     collect_files,
     collect_hierarchical_files,
@@ -30,7 +33,97 @@ from .transform_descriptors import (
     resolve_transform_descriptor,
 )
 
+#: Decode-behaviour version of euler-loading's built-in decoders. Bumped when
+#: a built-in decodes the same bytes differently, never for other releases, so
+#: receipts stay replayable across unrelated upgrades.
 DECODER_VERSION = "2.24.0"
+
+#: Prefix of the receipt ``decoder.id`` of a decoder an installed package
+#: registers under ``euler.loaders``.
+EXTENSION_DECODER_PREFIX = "ext:"
+MATERIALIZED_DECODER = "euler_loading.loaders.materialized.data"
+
+
+@dataclass(frozen=True)
+class DecoderIdentity:
+    """What a receipt records about the function that decoded a source."""
+
+    id: str
+    version: str
+
+
+def _registered_decoder(loader):
+    """``(registered loader, module, function name)`` or ``None``.
+
+    A decoder is a ``@modality_meta`` function found under its own name in a
+    module some ``euler.loaders`` entry registers. Wrappers, partials and
+    callables merely borrowing a loader's name are not decoders: their effects
+    are not what the registered function promises.
+    """
+    module_name = getattr(loader, "__module__", None) or ""
+    name = getattr(loader, "__qualname__", "")
+    registered = loader_registry().owner(module_name)
+    if registered is None:
+        return None
+    # Only registered modules are imported, never paths from a descriptor.
+    module = importlib.import_module(module_name)
+    if getattr(module, name, None) is not loader or get_modality_meta(loader) is None:
+        return None
+    return registered, module_name, name
+
+
+def decoder_identity(loader):
+    """The receipt identity of *loader*, or ``None`` if it is not a decoder.
+
+    * built-in: ``id`` is ``"<module>.<function>"`` (e.g.
+      ``"euler_loading.loaders.gpu.vkitti2.rgb"``), ``version`` is
+      :data:`DECODER_VERSION`;
+    * registered by an installed package: ``id`` is
+      ``"ext:<distribution>/<module>.<function>"``, ``version`` is that
+      distribution's installed version. Receipts therefore name the package
+      that decoded their sources, and a capture refuses a descriptor recorded
+      with another version of it, since euler-loading cannot know whether that
+      release decodes the same bytes the same way.
+
+    ``None`` for anything else, including an extension whose distribution
+    version is unknown (an entry point without installed metadata).
+    """
+    found = _registered_decoder(loader)
+    if found is None:
+        return None
+    registered, module_name, name = found
+    if registered.builtin:
+        return DecoderIdentity(f"{module_name}.{name}", DECODER_VERSION)
+    if not registered.distribution or not registered.version:
+        return None
+    return DecoderIdentity(
+        f"{EXTENSION_DECODER_PREFIX}{registered.distribution}/{module_name}.{name}",
+        registered.version,
+    )
+
+
+def require_decoder(field, loader):
+    """:func:`decoder_identity` of a field's loader, or a ``ValueError`` saying why not."""
+    identity = decoder_identity(loader)
+    if identity is not None:
+        return identity
+    label = getattr(loader, "__qualname__", None) or repr(loader)
+    found = _registered_decoder(loader)
+    if found is not None:
+        registered = found[0]
+        raise ValueError(
+            f"Field {field}: decoder {label} is registered as loader "
+            f"{registered.name!r} by a package with no installed version, so a "
+            "receipt could not pin it. Install that package (e.g. "
+            "`pip install -e .`) so its version is known."
+        )
+    raise ValueError(
+        f"Field {field}: unknown decoder callable effects. {label} is not a "
+        "registered decoder, so a receipt could not say what decoded this "
+        "source. Receipts accept the @modality_meta functions of a module "
+        "registered under the `euler.loaders` entry-point group (built-in or "
+        "from an installed package), used directly rather than wrapped."
+    )
 
 
 def array_digest(value):
@@ -94,9 +187,7 @@ def describe_sources(dataset, fields, *, revisions):
         index = dataset.get_modality_index(name)
         head = get_dataset_contract(index)
         modality = {**dataset._modalities, **dataset._hierarchical_modalities}[name]
-        decoder = _builtin_loader_id(dataset._resolved_loaders[name])
-        if decoder is None:
-            raise ValueError(f"Field {name}: unknown decoder callable effects")
+        decoder = require_decoder(name, dataset._resolved_loaders[name])
         content, _ = _manifest(dataset, name)
         sources[alias] = {
             "dataset_id": head.dataset_id,
@@ -108,8 +199,8 @@ def describe_sources(dataset, fields, *, revisions):
             "verification": "content",
             "content_digest": content,
             "decoder": {
-                "id": decoder,
-                "version": DECODER_VERSION,
+                "id": decoder.id,
+                "version": decoder.version,
                 "profile_digest": canonical_digest(binding["profile"]),
             },
         }
@@ -263,8 +354,6 @@ class DatasetCapture:
                     raise ValueError(
                         "strict capture supports verified file content manifests only; metadata/snapshot assertions are unsupported"
                     )
-                if source["decoder"]["version"] != DECODER_VERSION:
-                    raise ValueError("source decoder version mismatch")
                 if name not in self._sources:
                     index = dataset.get_modality_index(name)
                     tree = _get_index_tree(index)
@@ -287,6 +376,7 @@ class DatasetCapture:
                     self._sources[name] = {
                         "path": modality.path,
                         "loader": dataset._resolved_loaders[name],
+                        "decoder": require_decoder(name, dataset._resolved_loaders[name]),
                         "accepts_attributes": dataset._loaders_accept_attributes[name],
                         "meta": deepcopy(_get_index_meta(index)),
                         "records": qualified,
@@ -374,8 +464,7 @@ class DatasetCapture:
             stream.name = record.file_entry["path"]
             attributes = deepcopy(record.file_entry.get("attributes", {}))
             if (
-                _builtin_loader_id(pinned["loader"])
-                == "euler_loading.loaders.materialized.data"
+                pinned["decoder"].id == MATERIALIZED_DECODER
                 and attributes.get("output_encoding", {}).get("decoded")
                 != binding["profile"]
             ):

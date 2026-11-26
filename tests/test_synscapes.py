@@ -21,7 +21,7 @@ import torch
 
 from euler_loading import DenseDepthLoader, Modality, MultiModalDataset, resolve_loader_module
 from euler_loading.loaders.cpu import synscapes as cpu_synscapes
-from euler_loading.loaders.generate.__main__ import generate
+from euler_loading.capability_report import supported_loaders
 from euler_loading.loaders.gpu import synscapes as gpu_synscapes
 
 
@@ -253,14 +253,8 @@ assert synscapes.read_intrinsics(sys.argv[2]).shape == (3, 3)
     )
 
 
-def test_inventory_matches_annotations():
-    generated = generate()
-    checked_in = json.loads(
-        (Path(__file__).parents[1] / "euler_loading/loaders/generate/loaders.json").read_text()
-    )
-    entries = {item["name"]: item for item in generated["supportedLoaders"]}
-    saved = {item["name"]: item for item in checked_in["supportedLoaders"]}
-    assert entries["synscapes"] == saved["synscapes"]
+def test_inventory_describes_the_annotations():
+    entries = {item["name"]: item for item in supported_loaders()}
     modalities = {item["function"]: item for item in entries["synscapes"]["modalities"]}
     # Writers are public but carry no modality annotation, so the inventory
     # covers exactly the reader half of the public surface.
@@ -291,6 +285,21 @@ def test_inventory_matches_annotations():
         assert cpu_meta == gpu_meta
 
 
+def _head_index(function: str, files: list[dict]) -> dict:
+    """A ds-crawler index whose head declares synscapes.<function>."""
+    return {
+        "head": {
+            "contract": {"kind": "dataset_head", "version": "1.0"},
+            "dataset": {"id": f"synscapes_{function}", "name": f"Synscapes {function}"},
+            "modality": {"key": "metadata", "meta": {}},
+            "addons": {
+                "euler_loading": {"version": "1.0", "loader": "synscapes", "function": function}
+            },
+        },
+        "dataset": {"files": files},
+    }
+
+
 @pytest.mark.parametrize("zipped", [False, True])
 def test_dataset_automatically_loads_aligned_modalities(
     tmp_path, monkeypatch, rgb_file, depth_file, intrinsics_file, zipped
@@ -308,13 +317,10 @@ def test_dataset_automatically_loads_aligned_modalities(
             with zipfile.ZipFile(root, "w") as archive:
                 archive.writestr(path.name, payload)
         modalities[name] = Modality(str(root))
-        indexes[str(root)] = {
-            "euler_loading": {
-                "loader": "synscapes",
-                "function": "read_intrinsics" if name == "intrinsics" else name,
-            },
-            "dataset": {"files": [{"id": "1", "path": path.name}]},
-        }
+        indexes[str(root)] = _head_index(
+            "read_intrinsics" if name == "intrinsics" else name,
+            [{"id": "1", "path": path.name}],
+        )
     monkeypatch.setattr(
         "euler_loading.dataset.index_dataset_from_path",
         lambda path, **kwargs: indexes[str(path)],
@@ -647,12 +653,7 @@ def test_writers_accept_stream_targets(loaders, writer, value, basename):
 )
 def test_dataset_auto_resolves_synscapes_writers(monkeypatch, function, writer):
     """The contract-driven path must find a writer for every reader."""
-    index = {
-        "name": function,
-        "type": function,
-        "euler_loading": {"loader": "synscapes", "function": function},
-        "dataset": {"files": [{"id": "1", "path": "scene/1.bin"}]},
-    }
+    index = _head_index(function, [{"id": "1", "path": "scene/1.bin"}])
     monkeypatch.setattr(
         "euler_loading.dataset.index_dataset_from_path",
         lambda path, **kwargs: index,
@@ -678,7 +679,6 @@ def test_depth_writes_into_a_zip_dataset_through_a_temp_file(tmp_path, monkeypat
         "name": "depth",
         "type": "depth",
         "euler_train": {"used_as": "input", "modality_type": "depth"},
-        "euler_loading": {"loader": "synscapes", "function": "depth"},
         "head": {
             "contract": {"kind": "dataset_head", "version": "1.0"},
             "dataset": {"id": "synscapes_depth", "name": "Synscapes depth"},

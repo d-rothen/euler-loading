@@ -38,8 +38,9 @@ Every submodule exists under both ``gpu`` and ``cpu``:
 - ``generic`` — format-agnostic NumPy modalities
 - ``generic_dense_depth`` — format-agnostic dense-depth modalities
 
-``euler_loading/loaders/generate/loaders.json`` is the machine-readable
-inventory of every annotated loader function, its output shape per variant,
-dtype, unit and accepted file formats. Regenerate it with
-``./gen_loaders.sh`` after adding or changing a loader.
+Each module is registered as an ``euler.loaders`` entry point
+(:mod:`euler_loading.loaders.builtin`), the same way a third-party package
+registers its own. ``python -m euler_loading.capability_report`` prints the
+machine-readable inventory of every annotated loader function, its output
+shape per variant, dtype, unit and accepted file formats.
 """

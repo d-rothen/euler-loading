@@ -15,7 +15,7 @@ from typing import Any, BinaryIO, Union
 
 import torch
 
-from euler_loading.loaders._annotations import modality_meta
+from euler_loading.annotations import modality_meta
 from euler_loading.loaders.cpu import urbansyn as _cpu
 
 __all__ = [

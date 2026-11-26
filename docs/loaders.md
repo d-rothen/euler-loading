@@ -109,7 +109,7 @@ The `euler_loading` addon fields are:
 | Field | Required | Meaning |
 |---|---|---|
 | `version` | yes | Version of the addon contract, currently `"1.0"`. |
-| `loader` | for automatic loading | One of the built-in module names below, such as `vkitti2`. |
+| `loader` | for automatic loading | A registered loader name: one of the built-in modules below, such as `vkitti2`, or a name an installed package registers under the `euler.loaders` entry-point group (see [Extending: your own loaders](../README.md#extending-your-own-loaders)). |
 | `function` | for automatic loading | Callable within that module, such as `rgb`. It must be declared together with `loader`. |
 | `writer_function` | no | Explicit writer callable name when the naming conventions below are not sufficient. |
 
@@ -315,9 +315,10 @@ zip-backed modalities unchanged. Shapes below are written GPU / CPU where the
 two differ. Functions marked *hierarchical* are intended for
 `hierarchical_modalities`.
 
-[`loaders.json`](../euler_loading/loaders/generate/loaders.json) is the
-machine-readable version of everything in this section, generated from the
-annotations on the loader functions themselves.
+`python -m euler_loading.capability_report` prints the machine-readable
+version of everything in this section (`supportedLoaders`), introspected at
+run time from the annotations on the loader functions themselves, together
+with any loaders installed packages register.
 
 ### Virtual KITTI 2 — `vkitti2`
 
@@ -417,8 +418,9 @@ T = synscapes.read_extrinsics(
 
 The dataset documents the six fields and the ego frame but not the order in
 which the angles compose, so the loaders apply the usual automotive
-`Rz(yaw) @ Ry(pitch) @ Rx(roll)` and record that in `loaders.json` under the
-modality's `rotation_order`. The values are constant across the released
+`Rz(yaw) @ Ry(pitch) @ Rx(roll)` and record that in the function's
+`@modality_meta` metadata (and so in the capability report) under
+`rotation_order`. The values are constant across the released
 dataset. `write_extrinsics` reads the same two keys, so a matrix loaded with
 one set of options writes back unchanged with the same options.
 

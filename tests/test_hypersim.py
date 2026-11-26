@@ -14,9 +14,9 @@ import torch
 h5py = pytest.importorskip("h5py")
 
 from euler_loading import resolve_loader_module  # noqa: E402
-from euler_loading.loaders._annotations import SampleContext, get_sample_selector  # noqa: E402
+from euler_loading.annotations import SampleContext, get_sample_selector  # noqa: E402
 from euler_loading.loaders.cpu import hypersim as cpu_h  # noqa: E402
-from euler_loading.loaders.generate.__main__ import generate  # noqa: E402
+from euler_loading.capability_report import supported_loaders  # noqa: E402
 
 #: A tilt-shift-like camera: off-centre principal point and some skew.
 K = np.array([[600.0, -4.0, 9.0], [0.0, 610.0, 2.5], [0.0, 0.0, 1.0]])
@@ -185,12 +185,7 @@ def test_write_intrinsics_updates_crops_only(tmp_path):
 
 def test_resolution_and_inventory():
     assert resolve_loader_module("hypersim").__name__ == "euler_loading.loaders.gpu.hypersim"
-    generated = {item["name"]: item for item in generate()["supportedLoaders"]}
-    checked_in = json.loads(
-        (Path(__file__).parents[1] / "euler_loading/loaders/generate/loaders.json").read_text()
-    )
-    saved = {item["name"]: item for item in checked_in["supportedLoaders"]}
-    assert generated["hypersim"] == saved["hypersim"]
+    generated = {item["name"]: item for item in supported_loaders()}
     functions = {m["function"]: m for m in generated["hypersim"]["modalities"]}
     assert set(functions) == {"rgb", "depth", "radial_distance", "read_intrinsics", "camera_pose"}
     assert functions["depth"]["meta"]["radial_depth"] is False

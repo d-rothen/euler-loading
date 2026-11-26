@@ -38,7 +38,7 @@ import numpy as np
 import torch
 from PIL import Image
 
-from euler_loading.loaders._annotations import modality_meta
+from euler_loading.annotations import modality_meta
 from euler_loading.loaders.cpu import generic_dense_depth as _cpu
 from euler_loading.loaders._writer_utils import (
     ensure_parent,

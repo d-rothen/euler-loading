@@ -1,23 +1,88 @@
-"""The loader capability report (euler-view change L1).
+"""The loader capability report (euler-view change L1, 1.1).
 
 Loader coverage must stay resolvable against euler-dataset-contract: a loader
 emitting a persisted key the contract does not know is release-blocking drift.
 Value kinds are derived from the contract's ``semantics`` block (change C1)
 and tighten automatically once the installed contract ships them.
+
+Extension loaders in the report are covered in ``test_registry.py``.
 """
 
 from __future__ import annotations
 
+import importlib.metadata
+import json
+
 import euler_loading.capability_report as capability_report
-from euler_loading.capability_report import loader_report
+from euler_loading import loader_registry
+from euler_loading.capability_report import loader_report, main, supported_loaders
 
 
 def test_report_shape() -> None:
     report = loader_report()
-    assert report["contract"] == {"kind": "loader_capability_report", "version": "1.0"}
+    assert report["contract"] == {"kind": "loader_capability_report", "version": "1.1"}
     assert report["package"]["name"] == "euler-loading"
     assert "euler-dataset-contract" in report["packages"]
+    assert report["extension_api"] == {"group": "euler.loaders", "api_version": "1.0"}
     assert report["loaders"], "a loader install must cover at least one key"
+    assert report["problems"] == []
+    json.dumps(report)
+
+
+def test_supported_loaders_cover_every_registered_builtin() -> None:
+    report = loader_report()
+    names = loader_registry().names()
+    assert [entry["name"] for entry in report["supportedLoaders"]] == names
+    assert set(report["registered_loaders"]) == set(names)
+    for name in names:
+        registered = report["registered_loaders"][name]
+        assert registered["provider"] == "builtin"
+        assert all(v["available"] for v in registered["variants"].values()), name
+
+
+def test_supported_loaders_keep_the_loaders_json_shape() -> None:
+    keys = {
+        "type", "function", "hierarchical", "dtype", "access", "output_range",
+        "output_unit", "file_formats", "requires_meta", "meta", "cpu", "gpu",
+    }
+    for entry in supported_loaders():
+        assert set(entry) == {"name", "modalities"}
+        functions = [m["function"] for m in entry["modalities"]]
+        assert functions == sorted(functions)
+        for modality in entry["modalities"]:
+            assert set(modality) <= keys
+            assert modality["access"] == "key"
+
+
+def test_materialized_values_are_declared_per_file() -> None:
+    (entry,) = [e for e in supported_loaders() if e["name"] == "materialized"]
+    assert entry["modalities"][0]["type"] == "declared"
+    # A declared type is no persisted key the loader covers.
+    assert "declared" not in loader_report()["loaders"]
+
+
+def test_cli_prints_the_report_or_only_supported_loaders(capsys) -> None:
+    assert main([]) == 0
+    assert json.loads(capsys.readouterr().out)["contract"]["version"] == "1.1"
+    assert main(["--supported-loaders"]) == 0
+    document = json.loads(capsys.readouterr().out)
+    assert list(document) == ["supportedLoaders"]
+    assert document["supportedLoaders"] == supported_loaders()
+
+
+def test_registered_as_euler_capabilities_provider() -> None:
+    from euler_dataset_contract.suite import collect_capabilities
+
+    (entry_point,) = [
+        ep
+        for ep in importlib.metadata.distribution("euler-loading").entry_points
+        if ep.group == "euler.capabilities"
+    ]
+    assert entry_point.name == "euler-loading"
+    assert entry_point.value == "euler_loading.capability_report:loader_report"
+    capabilities, _ = collect_capabilities(only=["euler-loading"])
+    assert capabilities["euler-loading"]["status"] == "ok"
+    assert capabilities["euler-loading"]["report"]["contract"]["kind"] == "loader_capability_report"
 
 
 def test_every_loader_type_is_known_to_the_contract() -> None:

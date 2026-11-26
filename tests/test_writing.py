@@ -50,7 +50,12 @@ def _flat_index(
         }
     }
     if euler_loading is not None:
-        index["euler_loading"] = euler_loading
+        index["head"] = {
+            "contract": {"kind": "dataset_head", "version": "1.0"},
+            "dataset": {"id": "writer_test", "name": "Writer test"},
+            "modality": {"key": "metadata", "meta": dict(meta or {})},
+            "addons": {"euler_loading": {"version": "1.0", **euler_loading}},
+        }
     if meta is not None:
         index["meta"] = meta
     return index

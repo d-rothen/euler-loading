@@ -1274,7 +1274,14 @@ def _with_layout(
     result["head"] = {
         "contract": {"kind": "dataset_head", "version": "1.0"},
         "dataset": {"id": "demo", "name": "Demo"},
-        "modality": {"key": "rgb" if variant else "depth", "meta": {}},
+        "modality": (
+            {"key": "rgb", "meta": {"range": [0, 255]}}
+            if variant
+            else {
+                "key": "depth",
+                "meta": {"radial_depth": False, "scale_to_meters": 1.0, "range": [0, 100]},
+            }
+        ),
         "addons": {"euler_layout": layout},
     }
     result.setdefault(

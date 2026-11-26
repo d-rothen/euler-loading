@@ -45,12 +45,13 @@ from ._ds_crawler_utils import (
 )
 from ._resolution import (
     LOADER_VARIANTS,
-    _get_euler_loading_meta,
+    _euler_loading_addon,
     _resolve_loader,
     _resolve_writer,
     loader_accepts_attributes,
     resolve_loader_module,
 )
+from .registry import loader_registry
 from .dataset import (
     Modality,
     _get_file_attributes,
@@ -529,7 +530,7 @@ def _sky_loader(
         return loader
     if check.modality_key not in _SKY_HEAD_KEYS:
         return None
-    module_name = as_non_empty_str((_get_euler_loading_meta(index) or {}).get("loader"))
+    module_name = as_non_empty_str((_euler_loading_addon(index) or {}).get("loader"))
     try:
         module = resolve_loader_module(module_name or "", variant=variant)
     except Exception:
@@ -731,7 +732,11 @@ def _check_modality(
 
     try:
         writer = _resolve_writer(
-            modality_name=label, modality=modality, index=index, variant=variant,
+            modality_name=label,
+            modality=modality,
+            index=index,
+            loader=loader,
+            variant=variant,
         )
     except Exception:
         logger.debug("Cannot resolve a writer for %s.", modality.path, exc_info=True)
@@ -805,6 +810,12 @@ def dry_run(
     requested = Modality(str(path), split=split, metadata_scope=metadata_scope)
     base = Path(requested.path)
     report = DryRunReport(root=requested.path, variant=variant)
+    # Installed loader packages that were rejected explain "unknown loader"
+    # errors below, and are worth fixing even when no head names them.
+    report.warnings.extend(
+        f"{problem.group} {problem.name!r}: {problem.message}"
+        for problem in loader_registry().problems
+    )
 
     if not base.exists():
         report.errors.append(f"{requested.path} does not exist")

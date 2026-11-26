@@ -3,9 +3,22 @@
 from . import _dataset_contract  # noqa: F401
 from ._resolution import resolve_loader_module, resolve_writer_module
 from ._writing import create_dataset_writer_from_index
+from .annotations import (
+    SampleContext,
+    get_modality_meta,
+    get_sample_selector,
+    modality_meta,
+    selects_per_sample,
+)
 from .dataset import Modality, MultiModalDataset
 from .indexing import FileRecord
-from .loaders._annotations import SampleContext, get_modality_meta, selects_per_sample
+from .registry import (
+    LOADERS_GROUP,
+    LoaderRegistry,
+    LoaderUnavailableError,
+    RegisteredLoader,
+    loader_registry,
+)
 from .loaders.contracts import DenseDepthCodec, DenseDepthLoader, DenseDepthWriter
 from .preprocessing import (
     Crop,
@@ -56,6 +69,15 @@ __all__ = [
     "SamplePreprocessor",
     "selects_per_sample",
     "get_modality_meta",
+    "get_sample_selector",
+    "modality_meta",
+    "LOADERS_GROUP",
+    "LoaderRegistry",
+    "LoaderUnavailableError",
+    "RegisteredLoader",
+    "loader_registry",
+    "DecoderIdentity",
+    "decoder_identity",
     "create_dataset_writer_from_index",
     "crop_intrinsics",
     "infer_field_spec",
@@ -70,6 +92,8 @@ from .output_encoding import output_encoding
 from .receipts import (
     CalibrationView,
     DatasetCapture,
+    DecoderIdentity,
+    decoder_identity,
     execute_with_receipt,
     replay_from_arrays,
 )

@@ -11,7 +11,7 @@ from typing import Any, BinaryIO, Union
 
 import torch
 
-from euler_loading.loaders._annotations import modality_meta
+from euler_loading.annotations import modality_meta
 from euler_loading.loaders.cpu import acdc as _cpu
 
 __all__ = ["rgb", "reference_rgb", "write_rgb", "write_reference_rgb"]

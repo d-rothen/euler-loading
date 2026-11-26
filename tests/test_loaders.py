@@ -282,10 +282,6 @@ class TestPrincetonDenseModuleContents:
         module = resolve_loader_module("princeton_dense")
         assert module.__name__ == "euler_loading.loaders.gpu.princeton_dense"
 
-    def test_auto_resolution_supports_dataset_alias(self):
-        module = resolve_loader_module("seeing_through_fog")
-        assert module.__name__ == "euler_loading.loaders.gpu.princeton_dense"
-
 
 class TestPrincetonDenseGPULoaders:
     """GPU Princeton DENSE loaders produce torch tensors."""

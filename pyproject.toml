@@ -1,6 +1,6 @@
 [project]
 name = "euler-loading"
-version = "2.47.0"
+version = "2.48.0"
 description = "Multi-modal PyTorch dataloader using ds-crawler indices"
 readme = "README.md"
 requires-python = ">=3.9"
@@ -33,7 +33,7 @@ dependencies = [
     "numpy",
     "Pillow",
     "ds-crawler>=2.14.0",
-    "euler-dataset-contract>=0.14.0",
+    "euler-dataset-contract>=0.23.0",
 ]
 
 [project.optional-dependencies]
@@ -45,6 +45,32 @@ dev = ["pytest", "OpenEXR>=3.2", "jsonschema>=4.18", "h5py"]
 
 [project.scripts]
 euler-loading = "euler_loading.cli:main"
+
+# euler-loading registers its own loaders exactly as a third-party package
+# would (see "Extending: your own loaders" in the README). Adding a loader
+# means adding it here and in euler_loading/loaders/builtin.py, then
+# reinstalling so the entry point exists.
+[project.entry-points."euler.loaders"]
+acdc = "euler_loading.loaders.builtin:acdc"
+cerema = "euler_loading.loaders.builtin:cerema"
+driving_stereo = "euler_loading.loaders.builtin:driving_stereo"
+generic = "euler_loading.loaders.builtin:generic"
+generic_dense_depth = "euler_loading.loaders.builtin:generic_dense_depth"
+hypersim = "euler_loading.loaders.builtin:hypersim"
+kitti_carla = "euler_loading.loaders.builtin:kitti_carla"
+materialized = "euler_loading.loaders.builtin:materialized"
+muses = "euler_loading.loaders.builtin:muses"
+nuscenes = "euler_loading.loaders.builtin:nuscenes"
+princeton_dense = "euler_loading.loaders.builtin:princeton_dense"
+real_drive_sim = "euler_loading.loaders.builtin:real_drive_sim"
+scatternerf = "euler_loading.loaders.builtin:scatternerf"
+shift = "euler_loading.loaders.builtin:shift"
+synscapes = "euler_loading.loaders.builtin:synscapes"
+urbansyn = "euler_loading.loaders.builtin:urbansyn"
+vkitti2 = "euler_loading.loaders.builtin:vkitti2"
+
+[project.entry-points."euler.capabilities"]
+euler-loading = "euler_loading.capability_report:loader_report"
 
 [project.urls]
 Homepage = "https://github.com/d-rothen/euler-loading"

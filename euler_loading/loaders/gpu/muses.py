@@ -46,7 +46,7 @@ import numpy as np
 import torch
 from PIL import Image
 
-from euler_loading.loaders._annotations import modality_meta, selects_per_sample
+from euler_loading.annotations import modality_meta, selects_per_sample
 from euler_loading.loaders.cpu import muses as _cpu
 
 _LIDAR_COLUMNS = ["x", "y", "z", "intensity", "ring", "timestamp"]

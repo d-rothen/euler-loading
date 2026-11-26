@@ -15,7 +15,7 @@ from PIL import Image
 
 from euler_loading import Modality, MultiModalDataset, resolve_loader_module
 from euler_loading.loaders.cpu import urbansyn as cpu_u
-from euler_loading.loaders.generate.__main__ import generate
+from euler_loading.capability_report import supported_loaders
 
 pytest.importorskip("OpenEXR")
 import Imath
@@ -216,12 +216,7 @@ def test_camera_pose_writer_round_trips(loaders, tmp_path):
 
 def test_resolution_and_inventory():
     assert resolve_loader_module("urbansyn").__name__ == "euler_loading.loaders.gpu.urbansyn"
-    generated = {item["name"]: item for item in generate()["supportedLoaders"]}
-    checked_in = json.loads(
-        (Path(__file__).parents[1] / "euler_loading/loaders/generate/loaders.json").read_text()
-    )
-    saved = {item["name"]: item for item in checked_in["supportedLoaders"]}
-    assert generated["urbansyn"] == saved["urbansyn"]
+    generated = {item["name"]: item for item in supported_loaders()}
     functions = {m["function"]: m for m in generated["urbansyn"]["modalities"]}
     assert set(functions) == {"rgb", "depth", "semantic_segmentation", "sky_mask", "read_intrinsics", "camera_pose"}
     assert functions["camera_pose"]["meta"]["direction"] == "target_from_source"

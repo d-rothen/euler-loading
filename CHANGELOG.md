@@ -2,6 +2,71 @@
 
 ## Unreleased
 
+### 2.48.0 — loaders from your own package
+
+Requires `euler-dataset-contract>=0.23.0` (the suite extension protocol).
+
+- **`euler.loaders` extension group.** A package registers loader modules with
+  `[project.entry-points."euler.loaders"] my_dataset = "my_lab.loaders.my_dataset"`
+  (one module for both variants) or a mapping
+  `{"gpu": "...", "cpu": "...", "api_version": "1.0"}`; dataset heads then
+  name it in `addons.euler_loading.loader`, in every process. euler-loading
+  registers its own loaders the same way (`euler_loading/loaders/builtin.py`
+  plus entry points in `pyproject.toml`), so there is one registry and one
+  resolution path. New public API: `euler_loading.registry`
+  (`loader_registry()`, `LoaderRegistry`, `RegisteredLoader`,
+  `LoaderUnavailableError`, `LOADERS_GROUP`).
+- **Built-ins win; problems are reported.** An extension declaring a built-in
+  name is rejected (`shadows_builtin`) and the built-in keeps working; two
+  packages claiming one name is a `conflict`; invalid values, import failures
+  and incompatible `api_version`s are kept in `loader_registry().problems`. A
+  head naming a rejected loader fails with that reason; dry runs list the
+  problems as warnings.
+- **Public loader-authoring API.** `modality_meta`, `get_modality_meta`,
+  `selects_per_sample`, `get_sample_selector` and `SampleContext` live in the
+  public module `euler_loading.annotations` and are exported from
+  `euler_loading`. `modality_meta` validates its arguments when a module is
+  imported. `DECLARED` marks values declared per file (`materialized`).
+- **Receipts accept extension decoders.** `decoder_identity(loader)` /
+  `DecoderIdentity`: a built-in decoder keeps the id `<module>.<function>` at
+  `DECODER_VERSION`; a registered extension decoder is recorded as
+  `ext:<distribution>/<module>.<function>` at the distribution's installed
+  version. Captures now check a source's decoder id *and* version against the
+  field's actual decoder (previously only the version), so a descriptor
+  recorded with another release of an extension is refused. Unregistered or
+  wrapped callables are still refused, with a message saying how to register.
+- **`loader_capability_report` 1.1** (additive), introspected at run time from
+  the registry instead of a packaged file: `supportedLoaders` (the
+  `loaders.json` shape, built-ins plus extensions, so euler-view can stop
+  vendoring `dataset-loaders.json`), `registered_loaders` (per name: `provider`
+  `"builtin"` or `{distribution, version}`, entry-point `target`, per-variant
+  `module` / `available` / `error`), `problems`, and `extension_api`. The
+  per-key `loaders` coverage now includes extension loaders and `materialized`.
+  Registered as euler-loading's `euler.capabilities` provider for
+  `euler-suite report`. `python -m euler_loading.capability_report
+  --supported-loaders` prints just the former `loaders.json` document.
+- **Writers come from the reading loader's module.** When the effective loader
+  belongs to a registered module (always, for automatic resolution; also for
+  an explicit built-in or extension function) its writer is taken from that
+  module, so an explicit CPU loader pairs with CPU writers by construction.
+
+Removed (no compatibility shims):
+
+- the hardcoded loader table `_LOADER_MODULES` and the `.gpu.` → `.cpu.`
+  module-name rewrite (variants come from the declared mapping);
+- the `seeing_through_fog` alias of `princeton_dense`;
+- the packaged `loaders/generate/loaders.json`, the
+  `python -m euler_loading.loaders.generate` generator and `gen_loaders.sh`;
+- `euler_loading.loaders._annotations` (now `euler_loading.annotations`);
+- the silent fallbacks in loader resolution: a malformed dataset head is an
+  error instead of reading as "no loader declared", and a top-level
+  `euler_loading` key in an index is no longer read (only
+  `head.addons.euler_loading`);
+- the GPU → CPU writer fallback: a writer that cannot be resolved is `None`
+  with a logged warning naming the reason (`get_writer` raises).
+
+### Earlier unreleased changes
+
 - `loader_report()` / `python -m euler_loading.capability_report`: a versioned
   loader capability report (euler-view change L1). Aggregates the packaged
   `loaders.json` per persisted modality key (datasets, function count, file

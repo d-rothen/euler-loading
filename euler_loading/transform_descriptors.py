@@ -316,8 +316,8 @@ def _check_dataset_bindings(dataset: Any, descriptor: TransformsAddon, *, sample
     """
     from ds_crawler import get_dataset_contract
 
-    from ._resolution import _builtin_loader_id
     from .dataset import _get_index_tree
+    from .receipts import require_decoder
 
     modalities = {**dataset._modalities, **dataset._hierarchical_modalities}
     indexes = {**dataset._index_outputs, **dataset._hierarchical_index_outputs}
@@ -339,11 +339,13 @@ def _check_dataset_bindings(dataset: Any, descriptor: TransformsAddon, *, sample
                 raise ValueError(
                     f"Field {name!r}: source.{key} disagrees with dataset metadata"
                 )
-        loader = dataset._resolved_loaders[name]
-        decoder_id = _builtin_loader_id(loader)
-        if decoder_id is None or source["decoder"]["id"] != decoder_id:
+        actual = require_decoder(repr(name), dataset._resolved_loaders[name])
+        declared = source["decoder"]
+        if (declared["id"], declared["version"]) != (actual.id, actual.version):
             raise ValueError(
-                f"Field {name!r}: unknown decoder callable effects or decoder identity mismatch"
+                f"Field {name!r}: decoder identity mismatch: the descriptor "
+                f"declares {declared['id']} {declared['version']}, but this "
+                f"dataset decodes the field with {actual.id} {actual.version}"
             )
         if name in dataset._hierarchical_modalities and not sample_bound:
             entries = [

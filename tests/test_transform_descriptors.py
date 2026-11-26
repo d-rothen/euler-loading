@@ -17,6 +17,7 @@ from euler_loading import (
     execution_profile,
     resolve_transform_descriptor,
 )
+from euler_loading.receipts import DECODER_VERSION
 
 from euler_dataset_contract import (
     TransformsAddon,
@@ -443,6 +444,7 @@ def _rgb_dataset_bindings(tmp_path, fixture):
     )
     source["decoder"].update(
         id="euler_loading.loaders.cpu.generic_dense_depth.rgb",
+        version=DECODER_VERSION,
         profile_digest=canonical_digest(bindings["fields"]["rgb"]["profile"]),
     )
     return dataset, bindings, sample

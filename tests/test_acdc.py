@@ -14,7 +14,7 @@ from PIL import Image
 
 from euler_loading import resolve_loader_module
 from euler_loading.loaders.cpu import acdc as cpu_a
-from euler_loading.loaders.generate.__main__ import generate
+from euler_loading.capability_report import supported_loaders
 
 
 @pytest.fixture(params=["cpu", "gpu"])
@@ -64,12 +64,7 @@ def test_writers_round_trip(loaders, tmp_path):
 
 def test_resolution_and_inventory():
     assert resolve_loader_module("acdc").__name__ == "euler_loading.loaders.gpu.acdc"
-    generated = {item["name"]: item for item in generate()["supportedLoaders"]}
-    checked_in = json.loads(
-        (Path(__file__).parents[1] / "euler_loading/loaders/generate/loaders.json").read_text()
-    )
-    saved = {item["name"]: item for item in checked_in["supportedLoaders"]}
-    assert generated["acdc"] == saved["acdc"]
+    generated = {item["name"]: item for item in supported_loaders()}
     functions = {m["function"]: m for m in generated["acdc"]["modalities"]}
     assert set(functions) == {"rgb", "reference_rgb"}
     assert functions["reference_rgb"]["meta"]["source"] == "reference_frames"

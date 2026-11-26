@@ -14,7 +14,7 @@ from PIL import Image
 
 from euler_loading import Modality, MultiModalDataset, resolve_loader_module
 from euler_loading.loaders.cpu import scatternerf as cpu_sn
-from euler_loading.loaders.generate.__main__ import generate
+from euler_loading.capability_report import supported_loaders
 
 # 0/intrinsics/left_06880_1538982135676701005.txt and 0/pose/… as released.
 INTRINSICS_TXT = "2355.7228 0.0 852.0 0.0 0.0 2355.7228 454.0 0.0 0.0 0.0 1.0 0.0 0.0 0.0 0.0 1.0\n"
@@ -115,12 +115,7 @@ def test_writers_round_trip(loaders, tmp_path):
 
 def test_resolution_and_inventory():
     assert resolve_loader_module("scatternerf").__name__ == "euler_loading.loaders.gpu.scatternerf"
-    generated = {item["name"]: item for item in generate()["supportedLoaders"]}
-    checked_in = json.loads(
-        (Path(__file__).parents[1] / "euler_loading/loaders/generate/loaders.json").read_text()
-    )
-    saved = {item["name"]: item for item in checked_in["supportedLoaders"]}
-    assert generated["scatternerf"] == saved["scatternerf"]
+    generated = {item["name"]: item for item in supported_loaders()}
     functions = {m["function"]: m for m in generated["scatternerf"]["modalities"]}
     assert set(functions) == {"rgb", "read_intrinsics", "camera_pose", "camera_pose_metric"}
     assert functions["camera_pose_metric"]["meta"]["translation_unit"] == "meters"

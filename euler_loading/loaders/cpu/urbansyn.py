@@ -56,7 +56,7 @@ from typing import Any, BinaryIO, Union
 import numpy as np
 from PIL import Image
 
-from euler_loading.loaders._annotations import modality_meta
+from euler_loading.annotations import modality_meta
 from euler_loading.loaders._sky import resolve_skyclass, skyclass_label
 from euler_loading.loaders._writer_utils import (
     ensure_parent,

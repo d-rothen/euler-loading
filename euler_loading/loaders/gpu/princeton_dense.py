@@ -29,7 +29,7 @@ import numpy as np
 from PIL import Image
 import torch
 
-from euler_loading.loaders._annotations import modality_meta
+from euler_loading.annotations import modality_meta
 from euler_loading.loaders._writer_utils import (
     ensure_parent,
     mark_stream_supported,

@@ -129,8 +129,10 @@ RGB contract looks like this:
 }
 ```
 
-`loader` selects a built-in loader module and `function` selects the callable
-inside it. `Modality(path, function="sky_mask")` picks another callable from
+`loader` names a registered loader (a built-in such as `vkitti2`, or one an
+installed package registers; see
+[Extending: your own loaders](#extending-your-own-loaders)) and `function`
+selects the callable inside it. `Modality(path, function="sky_mask")` picks another callable from
 the same module, e.g. boolean sky masks from a `class_segmentation` index,
 with the sky taken from the head's `skyclass`. Automatic resolution uses the
 GPU variant; pass a loader explicitly when you want the CPU variant or a
@@ -207,8 +209,99 @@ All of them accept both filesystem paths and in-memory buffers.
 | `generic` | *any* — `.npy` / `.npz` modalities | points 3d, maps, segmentation, spherical maps, SH coefficients, … |
 
 Full inventory with shapes, dtypes and units: [docs/loaders.md](docs/loaders.md).
-The machine-readable version is
-[`loaders.json`](euler_loading/loaders/generate/loaders.json).
+The machine-readable version, for this environment and including installed
+extension loaders, is `python -m euler_loading.capability_report`
+(`--supported-loaders` prints just the former `loaders.json` document).
+
+## Extending: your own loaders
+
+A dataset euler-loading does not ship is loaded by name from **your own
+package**, with no pull request here. Write a loader module:
+
+```python
+# my_lab/loaders/thermal.py
+import numpy as np
+from euler_loading import modality_meta
+
+@modality_meta(
+    modality_type="depth",          # the persisted modality key it loads
+    dtype="float32",
+    shape="HW",
+    file_formats=[".npy"],
+    output_unit="meters",
+)
+def depth(path, meta=None, *, attributes=None):
+    return np.load(path).astype(np.float32)
+
+def write_depth(path, value, meta=None):  # optional: write_<function>
+    np.save(path, np.asarray(value, dtype=np.float32))
+```
+
+and register it in your package's `pyproject.toml`:
+
+```toml
+[project.entry-points."euler.loaders"]
+thermal = "my_lab.loaders.thermal"
+```
+
+After `pip install my-lab` (or `pip install -e .`), a dataset head saying
+`"loader": "thermal", "function": "depth"` resolves to your function in every
+process, the CLI, DataLoader workers and SLURM jobs alike, because loaders
+come from the installed environment rather than process state.
+`euler-loading /path/to/dataset` dry-runs it like any built-in.
+
+**One module or two.** The module form serves both variants (`gpu`, what
+automatic resolution uses, and `cpu`). To give each its own module, point the
+entry point at a mapping instead; it is read without importing the modules,
+which only load when a head asks for them:
+
+```toml
+[project.entry-points."euler.loaders"]
+thermal = "my_lab.loaders:THERMAL"
+```
+
+```python
+# my_lab/loaders/__init__.py
+THERMAL = {
+    "api_version": "1.0",
+    "gpu": "my_lab.loaders.gpu.thermal",   # returns torch tensors
+    "cpu": "my_lab.loaders.cpu.thermal",   # returns numpy arrays
+}
+```
+
+**What a loader module needs**, all importable from `euler_loading`:
+
+| | |
+|---|---|
+| `modality_meta(...)` | Declares what a function loads: `modality_type`, `dtype`, `shape`, and optionally `file_formats`, `output_range`, `output_unit`, `requires_meta`, `meta`. Only annotated functions are reported and accepted as receipt decoders. |
+| `selects_per_sample(select)`, `SampleContext` | Narrow a hierarchical loader's shared value (one table per recording) to the sample being assembled. |
+| `get_modality_meta(fn)` | Read an annotation back. |
+
+A loader is called as `fn(path_or_buffer, meta=None)`, plus `attributes=` when
+it accepts that keyword (see [the contract](docs/loaders.md#the-contract));
+writers are found by name next to it, `write_<function>` (or `write_<x>` for a
+reader named `read_<x>`).
+
+**Rules.**
+
+- Built-in names cannot be taken over. A package declaring, say, `vkitti2` is
+  rejected with a `shadows_builtin` problem and the built-in keeps working.
+- Two packages declaring the same name is a `conflict`; neither is used.
+- A rejected or broken declaration never breaks the other loaders, but it is
+  not hidden: a head naming it fails with the reason (the import error, the
+  conflict), dry runs list it as a warning, and it appears under `problems`
+  in `loader_registry().problems` and `loader_report()`.
+  `EULER_EXTENSIONS_STRICT=1` turns problems into errors.
+- Entry-point names are head tokens: letters, digits and underscores.
+
+**Provenance.** `python -m euler_loading.capability_report` (euler-suite and
+euler-view read it per environment) lists every loader with its `provider`:
+`"builtin"` or `{distribution, version}`. Transform receipts record an
+extension decoder as `ext:<distribution>/<module>.<function>` at that
+distribution's installed version, so a receipt says which package decoded
+its sources, and a capture refuses to replay a descriptor recorded with a
+different version of that package. Built-in decoders keep their
+`<module>.<function>` id and euler-loading's decoder version.
 
 ## Documentation
 
